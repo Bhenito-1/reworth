@@ -7,7 +7,7 @@ import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
-import { COMMUNITIES } from "../../../lib/communities";
+import { communitiesForCity } from "../../../lib/communities";
 import { createMovingSale } from "../../../lib/moving-sales";
 import { myLiveListings } from "../../../lib/swap";
 import type { PublicListing } from "../../../lib/types";
@@ -151,7 +151,7 @@ export default function NewMovingSaleClient() {
               className="w-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
             >
               <option value="">Select…</option>
-              {COMMUNITIES.map((c) => (
+              {communitiesForCity("lagos").map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>

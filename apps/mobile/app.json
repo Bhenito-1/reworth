@@ -6,12 +6,19 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "reworth",
+    "icon": "./assets/brand/icons/app-icon.png",
     "splash": {
-      "backgroundColor": "#FAF9F7"
+      "image": "./assets/brand/social/splash-logo-centred.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FCFAF6"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.reworth.app",
+      "associatedDomains": [
+        "applinks:reworth.ng",
+        "applinks:www.reworth.ng"
+      ],
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "ReWorth needs photos to list and room-scan your items.",
         "NSCameraUsageDescription": "ReWorth needs the camera for room scan and listing photos."
@@ -19,7 +26,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#FAF9F7"
+        "foregroundImage": "./assets/brand/icons/app-icon-adaptive.png",
+        "backgroundColor": "#FCFAF6"
       },
       "package": "com.reworth.app",
       "permissions": [
@@ -28,13 +36,33 @@
         "WRITE_EXTERNAL_STORAGE",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "reworth.ng",
+              "pathPrefix": "/"
+            },
+            {
+              "scheme": "https",
+              "host": "www.reworth.ng",
+              "pathPrefix": "/"
+            }
+          ]
+        }
       ]
     },
     "plugins": [
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow ReWorth to access your photos for listings and room scan."
+          "photosPermission": "Allow ReWorth to access your photos for listings and room scan.",
+          "cameraPermission": "Allow ReWorth to use the camera for listing photos and room scan."
         }
       ]
     ],
@@ -44,7 +72,8 @@
       }
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "favicon": "./assets/brand/icons/favicon.png"
     }
   }
 }

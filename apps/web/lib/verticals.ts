@@ -140,7 +140,7 @@ export async function requestInspection(
   token: string,
   body: RequestInspectionBody = {},
 ): Promise<VehicleInspection> {
-  return apiFetch<VehicleInspection>(`/listings/${listingId}/inspections/request`, {
+  return apiFetch<VehicleInspection>(`/listings/${listingId}/inspections`, {
     method: "POST",
     token,
     body,
@@ -175,17 +175,17 @@ export async function getInspectionReport(
   inspectionId: string,
   token?: string | null,
 ): Promise<InspectionReport> {
-  return apiFetch<InspectionReport>(`/inspections/${inspectionId}/report`, {
+  return apiFetch<InspectionReport>(`/inspections/${inspectionId}`, {
     token,
   });
 }
 
-/** Prefer listing-scoped report when API exposes it. */
+/** Prefer listing-scoped latest inspection when API exposes it. */
 export async function getListingInspectionReport(
   listingId: string,
   token?: string | null,
 ): Promise<InspectionReport> {
-  return apiFetch<InspectionReport>(`/listings/${listingId}/inspection/report`, {
+  return apiFetch<InspectionReport>(`/listings/${listingId}/inspections`, {
     token,
   });
 }

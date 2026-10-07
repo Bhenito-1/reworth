@@ -58,6 +58,70 @@ export async function createConsignment(
   });
 }
 
+export async function listConsignmentOnPlatform(
+  token: string,
+  id: string,
+): Promise<Consignment> {
+  return apiFetch(`/consignments/${id}/list`, { method: "POST", token });
+}
+
+export async function returnConsignment(
+  token: string,
+  id: string,
+): Promise<Consignment> {
+  return apiFetch(`/consignments/${id}/return`, { method: "POST", token });
+}
+
+export async function markConsignmentSold(
+  token: string,
+  id: string,
+  soldPriceKobo: number,
+): Promise<Consignment> {
+  return apiFetch(`/consignments/${id}/sold`, {
+    method: "POST",
+    token,
+    body: { soldPriceKobo },
+  });
+}
+
+export function consignmentStatusLabel(status: string): string {
+  switch (status) {
+    case "INTAKE":
+      return "Intake";
+    case "LISTED":
+      return "Listed";
+    case "SOLD":
+      return "Sold";
+    case "RETURNED":
+      return "Returned";
+    case "EXPIRED":
+      return "Expired";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return status;
+  }
+}
+
+export function pickupStatusLabel(status: string): string {
+  switch (status) {
+    case "BOOKED":
+    case "SCHEDULED":
+      return "Booked";
+    case "PICKED_UP":
+      return "Picked up";
+    case "IN_TRANSIT":
+      return "In transit";
+    case "DELIVERED":
+    case "COMPLETED":
+      return "Completed";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return status.replace(/_/g, " ");
+  }
+}
+
 export type ManagedPickup = {
   id: string;
   status: string;
@@ -100,6 +164,46 @@ export function generateWatPickupSlots(count = 6): ManagedPickupSlot[] {
     if (cursor.getTime() - now.getTime() > 14 * 24 * 60 * 60 * 1000) break;
   }
   return slots;
+}
+
+export type InstantBuyFulfilment = {
+  id: string;
+  orderId: string;
+  listingId?: string;
+  status: string;
+  slotStartAt?: string | null;
+  slotEndAt?: string | null;
+  slaDeadlineAt?: string | null;
+};
+
+export async function getInstantBuyByOrder(
+  token: string,
+  orderId: string,
+): Promise<InstantBuyFulfilment> {
+  return apiFetch(`/instant-buy/by-order/${orderId}`, { token });
+}
+
+export async function scheduleInstantBuy(
+  token: string,
+  fulfilmentId: string,
+  body: { slotStartAt: string; slotEndAt: string },
+): Promise<unknown> {
+  return apiFetch(`/instant-buy/fulfilments/${fulfilmentId}/schedule`, {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export async function confirmInstantBuy(
+  token: string,
+  fulfilmentId: string,
+): Promise<unknown> {
+  return apiFetch(`/instant-buy/fulfilments/${fulfilmentId}/confirm`, {
+    method: "POST",
+    token,
+    body: {},
+  });
 }
 
 export async function bookManagedPickup(

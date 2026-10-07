@@ -12,8 +12,29 @@ import {
   getRefreshToken,
 } from "../../lib/auth";
 import { areaChoices, FALLBACK_AREAS, type AreaChoice } from "../../lib/areas";
+import { brandPublic } from "../../lib/brand";
 import { getRegion, listRegions, type RegionCity } from "../../lib/region";
 import type { DeviceRow, MeResponse } from "../../lib/types";
+
+const ACCOUNT_LINKS: {
+  href: string;
+  label: string;
+  icon: keyof typeof brandPublic;
+}[] = [
+  { href: "/ask", label: "Ask ReWorth", icon: "actionChat" },
+  { href: "/worth", label: "Worth", icon: "actionOffer" },
+  { href: "/consign", label: "Consign", icon: "actionDelivery" },
+  { href: "/pickup", label: "Pickup", icon: "actionLocation" },
+  { href: "/account/communities", label: "Communities", icon: "invite" },
+  { href: "/sell/analytics", label: "Seller analytics", icon: "actionSell" },
+  { href: "/inventory", label: "Inventory", icon: "actionSell" },
+  { href: "/pro", label: "Pro seller", icon: "verifiedSeller" },
+  { href: "/corporate", label: "Corporate", icon: "movingSale" },
+  { href: "/partner", label: "Partner", icon: "identityChecked" },
+  { href: "/referrals", label: "Referrals", icon: "invite" },
+  { href: "/orders", label: "Orders", icon: "actionBuy" },
+  { href: "/room-scan", label: "Room scan", icon: "actionSave" },
+];
 
 function VerificationBadges({
   levels,
@@ -224,90 +245,22 @@ export default function AccountPage() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 60% 40% at 100% 0%, rgba(14,159,110,0.1), transparent 50%), linear-gradient(180deg, #FAF9F7, #F3F0EA)",
+            "radial-gradient(ellipse 60% 40% at 100% 0%, rgba(217,106,50,0.1), transparent 50%), linear-gradient(180deg, #FCFAF6, #F3F0EA)",
         }}
       />
 
       <div className="relative z-10 mx-auto w-full max-w-2xl px-6 py-10 sm:px-8">
-        <header className="mb-10">
-          <h1 className="text-3xl font-semibold tracking-tight">Account</h1>
-          <nav
-            aria-label="Account tools"
-            className="mt-4 flex flex-wrap gap-x-4 gap-y-2"
+        <header className="mb-10 flex items-center justify-between gap-4">
+          <Link
+            href="/"
+            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
           >
-            <Link
-              href="/ask"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Ask ReWorth
-            </Link>
-            <Link
-              href="/room-scan"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Room scan
-            </Link>
-            <Link
-              href="/worth"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Worth
-            </Link>
-            <Link
-              href="/consign"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Consign
-            </Link>
-            <Link
-              href="/pickup"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Pickup
-            </Link>
-            <Link
-              href="/account/communities"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Communities
-            </Link>
-            <Link
-              href="/sell/analytics"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Seller analytics
-            </Link>
-            <Link
-              href="/pro"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Pro seller
-            </Link>
-            <Link
-              href="/corporate"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Corporate
-            </Link>
-            <Link
-              href="/partner"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Partner
-            </Link>
-            <Link
-              href="/referrals"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Referrals
-            </Link>
-            <Link
-              href="/inventory"
-              className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Inventory
-            </Link>
-          </nav>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={brandPublic.logo} alt="ReWorth" className="h-8 w-auto" />
+          </Link>
+          <h1 className="text-sm font-medium text-[var(--rw-ink-muted)]">
+            Account
+          </h1>
         </header>
 
         {loading ? (
@@ -328,6 +281,59 @@ export default function AccountPage() {
           />
         ) : me ? (
           <div className="flex flex-col gap-10">
+            <section
+              className="flex items-center gap-4"
+              aria-labelledby="account-hero"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={brandPublic.profileAvatar}
+                alt=""
+                className="h-16 w-16 rounded-full object-cover"
+              />
+              <div className="min-w-0">
+                <h2
+                  id="account-hero"
+                  className="text-2xl font-semibold tracking-tight"
+                >
+                  {me.profile?.displayName ?? "Member"}
+                </h2>
+                <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
+                  {me.profile?.preferredCommunity ?? "Lagos"}
+                  {me.identityVerifiedBadge ? " · Verified" : ""}
+                </p>
+              </div>
+              {me.identityVerifiedBadge ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={brandPublic.verified}
+                  alt="Verified"
+                  className="ml-auto h-7 w-7"
+                />
+              ) : null}
+            </section>
+
+            <nav
+              className="grid grid-cols-2 gap-3 sm:grid-cols-3"
+              aria-label="Account modules"
+            >
+              {ACCOUNT_LINKS.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="flex items-center gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-3 text-sm font-semibold text-[var(--rw-ink)] transition hover:border-[var(--rw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={brandPublic[item.icon]}
+                    alt=""
+                    className="h-7 w-7 object-contain"
+                  />
+                  <span>{item.label}</span>
+                </Link>
+              ))}
+            </nav>
+
             <section aria-labelledby="verify-heading">
               <h2
                 id="verify-heading"

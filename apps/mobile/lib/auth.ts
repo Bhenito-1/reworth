@@ -67,6 +67,11 @@ function accessExpiryMs(token: string): number | "none" | "bad" {
   }
 }
 
+/** Usable access token, refreshing the email session when needed. */
+export async function ensureAccessToken(): Promise<string | null> {
+  return getAccessToken();
+}
+
 export function isAccessTokenExpired(token: string): boolean {
   const exp = accessExpiryMs(token);
   if (exp === "none") return false;

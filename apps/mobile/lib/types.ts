@@ -1,4 +1,4 @@
-export const COMMUNITIES = [
+export const LAGOS_COMMUNITIES = [
   "Lekki Ph1",
   "Ikoyi",
   "VI",
@@ -7,6 +7,101 @@ export const COMMUNITIES = [
   "Chevron",
   "Ajah",
   "Other Lagos",
+] as const;
+
+export const ABUJA_COMMUNITIES = [
+  "Maitama",
+  "Asokoro",
+  "Wuse",
+  "Garki",
+  "Jabi",
+  "Guzape",
+  "Other Abuja",
+] as const;
+
+export const IBADAN_COMMUNITIES = [
+  "Bodija",
+  "UI",
+  "Ring Road",
+  "Iwo Road",
+  "Challenge",
+  "Other Ibadan",
+] as const;
+
+export const PORT_HARCOURT_COMMUNITIES = [
+  "GRA Port Harcourt",
+  "Old GRA",
+  "Rumuola",
+  "Ada George",
+  "Trans Amadi",
+  "Other PH",
+] as const;
+
+export const OGUN_COMMUNITIES = [
+  "Abeokuta",
+  "Sango-Ota",
+  "Ifo",
+  "Sagamu",
+  "Ijebu-Ode",
+  "Other Ogun",
+] as const;
+
+export const OSUN_COMMUNITIES = [
+  "Osogbo",
+  "Ile-Ife",
+  "Iwo",
+  "Ede",
+  "Ikire",
+  "Other Osun",
+] as const;
+
+export const ONDO_COMMUNITIES = [
+  "Akure",
+  "Ondo Town",
+  "Ore",
+  "Owo",
+  "Okitipupa",
+  "Other Ondo",
+] as const;
+
+export const EKITI_COMMUNITIES = [
+  "Ado-Ekiti",
+  "Ikere-Ekiti",
+  "Ikole",
+  "Iye",
+  "Omuo",
+  "Other Ekiti",
+] as const;
+
+export const EDO_COMMUNITIES = [
+  "Benin City",
+  "GRA Benin",
+  "Ugbowo",
+  "Sakponba",
+  "Auchi",
+  "Other Edo",
+] as const;
+
+export const KANO_COMMUNITIES = [
+  "Nassarawa",
+  "Fagge",
+  "Gwale",
+  "Tarauni",
+  "Dala",
+  "Other Kano",
+] as const;
+
+export const COMMUNITIES = [
+  ...LAGOS_COMMUNITIES,
+  ...OGUN_COMMUNITIES,
+  ...IBADAN_COMMUNITIES,
+  ...OSUN_COMMUNITIES,
+  ...ONDO_COMMUNITIES,
+  ...EKITI_COMMUNITIES,
+  ...EDO_COMMUNITIES,
+  ...ABUJA_COMMUNITIES,
+  ...PORT_HARCOURT_COMMUNITIES,
+  ...KANO_COMMUNITIES,
 ] as const;
 
 export type Community = (typeof COMMUNITIES)[number];

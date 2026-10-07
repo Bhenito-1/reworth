@@ -21,7 +21,8 @@ import {
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_ACCESS_SECRET') ?? 'dev-access-secret',
         signOptions: {
-          expiresIn: config.get<string>('JWT_ACCESS_TTL') ?? '15m',
+          // Consumer mobile default: 24h (refresh still rotates at 30d).
+          expiresIn: config.get<string>('JWT_ACCESS_TTL') ?? '24h',
         },
       }),
     }),

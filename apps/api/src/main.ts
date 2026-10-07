@@ -17,10 +17,23 @@ async function bootstrap() {
   });
   app.useLogger(app.get(Logger));
 
-  const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:3000';
+  const webOrigins = (
+    process.env.WEB_ORIGIN ?? 'http://localhost:3000,http://localhost:3003'
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const adminOrigin = process.env.ADMIN_ORIGIN ?? 'http://localhost:3002';
+  const mobileWebOrigins = (
+    process.env.MOBILE_WEB_ORIGINS ??
+    'http://localhost:8081,http://localhost:8082,http://localhost:8083'
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const corsOrigins = [...webOrigins, adminOrigin, ...mobileWebOrigins];
   app.enableCors({
-    origin: [webOrigin, adminOrigin],
+    origin: corsOrigins,
     credentials: true,
   });
 
@@ -33,7 +46,7 @@ async function bootstrap() {
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-          connectSrc: ["'self'", webOrigin, adminOrigin],
+          connectSrc: ["'self'", ...corsOrigins],
           frameAncestors: ["'none'"],
           objectSrc: ["'none'"],
           baseUri: ["'self'"],
@@ -125,7 +138,8 @@ async function bootstrap() {
     }),
   );
 
-  const port = Number(process.env.PORT ?? 3001);
+  // Prefer API_PORT so an ambient shell PORT (IDE tooling, etc.) cannot steal 3001.
+  const port = Number(process.env.API_PORT ?? process.env.PORT ?? 3001);
   await app.listen(port);
 }
 

@@ -1,0 +1,33 @@
+{
+  "city": "edo",
+  "displayName": "Edo",
+  "timezone": "Africa/Lagos",
+  "communities": [
+    "BENIN_CITY",
+    "GRA_BENIN",
+    "UGBOWO",
+    "SAKPONBA",
+    "AUCHI",
+    "OTHER_EDO"
+  ],
+  "geocoding": {
+    "BENIN_CITY": { "lat": 6.335, "lng": 5.6037, "label": "Benin City" },
+    "GRA_BENIN": { "lat": 6.34, "lng": 5.62, "label": "GRA Benin" },
+    "UGBOWO": { "lat": 6.4, "lng": 5.61, "label": "Ugbowo" },
+    "SAKPONBA": { "lat": 6.31, "lng": 5.65, "label": "Sakponba" },
+    "AUCHI": { "lat": 7.067, "lng": 6.267, "label": "Auchi" },
+    "OTHER_EDO": { "lat": 6.335, "lng": 5.6037, "label": "Edo" }
+  },
+  "logistics": {
+    "baseFeeKobo": 120000,
+    "perKmKobo": 12000
+  },
+  "priceBands": {
+    "budget": { "minKobo": 0, "maxKobo": 3500000 },
+    "mid": { "minKobo": 3500000, "maxKobo": 30000000 },
+    "premium": { "minKobo": 30000000, "maxKobo": null }
+  },
+  "sms": { "enabled": true, "provider": "termii" },
+  "psp": { "enabled": true, "provider": "paystack" },
+  "status": "pilot"
+}

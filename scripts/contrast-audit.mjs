@@ -5,17 +5,18 @@
  * Usage: node scripts/contrast-audit.mjs
  */
 const pairs = [
-  { name: "ink on canvas", fg: "#101418", bg: "#FAF9F7", min: 4.5 },
-  { name: "muted on canvas", fg: "#5C6470", bg: "#FAF9F7", min: 4.5 },
-  { name: "ink on surface", fg: "#101418", bg: "#FFFFFF", min: 4.5 },
-  { name: "white on emerald (CTA large)", fg: "#FFFFFF", bg: "#0E9F6E", min: 3 },
-  { name: "emerald on wash", fg: "#0B7A55", bg: "#E6F6EF", min: 4.5 },
-  { name: "dark ink on dark canvas", fg: "#F2F0EC", bg: "#0F1214", min: 4.5 },
-  { name: "dark muted on dark canvas", fg: "#9AA1A8", bg: "#0F1214", min: 4.5 },
+  { name: "navy on soft white", fg: "#172A3A", bg: "#FCFAF6", min: 4.5 },
+  { name: "slate on soft white", fg: "#59636D", bg: "#FCFAF6", min: 4.5 },
+  { name: "navy on surface", fg: "#172A3A", bg: "#FFFFFF", min: 4.5 },
+  { name: "navy on beige", fg: "#172A3A", bg: "#F2E7D5", min: 4.5 },
+  { name: "white on orange (CTA large)", fg: "#FFFFFF", bg: "#D96A32", min: 3 },
+  { name: "white on navy (secondary CTA)", fg: "#FFFFFF", bg: "#172A3A", min: 3 },
+  { name: "dark ink on navy canvas", fg: "#FCFAF6", bg: "#172A3A", min: 4.5 },
+  { name: "dark muted on navy canvas", fg: "#CFD4D7", bg: "#172A3A", min: 4.5 },
   {
-    name: "white on dark emerald (CTA large)",
+    name: "white on dark orange (CTA large)",
     fg: "#FFFFFF",
-    bg: "#12A170",
+    bg: "#D96A32",
     min: 3,
   },
 ];

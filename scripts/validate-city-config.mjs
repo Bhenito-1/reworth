@@ -82,9 +82,17 @@ function validateFile(filePath, name) {
   if (!raw.psp || typeof raw.psp.enabled !== 'boolean') {
     fail(`${name}: psp.enabled boolean required`);
   }
+  if (
+    raw.status != null &&
+    !['pilot', 'supply', 'disabled'].includes(raw.status)
+  ) {
+    fail(`${name}: status must be pilot | supply | disabled`);
+  }
 
   if (!process.exitCode) {
-    console.log(`✓ ${name} (${raw.displayName})`);
+    console.log(
+      `✓ ${name} (${raw.displayName}${raw.status ? ` · ${raw.status}` : ''})`,
+    );
   }
 }
 

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useState,
   type FormEvent,
 } from "react";
@@ -21,20 +22,25 @@ import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListin
 import { ApiError, apiFetch } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import { addToCart } from "../../lib/cart";
-import { COMMUNITIES } from "../../lib/communities";
 import {
-  RADIUS_OPTIONS,
+  cityDisplayName,
+  communitiesForCity,
+  normalizeCityKey,
+} from "../../lib/communities";
+import {
   SORT_OPTIONS,
   buildSearchQueryString,
   compactFilters,
   createSavedSearch,
   favouriteListing,
   looksLikeNaturalLanguage,
+  radiusOptionsForCity,
   searchFiltersFromParams,
   searchListings,
   searchNl,
   unfavouriteListing,
 } from "../../lib/discovery";
+import { listRegions, type RegionCity } from "../../lib/region";
 import { CONDITIONS, CONDITION_LABELS } from "../../lib/listings";
 import type {
   MeResponse,
@@ -74,6 +80,20 @@ export default function SearchPageClient() {
   } | null>(null);
   const [savingSearch, setSavingSearch] = useState(false);
   const [meId, setMeId] = useState<string | null>(null);
+  const [cities, setCities] = useState<RegionCity[]>([]);
+
+  const cityLabel = useMemo(
+    () => cityDisplayName(draft.city || "Lagos"),
+    [draft.city],
+  );
+  const communityOptions = useMemo(
+    () => communitiesForCity(draft.city || "lagos"),
+    [draft.city],
+  );
+  const radiusOptions = useMemo(
+    () => radiusOptionsForCity(cityLabel),
+    [cityLabel],
+  );
 
   useEffect(() => {
     const token = getAccessToken();
@@ -89,6 +109,12 @@ export default function SearchPageClient() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    void listRegions()
+      .then(setCities)
+      .catch(() => undefined);
   }, []);
 
   const priceMinNaira =
@@ -324,6 +350,44 @@ export default function SearchPageClient() {
           </h2>
 
           <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium" htmlFor="f-city">
+              City
+            </label>
+            <select
+              id="f-city"
+              value={normalizeCityKey(draft.city || "lagos")}
+              onChange={(e) => {
+                const nextCity = normalizeCityKey(e.target.value);
+                const label = cityDisplayName(nextCity);
+                const allowed = communitiesForCity(nextCity);
+                const community =
+                  draft.community &&
+                  (allowed as readonly string[]).includes(draft.community)
+                    ? draft.community
+                    : undefined;
+                setDraft((d) => ({
+                  ...d,
+                  city: label,
+                  community,
+                }));
+              }}
+              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-2 text-sm"
+            >
+              {(cities.length
+                ? cities
+                : [
+                    { key: "lagos", displayName: "Lagos" },
+                    { key: "abuja", displayName: "Abuja" },
+                  ]
+              ).map((c) => (
+                <option key={c.key} value={normalizeCityKey(c.key || c.city)}>
+                  {c.displayName || c.key}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium" htmlFor="f-community">
               Community
             </label>
@@ -336,7 +400,7 @@ export default function SearchPageClient() {
               className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-2 text-sm"
             >
               <option value="">Any</option>
-              {COMMUNITIES.map((c) => (
+              {communityOptions.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -347,7 +411,7 @@ export default function SearchPageClient() {
           <div>
             <p className="mb-1.5 text-sm font-medium">Radius</p>
             <div className="flex flex-wrap gap-1.5">
-              {RADIUS_OPTIONS.map((opt) => (
+              {radiusOptions.map((opt) => (
                 <Chip
                   key={String(opt.value)}
                   selected={

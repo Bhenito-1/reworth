@@ -44,7 +44,9 @@ describe('RegionConfigService — config-only city expansion', () => {
 
     const city = svc.getCity('ibadan');
     expect(city?.displayName).toBe('Ibadan');
-    expect(svc.listCities().some((c) => c.city === 'ibadan')).toBe(true);
+    expect(svc.listCities({ all: true }).some((c) => c.city === 'ibadan')).toBe(
+      true,
+    );
 
     // geo
     const geo = svc.getCommunityGeo('ibadan', 'Bodija');
@@ -61,6 +63,57 @@ describe('RegionConfigService — config-only city expansion', () => {
     expect(svc.resolveSearchCity('ibadan')).toBe('Ibadan');
     expect(svc.resolveAnalyticsCity('ibadan')).toBe('ibadan');
     expect(svc.pspEnabled('ibadan')).toBe(true);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('lists only status=pilot cities by default', () => {
+    const dir = join(tmpdir(), `reworth-pilot-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'lagos.json'),
+      JSON.stringify({
+        ...IBADAN,
+        city: 'lagos',
+        displayName: 'Lagos',
+        status: 'pilot',
+        communities: ['OTHER_LAGOS'],
+        geocoding: {
+          OTHER_LAGOS: { lat: 6.52, lng: 3.37, label: 'Lagos' },
+        },
+      }),
+    );
+    writeFileSync(
+      join(dir, 'abuja.json'),
+      JSON.stringify({
+        ...IBADAN,
+        city: 'abuja',
+        displayName: 'Abuja',
+        status: 'pilot',
+        communities: ['OTHER_ABUJA'],
+        geocoding: {
+          OTHER_ABUJA: { lat: 9.07, lng: 7.4, label: 'Abuja' },
+        },
+      }),
+    );
+    writeFileSync(
+      join(dir, 'ibadan.json'),
+      JSON.stringify({ ...IBADAN, status: 'supply' }),
+    );
+
+    const config = {
+      get: (k: string) => (k === 'REGION_CONFIG_DIR' ? dir : undefined),
+    } as unknown as ConfigService;
+    const svc = new RegionConfigService(config);
+    svc.reload(dir);
+
+    const pilot = svc.listCities();
+    expect(pilot.map((c) => c.city).sort()).toEqual(['abuja', 'lagos']);
+    expect(svc.listCities({ all: true }).map((c) => c.city).sort()).toEqual([
+      'abuja',
+      'ibadan',
+      'lagos',
+    ]);
 
     rmSync(dir, { recursive: true, force: true });
   });

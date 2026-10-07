@@ -14,7 +14,7 @@
 | --- | --- |
 | Mobile tools on home | Shipped (this tranche) |
 | Expo push provider + register | Shipped (mock default; expo when env set) |
-| EAS / app.json | Stubbed — set real `extra.eas.projectId` |
+| EAS / app.json | Stubbed — set real `extra.eas.projectId`; App Links / Universal Links wired (`associatedDomains` + `intentFilters` + `public/.well-known/*`) |
 | Ibadan config | Shipped |
 | NDPR + k6 | Docs/scripts stubbed |
 

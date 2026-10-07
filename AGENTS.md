@@ -32,7 +32,7 @@ Functional · UX · **mobile behaviour verified on iOS + Android; web parity del
 | MVP Risk / Security | **`v0.9-risk-security`** (+ harden) |
 | Status | **Shipped** (`v1.0.3-design-elevation`) |
 | Cart & inventory | **Shipped** (ADR-011) — cart, unit stock, seller confirm/reject, cancel-before-pay, guarded listing removal |
-| Next | Remaining DESIGN.md screen elevation (Sell/PDP/Chat/Home rails); Boost/Plus web parity; staging k6 UAT |
+| Next | Remaining DESIGN.md screen elevation (Sell/PDP/Chat/Home rails); Boost/Plus web parity; Maestro ≤60s device recording; staging k6 UAT |
 
 ## MVP / post-launch
 
@@ -42,10 +42,13 @@ Post-launch through `v2.2-monetization`: swap → communities → intelligence �
 ## Known gaps
 
 - Expo push mock; staging k6 certification; pen-test / NDPR / store sign-offs
+- Real device Maestro ≤60s recording still open (`e2e/mobile/00_demo_60s.yaml`)
 - L1 phone verification deferred (SMS OTP removed — ADR-010)
-- Cross-border: ADR-007 design only; next cities via config + seed
+- Universal / App Links stubs: fill AASA TEAMID + Play SHA before prod
+- Cross-border: ADR-007 design only; consumer pilot = SW + Edo + Abuja + PH + Kano (`config/regions`, `status=pilot`)
 - Web companion for Boost / Featured / Seller Plus (mobile full — see `docs/MOBILE_PARITY.md`)
 - Promoted search self-serve later (ADR-009 admin-assigned)
+- Payments still mock-default in local (Paystack adapter present)
 - NSFW image moderation remains the rule-based mock (`IMAGE_MODERATION_PROVIDER`). Image-title checks use the Roboflow workflow in `apps/api/src/vision` and enter moderation as a review signal (mismatch, low confidence, or a failed check → admin review)
 
 See `docs/PHASE_STATUS.md`, `docs/BUYER_JOURNEY_AUDIT.md`, `docs/METRICS.md`, `docs/ADRS/009-promoted-search-admin.md`.

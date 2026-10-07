@@ -1,6 +1,6 @@
 # ReWorth Maestro — 03 Buy / checkout / review (stub)
 # Buyer Ayo; assumes LIVE listing + mock PSP
-appId: ng.reworth.mobile
+appId: com.reworth.app
 ---
 - launchApp
 - tapOn: "Search"

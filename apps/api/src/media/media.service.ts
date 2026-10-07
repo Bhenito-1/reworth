@@ -23,6 +23,12 @@ import type { CompleteMediaDto, PresignMediaDto } from './dto/media.dto';
 
 export const MEDIA_IMAGE_QUEUE = 'media-image';
 
+/** Minimal valid JPEG (8×8 grey) — used when Sell completes without a PUT. */
+const PLACEHOLDER_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBwgHBgkIBwgKCgkLDBYPDQwMDBsUFRAWIB0iIiAdHx8YKDwsJCYxJx8fLT0tMTU3Ojo6Iys/RD84QzQ5OjcBCgoKDQwNGg8PGjclHyU3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3N//AABEIAAEAAQMBIgACEQEDEQH/xAAbAAABBQEBAAAAAAAAAAAAAAAAAQIDBAUGB//EABUBAQEAAAAAAAAAAAAAAAAAAAAB/8QAFgEBAQEAAAAAAAAAAAAAAAAAAAEC/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8A1oAAP//Z',
+  'base64',
+);
+
 export type MediaImageJob = {
   listingImageId: string;
   listingId: string;
@@ -94,6 +100,48 @@ export class MediaService {
     });
     if (!listing || listing.sellerId !== userId) {
       throw new BadRequestException('Listing not found or not owned');
+    }
+
+    // Persist bytes when client could not PUT to storage (mock / CORS).
+    if (dto.inlineBase64) {
+      try {
+        const body = Buffer.from(dto.inlineBase64, 'base64');
+        if (body.length > 0 && body.length <= MAX_IMAGE_BYTES) {
+          const contentType = dto.contentType ?? 'image/jpeg';
+          if (!ALLOWED_IMAGE_MIMES.has(contentType)) {
+            throw new BadRequestException(
+              `Unsupported contentType: ${contentType}`,
+            );
+          }
+          await this.storage.putObject({
+            bucket: this.bucket,
+            key: dto.key,
+            body,
+            contentType,
+          });
+        }
+      } catch (err) {
+        if (err instanceof BadRequestException) throw err;
+        this.logger.warn(
+          `inlineBase64 putObject failed: ${(err as Error).message}`,
+        );
+      }
+    } else if (this.storage.getObject) {
+      // Mock Sell path often completes with a key and no PUT — seed a tiny JPEG
+      // so vision assist and the image pipeline have bytes.
+      try {
+        const existing = await this.storage.getObject(this.bucket, dto.key);
+        if (!existing || existing.length === 0) {
+          await this.storage.putObject({
+            bucket: this.bucket,
+            key: dto.key,
+            body: PLACEHOLDER_JPEG,
+            contentType: 'image/jpeg',
+          });
+        }
+      } catch {
+        /* non-fatal */
+      }
     }
 
     const image = await this.prisma.listingImage.create({

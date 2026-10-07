@@ -68,12 +68,46 @@ export function categoryLabel(category: string): string {
 /** Parse reworth:// or path deep links for in-app routing. */
 export function parseDeepLink(
   deepLink: string | null | undefined,
-): { kind: "order" | "dispute" | "chat" | "listing" | "selling" | "other"; id?: string } | null {
+): {
+  kind:
+    | "order"
+    | "dispute"
+    | "chat"
+    | "listing"
+    | "selling"
+    | "moving_sale"
+    | "community"
+    | "bundle"
+    | "storefront"
+    | "other";
+  id?: string;
+} | null {
   if (!deepLink) return null;
   let path = deepLink.trim();
+  try {
+    if (/^https?:\/\//i.test(path)) {
+      const u = new URL(path);
+      path = u.pathname + u.search;
+    }
+  } catch {
+    /* keep path */
+  }
   if (path.startsWith("reworth://")) {
     path = "/" + path.slice("reworth://".length).replace(/^\/+/, "");
   }
+  if (!path.startsWith("/")) path = `/${path}`;
+
+  const storefront = path.match(/^\/u\/([\w.-]+)/i) || path.match(/^\/@([\w.-]+)/);
+  if (storefront) return { kind: "storefront", id: storefront[1] };
+
+  const bundle = path.match(/^\/ask\/bundles\/([\w-]+)/i);
+  if (bundle) return { kind: "bundle", id: bundle[1] };
+
+  const moving = path.match(/^\/moving-sales\/([\w-]+)/i);
+  if (moving) return { kind: "moving_sale", id: moving[1] };
+  const community = path.match(/^\/communities\/([\w-]+)/i);
+  if (community) return { kind: "community", id: community[1] };
+
   const m =
     path.match(/^\/orders\/([\w-]+)/i) ||
     path.match(/^\/disputes\/([\w-]+)/i) ||

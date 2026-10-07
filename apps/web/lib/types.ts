@@ -151,6 +151,11 @@ export type PublicListing = {
   instantBuyEligible?: boolean;
   /** Phase 3.2 — schedule circular hand-off after N unsold days. */
   donateIfUnsoldDays?: number | null;
+  /** Phase 3.3 — monetization badges */
+  boosted?: boolean;
+  featured?: boolean;
+  boostedUntil?: string | null;
+  featuredUntil?: string | null;
   /** Owner publish path — moderation rejection reasons. */
   moderationReasons?: string[];
   /** Owner view of an admin rejection note. */
@@ -314,6 +319,7 @@ export type SearchFilters = {
   priceMaxKobo?: number;
   condition?: string;
   community?: string;
+  city?: string;
   radiusKm?: RadiusKm;
   lat?: number;
   lng?: number;

@@ -9,9 +9,11 @@ import { join, resolve } from 'path';
 import type { GeocodeResult } from '../providers/geocoding.provider';
 import {
   DEFAULT_CITY_KEY,
+  DEFAULT_PILOT_CITY_KEYS,
   REGION_REQUIRED_KEYS,
   type RegionConfig,
   type RegionLogistics,
+  type RegionStatus,
 } from './region-config.types';
 
 function normalizeCityKey(key: string): string {
@@ -129,11 +131,65 @@ export class RegionConfigService implements OnModuleInit {
     }
   }
 
-  listCities(): Array<{ city: string; displayName: string }> {
+  listCities(opts?: {
+    all?: boolean;
+  }): Array<{
+    city: string;
+    displayName: string;
+    status: RegionStatus;
+    key: string;
+  }> {
     this.ensureLoaded();
+    const pilotOverride = this.pilotCitiesFromEnv();
     return [...this.byCity.values()]
-      .map((c) => ({ city: c.city, displayName: c.displayName }))
+      .map((c) => {
+        const status = this.resolveStatus(c);
+        return {
+          city: c.city,
+          key: c.city,
+          displayName: c.displayName,
+          status,
+        };
+      })
+      .filter((c) => {
+        if (opts?.all) return c.status !== 'disabled';
+        if (pilotOverride) return pilotOverride.has(c.city);
+        return c.status === 'pilot';
+      })
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  /** Cities in the active consumer pilot (SW + Abuja + PH by default). */
+  pilotCityKeys(): Set<string> {
+    return this.pilotCitiesFromEnv() ?? new Set(DEFAULT_PILOT_CITY_KEYS);
+  }
+
+  private pilotCitiesFromEnv(): Set<string> | null {
+    const fromEnv =
+      this.config.get<string>('REGION_PILOT_CITIES') ??
+      process.env.REGION_PILOT_CITIES;
+    if (!fromEnv?.trim()) return null;
+    return new Set(
+      fromEnv
+        .split(',')
+        .map((s) => normalizeCityKey(s))
+        .filter(Boolean),
+    );
+  }
+
+  private resolveStatus(cfg: RegionConfig): RegionStatus {
+    if (
+      cfg.status === 'pilot' ||
+      cfg.status === 'supply' ||
+      cfg.status === 'disabled'
+    ) {
+      return cfg.status;
+    }
+    return DEFAULT_PILOT_CITY_KEYS.includes(
+      normalizeCityKey(cfg.city) as (typeof DEFAULT_PILOT_CITY_KEYS)[number],
+    )
+      ? 'pilot'
+      : 'supply';
   }
 
   getCity(key: string): RegionConfig | null {

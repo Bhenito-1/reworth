@@ -1,0 +1,33 @@
+{
+  "city": "ogun",
+  "displayName": "Ogun",
+  "timezone": "Africa/Lagos",
+  "communities": [
+    "ABEOKUTA",
+    "SANGO_OTA",
+    "IFO",
+    "SAGAMU",
+    "IJEBU_ODE",
+    "OTHER_OGUN"
+  ],
+  "geocoding": {
+    "ABEOKUTA": { "lat": 7.1475, "lng": 3.3619, "label": "Abeokuta" },
+    "SANGO_OTA": { "lat": 6.7042, "lng": 3.2313, "label": "Sango-Ota" },
+    "IFO": { "lat": 6.815, "lng": 3.195, "label": "Ifo" },
+    "SAGAMU": { "lat": 6.8485, "lng": 3.6463, "label": "Sagamu" },
+    "IJEBU_ODE": { "lat": 6.8205, "lng": 3.9172, "label": "Ijebu-Ode" },
+    "OTHER_OGUN": { "lat": 7.0, "lng": 3.45, "label": "Ogun" }
+  },
+  "logistics": {
+    "baseFeeKobo": 120000,
+    "perKmKobo": 12000
+  },
+  "priceBands": {
+    "budget": { "minKobo": 0, "maxKobo": 4000000 },
+    "mid": { "minKobo": 4000000, "maxKobo": 35000000 },
+    "premium": { "minKobo": 35000000, "maxKobo": null }
+  },
+  "sms": { "enabled": true, "provider": "termii" },
+  "psp": { "enabled": true, "provider": "paystack" },
+  "status": "pilot"
+}

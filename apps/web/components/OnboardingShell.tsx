@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { brandPublic } from "../lib/brand";
 
 type OnboardingShellProps = {
   children: ReactNode;
@@ -7,6 +8,9 @@ type OnboardingShellProps = {
   totalSteps?: number;
   title: string;
   subtitle?: string;
+  /** Public path under /brand/… */
+  illustration?: string;
+  illustrationAlt?: string;
 };
 
 export function OnboardingShell({
@@ -15,6 +19,8 @@ export function OnboardingShell({
   totalSteps = 4,
   title,
   subtitle,
+  illustration,
+  illustrationAlt = "",
 }: OnboardingShellProps) {
   return (
     <main className="relative min-h-[100dvh] overflow-hidden bg-[var(--rw-bg)] text-[var(--rw-ink)]">
@@ -23,23 +29,7 @@ export function OnboardingShell({
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "linear-gradient(165deg, #FAF9F7 0%, #F5F2EC 45%, #E8F5EF 100%)",
-        }}
-      />
-      <div
-        aria-hidden
-        className="rw-hero-glow pointer-events-none absolute -right-16 top-0 h-72 w-72 rounded-full"
-        style={{
-          background:
-            "radial-gradient(circle, rgba(14,159,110,0.18) 0%, transparent 70%)",
-        }}
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-20 bottom-10 h-56 w-56 rounded-full"
-        style={{
-          background:
-            "radial-gradient(circle, rgba(201,162,39,0.1) 0%, transparent 70%)",
+            "radial-gradient(ellipse 70% 50% at 80% 0%, rgba(217,106,50,0.12), transparent 55%), radial-gradient(ellipse 40% 35% at 10% 90%, rgba(201,162,39,0.1), transparent 50%), linear-gradient(165deg, #FCFAF6 0%, #F3F0EA 55%, #F8E6DC 100%)",
         }}
       />
 
@@ -47,13 +37,14 @@ export function OnboardingShell({
         <header className="mb-10 flex items-center justify-between gap-4">
           <Link
             href="/"
-            className="group flex items-center gap-2 text-xl font-semibold tracking-tight text-[var(--rw-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
           >
-            <span
-              className="inline-flex h-2 w-2 rounded-full bg-[var(--rw-accent)] transition-transform group-hover:scale-125"
-              aria-hidden
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={brandPublic.logo}
+              alt="ReWorth"
+              className="h-8 w-auto"
             />
-            ReWorth
           </Link>
           {step !== undefined ? (
             <p
@@ -87,6 +78,16 @@ export function OnboardingShell({
         ) : null}
 
         <div className="rw-fade-up flex flex-1 flex-col">
+          {illustration ? (
+            <div className="mb-6 flex h-40 items-center justify-center overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-bg-elevated)] sm:h-48">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={illustration}
+                alt={illustrationAlt}
+                className="h-full w-full object-contain p-4"
+              />
+            </div>
+          ) : null}
           <h1 className="text-3xl font-semibold tracking-tight text-[var(--rw-ink)] sm:text-4xl">
             {title}
           </h1>

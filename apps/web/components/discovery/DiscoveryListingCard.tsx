@@ -25,7 +25,7 @@ export function DiscoveryListingCard({
   className = "",
 }: Props) {
   const images = [...listing.images].sort((a, b) => a.sortOrder - b.sortOrder);
-  const src = listingImageUrl(images[0]) ?? undefined;
+  const src = listingImageUrl(images[0]) ?? "/brand/illustrations/listing-placeholder.png";
 
   return (
     <div className={`relative h-full ${className}`}>

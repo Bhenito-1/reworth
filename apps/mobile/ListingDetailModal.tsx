@@ -1,15 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
+  Dimensions,
   Image,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { BottomSheet } from "./components/BottomSheet";
+import { Skeleton } from "./components/Skeleton";
 import { ApiError, apiFetch } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import {
@@ -22,7 +26,7 @@ import {
   getMeFavourites,
   unfavouriteListing,
 } from "./lib/discovery";
-import { getListing } from "./lib/listings";
+import { getListing, listingShareUrl } from "./lib/listings";
 import { addToCart } from "./lib/cart";
 import { fetchRecommendations } from "./lib/intelligence";
 import {
@@ -40,6 +44,14 @@ import {
   createSwapProposal,
   myLiveListings,
 } from "./lib/swap";
+import {
+  INSPECTION_SLOTS,
+  inspectedBadgeLabel,
+  isVehicleListing,
+  payInspection,
+  requestInspection,
+  scheduleInspection,
+} from "./lib/verticals";
 import { formatResponseShort } from "./lib/trust";
 import {
   formatNgnFromKobo,
@@ -47,6 +59,11 @@ import {
   type MeResponse,
   type PublicListing,
 } from "./lib/types";
+import { hapticLight } from "./theme/haptics";
+import { useColors } from "./theme/ThemeProvider";
+import { colors } from "./theme/tokens";
+
+const GALLERY_W = Dimensions.get("window").width;
 
 type Props = {
   listingId: string | null;
@@ -63,6 +80,7 @@ export function ListingDetailModal({
   onClose,
   dismissLabel = "Close",
   onOpenChat,
+  onBuyNow,
   onOpenSeller,
   onOpenCart,
 }: Props) {
@@ -98,6 +116,21 @@ export function ListingDetailModal({
   const [featuredQuote, setFeaturedQuote] = useState<FeaturedQuote | null>(null);
   const [boostBusy, setBoostBusy] = useState(false);
   const [quoteBusy, setQuoteBusy] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [inspectOpen, setInspectOpen] = useState(false);
+  const [inspectBusy, setInspectBusy] = useState(false);
+  const [inspectId, setInspectId] = useState<string | null>(null);
+  const [inspectSlot, setInspectSlot] = useState<string>(INSPECTION_SLOTS[0]);
+  const c = useColors();
+
+  const gallery = useMemo(() => {
+    if (!listing?.images?.length) return [] as string[];
+    return [...listing.images]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((img) => listingImageUrl(img))
+      .filter((u): u is string => Boolean(u));
+  }, [listing]);
 
   async function reloadListing(id: string, token?: string | null) {
     const data = await getListing(id, token);
@@ -112,6 +145,8 @@ export function ListingDetailModal({
       setSimilar([]);
       setMeId(null);
       setBoostOpen(false);
+      setGalleryIndex(0);
+      setDescExpanded(false);
       return;
     }
     let cancelled = false;
@@ -301,7 +336,7 @@ export function ListingDetailModal({
     setSwapBusy(true);
     try {
       const cashComponentKobo = Math.round(Number(swapCashNaira || 0) * 100);
-      await createSwapProposal(token, listingId, {
+      const proposal = await createSwapProposal(token, listingId, {
         offeredListingId: swapSelected,
         cashComponentKobo: Number.isFinite(cashComponentKobo)
           ? cashComponentKobo
@@ -309,10 +344,43 @@ export function ListingDetailModal({
       });
       setSwapOpen(false);
       setToast("Swap proposal sent");
+      if (proposal.conversationId) {
+        onOpenChat?.(proposal.conversationId);
+      }
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : "Proposal failed");
     } finally {
       setSwapBusy(false);
+    }
+  }
+
+  async function startInspection() {
+    if (!listingId) return;
+    const token = await getAccessToken();
+    if (!token) {
+      setToast("Sign in to book inspection");
+      return;
+    }
+    setInspectBusy(true);
+    try {
+      const row = await requestInspection(token, listingId, {
+        slotLabel: inspectSlot,
+      });
+      setInspectId(row.id);
+      const paid = await payInspection(token, row.id);
+      if (paid.checkoutUrl) {
+        await Linking.openURL(paid.checkoutUrl).catch(() => undefined);
+      }
+      await scheduleInspection(token, row.id, { slotLabel: inspectSlot });
+      setInspectOpen(false);
+      setToast("Inspection booked");
+      await reloadListing(listingId, token);
+    } catch (err) {
+      setToast(
+        err instanceof ApiError ? err.message : "Inspection booking failed",
+      );
+    } finally {
+      setInspectBusy(false);
     }
   }
 
@@ -385,11 +453,6 @@ export function ListingDetailModal({
     listing?.sellingMode === "SWAP" || listing?.sellingMode === "SWAP_CASH";
   const isGiveAway = listing?.sellingMode === "GIVE_AWAY";
   const isOwner = Boolean(meId && listing?.seller.id === meId);
-  const hero = listing
-    ? listingImageUrl(
-        [...listing.images].sort((a, b) => a.sortOrder - b.sortOrder)[0],
-      )
-    : null;
 
   return (
     <Modal
@@ -398,53 +461,142 @@ export function ListingDetailModal({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View style={styles.safe}>
-        <View style={styles.header}>
-          <Text style={styles.brand}>ReWorth</Text>
-          <Pressable
-            onPress={onClose}
-            accessibilityRole="button"
-            accessibilityLabel={dismissLabel}
-          >
-            <Text style={styles.close}>{dismissLabel}</Text>
-          </Pressable>
+      <View style={[styles.safe, { backgroundColor: c.canvas }]}>
+        <View style={[styles.header, { borderBottomColor: c.border }]}>
+          <Text style={[styles.brand, { color: c.ink }]}>ReWorth</Text>
+          <View style={styles.headerActions}>
+            {listingId ? (
+              <Pressable
+                onPress={() => {
+                  void (async () => {
+                    const url = listingShareUrl(listingId);
+                    const title = listing?.title || "ReWorth listing";
+                    await Share.share({
+                      message: `${title} on ReWorth\n${url}`,
+                      title,
+                      url,
+                    }).catch(() => undefined);
+                  })();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Share listing"
+                testID="pdp-share"
+                hitSlop={8}
+                style={{ minHeight: 44, justifyContent: "center", paddingHorizontal: 8 }}
+              >
+                <Text style={[styles.close, { color: c.ink }]}>Share</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel={dismissLabel}
+              testID="pdp-close"
+              hitSlop={8}
+              style={{ minHeight: 44, justifyContent: "center" }}
+            >
+              <Text style={[styles.close, { color: c.orange }]}>{dismissLabel}</Text>
+            </Pressable>
+          </View>
         </View>
 
         {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color="#0E9F6E" />
+          <View style={{ padding: 16, gap: 12 }}>
+            <Skeleton height={280} />
+            <Skeleton height={24} width="40%" />
+            <Skeleton height={20} width="70%" />
+            <Skeleton height={48} />
           </View>
         ) : error || !listing ? (
           <View style={styles.center}>
-            <Text style={styles.error}>{error ?? "Unavailable"}</Text>
+            <Text style={[styles.error, { color: c.error }]}>
+              {error ?? "Unavailable"}
+            </Text>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.body}>
-            {hero ? (
-              <Image
-                source={{ uri: hero }}
-                style={styles.hero}
-                resizeMode="cover"
-                accessibilityLabel="Listing photo"
-              />
-            ) : (
-              <View style={[styles.hero, styles.heroEmpty]}>
-                <Text style={styles.muted}>No photo</Text>
-              </View>
-            )}
+          <>
+          <ScrollView
+            contentContainerStyle={[styles.body, { paddingBottom: 120 }]}
+          >
+            <View>
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={(e) => {
+                  const i = Math.round(
+                    e.nativeEvent.contentOffset.x / GALLERY_W,
+                  );
+                  setGalleryIndex(i);
+                }}
+                accessibilityLabel="Listing photo gallery"
+              >
+                {(gallery.length ? gallery : [null]).map((uri, i) =>
+                  uri ? (
+                    <Image
+                      key={`${uri}-${i}`}
+                      source={{ uri }}
+                      style={[styles.hero, { width: GALLERY_W }]}
+                      resizeMode="cover"
+                      accessibilityLabel={`Photo of ${listing.title || "listing"}, ${i + 1} of ${gallery.length || 1}`}
+                    />
+                  ) : (
+                    <View
+                      key="empty"
+                      style={[
+                        styles.hero,
+                        styles.heroEmpty,
+                        { width: GALLERY_W, backgroundColor: c.emeraldWash },
+                      ]}
+                    >
+                      <Text style={{ color: c.muted }}>No photo</Text>
+                    </View>
+                  ),
+                )}
+              </ScrollView>
+              {gallery.length > 0 ? (
+                <View
+                  style={[styles.counterChip, { backgroundColor: c.surface }]}
+                  accessibilityLabel={`Photo ${galleryIndex + 1} of ${gallery.length}`}
+                >
+                  <Text style={{ color: c.ink, fontSize: 13, fontWeight: "600" }}>
+                    {galleryIndex + 1}/{gallery.length}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
 
-            <Text style={styles.price}>
-              {isGiveAway
-                ? "Free"
-                : isSwap
-                  ? "Swap"
-                  : formatNgnFromKobo(listing.priceKobo)}
-              {!isGiveAway && !isSwap && listing.negotiable
-                ? " · Negotiable"
-                : ""}
+            <View style={styles.priceRow}>
+              <Text style={[styles.price, { color: c.ink }]}>
+                {isGiveAway
+                  ? "Free"
+                  : isSwap
+                    ? "Swap"
+                    : formatNgnFromKobo(listing.priceKobo)}
+              </Text>
+              {!isGiveAway && !isSwap && listing.negotiable ? (
+                <View
+                  style={[styles.negoChip, { backgroundColor: c.emeraldWash }]}
+                >
+                  <Text style={{ color: c.emerald, fontSize: 13, fontWeight: "600" }}>
+                    Negotiable
+                  </Text>
+                </View>
+              ) : null}
+              {listing.buyerProtection ? (
+                <View
+                  style={[styles.negoChip, { borderColor: c.border, borderWidth: StyleSheet.hairlineWidth }]}
+                >
+                  <Text style={{ color: c.muted, fontSize: 12, fontWeight: "600" }}>
+                    Buyer Protection
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={[styles.title, { color: c.ink }]}>
+              {listing.title || "Untitled"}
             </Text>
-            <Text style={styles.title}>{listing.title || "Untitled"}</Text>
-            <Text style={styles.meta}>
+            <Text style={[styles.meta, { color: c.muted }]}>
               {listing.condition} · {listing.community || "Lagos"}
             </Text>
             {(() => {
@@ -544,9 +696,19 @@ export function ListingDetailModal({
             )}
 
             <Text style={styles.section}>Description</Text>
-            <Text style={styles.copy}>
+            <Text style={styles.copy} numberOfLines={descExpanded ? undefined : 2}>
               {listing.description || "No description."}
             </Text>
+            {listing.description && listing.description.length > 80 ? (
+              <Pressable
+                onPress={() => setDescExpanded((v) => !v)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.profileLink}>
+                  {descExpanded ? "Less" : "More"}
+                </Text>
+              </Pressable>
+            ) : null}
             {!isOwner && !isSwap && !isGiveAway ? (
               <View style={styles.cartBlock}>
                 <View style={styles.cartCue}>
@@ -715,95 +877,201 @@ export function ListingDetailModal({
               </View>
             ) : null}
 
-            <View style={styles.actions}>
-              {isOwner ? (
-                <Action
-                  label="Boost listing"
-                  primary
-                  onPress={() => setBoostOpen(true)}
-                />
-              ) : null}
-              {isSwap ? (
-                <Action
-                  label={swapBusy ? "Loading…" : "Swap"}
-                  primary={!isOwner}
-                  onPress={() => {
-                    if (!swapBusy) void openSwapSheet();
-                  }}
-                />
-              ) : isGiveAway ? (
-                <Action
-                  label={claimBusy ? "Claiming…" : "Claim this item"}
-                  primary={!isOwner}
-                  onPress={() => {
-                    if (!claimBusy) void claimGiveaway();
-                  }}
-                />
-              ) : !isOwner ? (
-                <>
-                  <Action
-                    label="Make offer"
-                    onPress={() => setOfferOpen(true)}
-                  />
-                </>
-              ) : null}
-              {!isOwner ? (
-                <Action
-                  label={chatBusy ? "Opening…" : "Chat"}
-                  onPress={() => {
-                    if (!chatBusy) void startChat();
-                  }}
-                />
-              ) : null}
-              <Action
-                label={saved ? "♥" : "♡"}
-                onPress={() => {
-                  if (!saving) void toggleSave();
-                }}
-              />
-              <Action
-                label="Share"
-                onPress={() =>
-                  setToast(`Listing ${listing.id} — copy from web for now`)
-                }
-              />
-            </View>
-
             {toast ? (
               <Pressable onPress={() => setToast(null)}>
                 <Text style={styles.toast}>{toast}</Text>
               </Pressable>
             ) : null}
           </ScrollView>
-        )}
 
-        <Modal visible={offerOpen} animationType="slide" transparent>
-          <View style={styles.sheetBackdrop}>
-            <View style={styles.sheet}>
-              <Text style={styles.sheetTitle}>Make offer</Text>
-              <Text style={styles.label}>Amount (₦)</Text>
-              <TextInput
-                style={styles.input}
-                value={offerNaira}
-                onChangeText={setOfferNaira}
-                keyboardType="numeric"
-                placeholder="45000"
-              />
+          <View style={[styles.stickyBar, { backgroundColor: c.surface, borderTopColor: c.border }]}>
+            {isOwner ? (
+              <>
+                {listing && isVehicleListing(listing) && !inspectedBadgeLabel(listing) ? (
+                  <Pressable
+                    style={[styles.stickyOutline, { borderColor: c.border }]}
+                    onPress={() => setInspectOpen(true)}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.stickyOutlineText, { color: c.ink }]}>
+                      Book inspection
+                    </Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  style={[styles.stickyPrimary, { backgroundColor: c.orange, flex: 1 }]}
+                  onPress={() => setBoostOpen(true)}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.stickyPrimaryText}>Boost listing</Text>
+                </Pressable>
+              </>
+            ) : isSwap ? (
               <Pressable
-                style={[styles.primaryBtn, offerBusy && styles.disabled]}
-                disabled={offerBusy}
-                onPress={() => void submitOffer()}
+                style={[styles.stickyPrimary, { backgroundColor: c.orange, flex: 1 }]}
+                onPress={() => {
+                  if (!swapBusy) void openSwapSheet();
+                }}
+                accessibilityRole="button"
               >
-                <Text style={styles.primaryBtnText}>
-                  {offerBusy ? "Sending…" : "Send offer"}
+                <Text style={styles.stickyPrimaryText}>
+                  {swapBusy ? "…" : "Propose swap"}
                 </Text>
               </Pressable>
-              <Pressable onPress={() => setOfferOpen(false)}>
-                <Text style={styles.cancel}>Cancel</Text>
+            ) : isGiveAway ? (
+              <Pressable
+                style={[styles.stickyPrimary, { backgroundColor: c.orange, flex: 1 }]}
+                onPress={() => {
+                  if (!claimBusy) void claimGiveaway();
+                }}
+                accessibilityRole="button"
+              >
+                <Text style={styles.stickyPrimaryText}>
+                  {claimBusy ? "…" : "Claim this item"}
+                </Text>
               </Pressable>
-            </View>
+            ) : (
+              <>
+                <Pressable
+                  style={[styles.stickyOutline, { borderColor: c.border }]}
+                  onPress={() => {
+                    if (!chatBusy) void startChat();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Chat"
+                  testID="pdp-chat"
+                >
+                  <Text style={{ color: c.ink, fontWeight: "600" }}>
+                    {chatBusy ? "…" : "Chat"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={styles.stickyGhost}
+                  onPress={() => {
+                    void hapticLight();
+                    if (!saving) void toggleSave();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={saved ? "Unsave" : "Save"}
+                  testID="pdp-save"
+                >
+                  <Text style={{ color: saved ? c.orange : c.ink, fontSize: 18 }}>
+                    ♥
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.stickyOutline, { borderColor: c.border, flex: 1 }]}
+                  onPress={() => setOfferOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Make offer"
+                  testID="pdp-offer"
+                >
+                  <Text style={{ color: c.ink, fontWeight: "600" }}>Offer</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.stickyPrimary, { backgroundColor: c.orange, flex: 1.2 }]}
+                  onPress={() => {
+                    if (listingId) onBuyNow?.(listingId);
+                    else setToast("Coming soon");
+                  }}
+                  accessibilityRole="button"
+                  testID="pdp-buy"
+                >
+                  <Text style={styles.stickyPrimaryText}>Buy Now</Text>
+                </Pressable>
+              </>
+            )}
           </View>
-        </Modal>
+          </>
+        )}
+
+        <BottomSheet
+          visible={offerOpen}
+          title="Make offer"
+          onClose={() => setOfferOpen(false)}
+        >
+          {listing ? (
+            <Text style={styles.muted}>
+              Asking {formatNgnFromKobo(listing.priceKobo)}
+              {listing.negotiable ? " · negotiable" : ""}
+            </Text>
+          ) : null}
+          <Text style={styles.label}>Your offer (₦)</Text>
+          <TextInput
+            style={styles.input}
+            value={offerNaira}
+            onChangeText={setOfferNaira}
+            keyboardType="numeric"
+            placeholder="45000"
+            accessibilityLabel="Offer amount in naira"
+          />
+          {listing && listing.priceKobo > 0 ? (
+            <View style={styles.offerChips}>
+              {[0.9, 0.85, 0.8].map((pct) => {
+                const naira = Math.round((listing.priceKobo * pct) / 100);
+                return (
+                  <Pressable
+                    key={pct}
+                    style={styles.offerChip}
+                    onPress={() => setOfferNaira(String(naira))}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${Math.round(pct * 100)} percent of asking`}
+                  >
+                    <Text style={styles.offerChipText}>
+                      {Math.round(pct * 100)}% · ₦{naira.toLocaleString("en-NG")}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+          <Pressable
+            style={[styles.primaryBtn, offerBusy && styles.disabled]}
+            disabled={offerBusy}
+            onPress={() => void submitOffer()}
+          >
+            <Text style={styles.primaryBtnText}>
+              {offerBusy ? "Sending…" : "Send offer"}
+            </Text>
+          </Pressable>
+        </BottomSheet>
+
+        <BottomSheet
+          visible={inspectOpen}
+          title="Book vehicle inspection"
+          onClose={() => setInspectOpen(false)}
+        >
+          <Text style={styles.muted}>
+            Pay the inspection fee, then pick a Lagos slot. Results show as
+            Inspected ✓ on your listing.
+          </Text>
+          <Text style={styles.label}>Preferred slot</Text>
+          {INSPECTION_SLOTS.map((slot) => (
+            <Pressable
+              key={slot}
+              style={[
+                styles.pickRow,
+                inspectSlot === slot && styles.pickRowActive,
+              ]}
+              onPress={() => setInspectSlot(slot)}
+            >
+              <Text style={styles.pickTitle}>{slot}</Text>
+            </Pressable>
+          ))}
+          <Pressable
+            style={[styles.primaryBtn, inspectBusy && styles.disabled]}
+            disabled={inspectBusy}
+            onPress={() => void startInspection()}
+          >
+            <Text style={styles.primaryBtnText}>
+              {inspectBusy
+                ? "Booking…"
+                : inspectId
+                  ? "Retry booking"
+                  : "Pay & schedule"}
+            </Text>
+          </Pressable>
+        </BottomSheet>
 
         <Modal visible={swapOpen} animationType="slide" transparent>
           <View style={styles.sheetBackdrop}>
@@ -945,29 +1213,8 @@ function EmptyCartMark() {
   );
 }
 
-function Action({
-  label,
-  onPress,
-  primary,
-}: {
-  label: string;
-  onPress: () => void;
-  primary?: boolean;
-}) {
-  return (
-    <Pressable
-      style={[styles.actionBtn, primary && styles.actionPrimary]}
-      onPress={onPress}
-    >
-      <Text style={[styles.actionText, primary && styles.actionTextPrimary]}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#FAF9F7" },
+  safe: { flex: 1, backgroundColor: colors.canvas },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -976,158 +1223,245 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
   },
-  brand: { fontSize: 20, fontWeight: "700", color: "#111315" },
-  close: { fontSize: 16, fontWeight: "600", color: "#0E9F6E" },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  brand: { fontSize: 20, fontWeight: "700", color: colors.ink },
+  close: { fontSize: 16, fontWeight: "600", color: colors.orange },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  body: { paddingHorizontal: 20, paddingBottom: 40 },
+  body: { paddingBottom: 40 },
   hero: {
-    width: "100%",
-    height: 260,
-    borderRadius: 20,
-    backgroundColor: "#E5E2DC",
+    height: 320,
+    backgroundColor: colors.border,
   },
   heroEmpty: { alignItems: "center", justifyContent: "center" },
-  price: {
+  counterChip: {
+    position: "absolute",
+    right: 16,
+    bottom: 16,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minHeight: 28,
+    justifyContent: "center",
+  },
+  priceRow: {
     marginTop: 20,
-    fontSize: 28,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+  },
+  negoChip: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  stickyBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingBottom: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 12,
+  },
+  stickyPrimary: {
+    minHeight: 48,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  stickyPrimaryText: { color: colors.onAccent, fontWeight: "700", fontSize: 15 },
+  stickyOutline: {
+    minHeight: 48,
+    minWidth: 56,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  stickyOutlineText: { fontWeight: "700", fontSize: 14 },
+  stickyGhost: {
+    minHeight: 48,
+    minWidth: 48,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  price: {
+    fontSize: 24,
     fontWeight: "700",
-    color: "#111315",
+    color: colors.ink,
   },
   title: {
     marginTop: 8,
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#111315",
+    paddingHorizontal: 20,
+    fontSize: 20,
+    fontWeight: "600",
+    color: colors.ink,
   },
-  meta: { marginTop: 8, fontSize: 14, color: "#5C636A" },
+  meta: { marginTop: 8, paddingHorizontal: 20, fontSize: 13, color: colors.muted },
+  section: {
+    marginTop: 24,
+    marginBottom: 8,
+    paddingHorizontal: 20,
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.ink,
+  },
+  copy: {
+    paddingHorizontal: 20,
+    fontSize: 15,
+    color: colors.ink,
+    lineHeight: 22,
+  },
+  seller: {
+    marginTop: 20,
+    marginHorizontal: 20,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: 4,
+  },
+  protect: {
+    marginTop: 16,
+    marginHorizontal: 20,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  similarBlock: { marginTop: 8, paddingLeft: 20 },
+  chip: {
+    marginTop: 8,
+    marginHorizontal: 20,
+    alignSelf: "flex-start",
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: colors.beige,
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.orange,
+  },
   badgeRow: {
     marginTop: 10,
+    marginHorizontal: 20,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
   verticalBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#D1FAE5",
+    backgroundColor: colors.orangeWash,
     overflow: "hidden",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
     fontSize: 12,
     fontWeight: "700",
-    color: "#047857",
+    color: colors.success,
   },
   instantBuyBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#D1FAE5",
+    backgroundColor: colors.orangeWash,
     overflow: "hidden",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
     fontSize: 12,
     fontWeight: "700",
-    color: "#0E9F6E",
+    color: colors.orange,
   },
   promoBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#FEF3C7",
+    backgroundColor: colors.goldWash,
     overflow: "hidden",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
     fontSize: 12,
     fontWeight: "700",
-    color: "#92400E",
+    color: colors.gold,
   },
   promoBadgeFeatured: {
     alignSelf: "flex-start",
-    backgroundColor: "#E0E7FF",
+    backgroundColor: colors.beige,
     overflow: "hidden",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
     fontSize: 12,
     fontWeight: "700",
-    color: "#3730A3",
+    color: colors.navy,
   },
   verticalBadgeMuted: {
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     overflow: "hidden",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
     fontSize: 12,
     fontWeight: "600",
-    color: "#5C636A",
+    color: colors.muted,
   },
-  chip: {
-    marginTop: 8,
-    alignSelf: "flex-start",
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#0E9F6E",
-  },
-  seller: {
-    marginTop: 20,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#FFFFFF",
-  },
-  sellerName: { fontSize: 16, fontWeight: "700", color: "#111315" },
+  sellerName: { fontSize: 16, fontWeight: "700", color: colors.ink },
   trustBadge: {
     alignSelf: "flex-start",
     marginTop: 6,
-    backgroundColor: "#F5EDD0",
+    backgroundColor: colors.goldWash,
     overflow: "hidden",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
     fontSize: 12,
     fontWeight: "700",
-    color: "#111315",
+    color: colors.gold,
   },
   profileLink: {
     marginTop: 8,
+    marginHorizontal: 20,
     fontSize: 14,
     fontWeight: "600",
-    color: "#0E9F6E",
+    color: colors.orange,
   },
-  section: {
-    marginTop: 22,
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111315",
-  },
-  copy: { marginTop: 8, fontSize: 15, lineHeight: 22, color: "#5C636A" },
-  muted: { marginTop: 4, fontSize: 14, color: "#5C636A" },
-  protect: {
-    marginTop: 20,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: "#D1FAE5",
-  },
-  protectTitle: { fontSize: 14, fontWeight: "700", color: "#0E9F6E" },
-  similarBlock: { marginTop: 24 },
+  muted: { marginTop: 4, fontSize: 13, color: colors.muted },
+  protectTitle: { fontSize: 14, fontWeight: "700", color: colors.orange },
   similarScroll: { marginTop: 10 },
   similarCard: { width: 132, marginRight: 10 },
   similarImg: {
     width: 132,
     height: 100,
     borderRadius: 12,
-    backgroundColor: "#E5E2DC",
+    backgroundColor: colors.border,
   },
-  similarPh: { backgroundColor: "#E5E2DC" },
+  similarPh: { backgroundColor: colors.border },
   similarTitle: {
     marginTop: 6,
     fontSize: 13,
     fontWeight: "600",
-    color: "#111315",
+    color: colors.ink,
   },
-  similarPrice: { marginTop: 2, fontSize: 12, color: "#5C636A" },
+  similarPrice: { marginTop: 2, fontSize: 13, fontWeight: "700", color: colors.ink },
   centerText: { textAlign: "center", marginTop: 16 },
   actions: {
     marginTop: 24,
@@ -1138,7 +1472,7 @@ const styles = StyleSheet.create({
   cartBlock: { marginTop: 20, gap: 12 },
   cartCue: { alignItems: "center", gap: 10 },
   cartOpenBtn: {
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 18,
@@ -1166,7 +1500,7 @@ const styles = StyleSheet.create({
   qtyValue: { minWidth: 20, textAlign: "center", fontSize: 16, fontWeight: "700" },
   orderHint: { fontSize: 14, color: "#5C636A" },
   orderBtn: {
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
@@ -1174,89 +1508,104 @@ const styles = StyleSheet.create({
   orderBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 16 },
   cartLink: {
     textAlign: "center",
-    color: "#0E9F6E",
+    color: colors.orange,
     fontWeight: "700",
     fontSize: 15,
   },
   actionBtn: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
   },
   actionPrimary: {
-    backgroundColor: "#0E9F6E",
-    borderColor: "#0E9F6E",
+    backgroundColor: colors.orange,
+    borderColor: colors.orange,
   },
-  actionText: { fontSize: 15, fontWeight: "700", color: "#111315" },
-  actionTextPrimary: { color: "#FFFFFF" },
+  actionText: { fontSize: 15, fontWeight: "700", color: colors.ink },
+  actionTextPrimary: { color: colors.onAccent },
   toast: {
     marginTop: 16,
     textAlign: "center",
-    color: "#0E9F6E",
+    color: colors.orange,
     fontWeight: "600",
   },
-  error: { color: "#DC2626", fontSize: 15 },
+  error: { color: colors.error, fontSize: 15 },
   sheetBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "flex-end",
   },
   sheet: {
-    backgroundColor: "#FAF9F7",
+    backgroundColor: colors.canvas,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: 32,
   },
-  sheetTitle: { fontSize: 20, fontWeight: "700", color: "#111315" },
+  sheetTitle: { fontSize: 20, fontWeight: "700", color: colors.ink },
   label: {
     marginTop: 16,
     marginBottom: 8,
     fontSize: 14,
     fontWeight: "600",
-    color: "#111315",
+    color: colors.ink,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
-    color: "#111315",
-    backgroundColor: "#FFFFFF",
+    color: colors.ink,
+    backgroundColor: colors.surface,
   },
   primaryBtn: {
     marginTop: 20,
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
   },
-  primaryBtnText: { color: "#FFF", fontWeight: "700", fontSize: 16 },
+  primaryBtnText: { color: colors.onAccent, fontWeight: "700", fontSize: 16 },
+  offerChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+  offerChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: colors.beige,
+  },
+  offerChipText: { fontSize: 13, fontWeight: "600", color: colors.ink },
   cancel: {
     marginTop: 14,
     textAlign: "center",
-    color: "#0E9F6E",
+    color: colors.orange,
     fontWeight: "600",
   },
   disabled: { opacity: 0.55 },
   pickRow: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     padding: 12,
     marginBottom: 8,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
   },
   pickRowActive: {
-    borderColor: "#0E9F6E",
-    backgroundColor: "#ECFDF5",
+    borderColor: colors.orange,
+    backgroundColor: colors.orangeWash,
   },
-  pickTitle: { fontSize: 15, fontWeight: "600", color: "#111315" },
+  pickTitle: { fontSize: 15, fontWeight: "600", color: colors.ink },
   durationRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1265,31 +1614,31 @@ const styles = StyleSheet.create({
   },
   durationChip: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
   },
   durationChipActive: {
-    borderColor: "#0E9F6E",
-    backgroundColor: "#ECFDF5",
+    borderColor: colors.orange,
+    backgroundColor: colors.orangeWash,
   },
-  durationChipText: { fontSize: 14, fontWeight: "600", color: "#111315" },
-  durationChipTextActive: { color: "#047857" },
+  durationChipText: { fontSize: 14, fontWeight: "600", color: colors.ink },
+  durationChipTextActive: { color: colors.orange },
   secondarySheetBtn: {
     marginTop: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
   },
   secondarySheetBtnText: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#111315",
+    color: colors.ink,
   },
 });
 

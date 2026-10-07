@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -11,6 +12,7 @@ import {
 } from "react-native";
 import { ApiError, apiFetch } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
+import { brandAssets, orderStatusBadgeSource } from "./lib/brandAssets";
 import {
   discloseOrderAddress,
   fallbackDeliveryDestination,
@@ -23,6 +25,14 @@ import {
   type MeetPoint,
 } from "./lib/delivery";
 import { getListing } from "./lib/listings";
+import {
+  confirmInstantBuy,
+  generateWatPickupSlots,
+  getInstantBuyByOrder,
+  scheduleInstantBuy,
+  type InstantBuyFulfilment,
+  type ManagedPickupSlot,
+} from "./lib/platform-services";
 import {
   addDisputeEvidence,
   cancelOrder,
@@ -73,6 +83,7 @@ import {
   type CreateReviewBody,
   type OrderReviewUiState,
 } from "./lib/trust";
+import { colors } from "./theme/tokens";
 
 type CheckoutParams = {
   listingId: string;
@@ -197,7 +208,7 @@ export function OrdersPanel({ meId, onOpenOrder }: Props) {
   if (loading) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator color="#0E9F6E" />
+        <ActivityIndicator color={colors.orange} />
       </View>
     );
   }
@@ -276,9 +287,16 @@ export function OrdersPanel({ meId, onOpenOrder }: Props) {
             <Text style={styles.muted}>
               {role} · {fulfilmentLabel(String(o.fulfilmentMethod))}
             </Text>
-            <Text style={styles.badge}>
-              {orderStatusLabel(String(o.status))}
-            </Text>
+            <View style={styles.badgeRow}>
+              <Image
+                source={orderStatusBadgeSource(String(o.status))}
+                style={styles.statusBadgeIcon}
+                resizeMode="contain"
+              />
+              <Text style={styles.badge}>
+                {orderStatusLabel(String(o.status))}
+              </Text>
+            </View>
           </Pressable>
         );
           })}
@@ -475,7 +493,7 @@ export function CheckoutModal({
 
         {loading ? (
           <View style={styles.centered}>
-            <ActivityIndicator color="#0E9F6E" />
+            <ActivityIndicator color={colors.orange} />
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.pad}>
@@ -488,14 +506,44 @@ export function CheckoutModal({
                 <Text style={styles.price}>{formatNgnFromKobo(amountKobo)}</Text>
 
                 <View style={styles.protect}>
-                  <Text style={styles.protectTitle}>Buyer protection</Text>
+                  <View style={styles.protectHeader}>
+                    <Image
+                      source={brandAssets.trustBuyerProtection}
+                      style={styles.protectIcon}
+                      resizeMode="contain"
+                      accessibilityIgnoresInvertColors
+                    />
+                    <Text style={styles.protectTitle}>Buyer protection</Text>
+                  </View>
                   <Text style={styles.muted}>
-                    Funds held until you confirm receipt. Fee covers eligible
-                    claims.
+                    Payment is held in escrow until you confirm the item.
+                    Eligible claims cover not-as-described and no-shows.
+                  </Text>
+                  <View style={styles.trustSignals}>
+                    {(
+                      [
+                        ["Secure payment", brandAssets.trustSecurePayment],
+                        ["Safe meetup", brandAssets.trustSafeMeetup],
+                        ["Trusted delivery", brandAssets.trustTrustedDelivery],
+                      ] as const
+                    ).map(([label, icon]) => (
+                      <View key={label} style={styles.trustSignal}>
+                        <Image
+                          source={icon}
+                          style={styles.trustSignalIcon}
+                          resizeMode="contain"
+                        />
+                        <Text style={styles.trustSignalLabel}>{label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  <Text style={[styles.muted, { marginTop: 8 }]}>
+                    Protection fee {formatNgnFromKobo(fee)} is included in your
+                    total.
                   </Text>
                 </View>
 
-                <Text style={styles.section}>Fulfilment</Text>
+                <Text style={styles.section}>How you get it</Text>
                 <View style={styles.rowWrap}>
                   {(
                     [
@@ -530,6 +578,8 @@ export function CheckoutModal({
                         ]}
                         onPress={() => setFulfilment(value)}
                         disabled={Boolean(payment)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: fulfilment === value }}
                       >
                         <Text
                           style={[
@@ -541,6 +591,28 @@ export function CheckoutModal({
                         </Text>
                       </Pressable>
                     ))}
+                </View>
+
+                <View style={styles.fulfilHint}>
+                  {fulfilment === "PICKUP" ? (
+                    <Text style={styles.muted}>
+                      Collect from the seller’s address after payment. Address is
+                      shared only once the order is paid.
+                    </Text>
+                  ) : null}
+                  {fulfilment === "MEET_POINT" ? (
+                    <Text style={styles.muted}>
+                      Meet at a public ReWorth-suggested spot. Bring photo ID and
+                      confirm the item before releasing payment.
+                    </Text>
+                  ) : null}
+                  {fulfilment === "DELIVERY" ? (
+                    <Text style={styles.muted}>
+                      Courier quote is calculated after you create the order
+                      (₦1,500 + ₦150/km). Fee joins the total before you pay.
+                      {quoteBusy ? " Quoting…" : ""}
+                    </Text>
+                  ) : null}
                 </View>
 
                 {fulfilment === "MEET_POINT" && meetPoints.length > 0 ? (
@@ -576,11 +648,10 @@ export function CheckoutModal({
                   </>
                 ) : null}
 
-                {fulfilment === "DELIVERY" ? (
+                {fulfilment === "MEET_POINT" && meetPoints.length === 0 ? (
                   <Text style={styles.muted}>
-                    Delivery quote is calculated after you create the order
-                    (₦1,500 + ₦150/km). Fee joins the total before payment.
-                    {quoteBusy ? " Quoting…" : ""}
+                    No curated meet points for this community yet — chat with the
+                    seller to agree a public spot after pay.
                   </Text>
                 ) : null}
 
@@ -594,7 +665,7 @@ export function CheckoutModal({
                     />
                   ) : null}
                   <Row
-                    label="Total"
+                    label="Total due now"
                     value={formatNgnFromKobo(total)}
                     bold
                   />
@@ -605,6 +676,8 @@ export function CheckoutModal({
                     style={[styles.primaryBtn, busy && styles.disabled]}
                     disabled={busy}
                     onPress={() => void placeAndPay()}
+                    accessibilityRole="button"
+                    accessibilityLabel="Pay with ReWorth"
                   >
                     <Text style={styles.primaryBtnText}>
                       {busy ? "Creating…" : "Place order"}
@@ -632,9 +705,12 @@ export function CheckoutModal({
                   </>
                 )}
                 {thumb ? (
-                  <Text style={[styles.muted, { marginTop: 12 }]}>
-                    Item photo loaded
-                  </Text>
+                  <Image
+                    source={{ uri: thumb }}
+                    style={styles.checkoutThumb}
+                    resizeMode="cover"
+                    accessibilityLabel="Listing photo"
+                  />
                 ) : null}
               </>
             ) : null}
@@ -680,6 +756,13 @@ export function OrderDetailModal({
   const [shipment, setShipment] = useState<DeliveryShipment | null>(null);
   const [discloseBusy, setDiscloseBusy] = useState(false);
   const [disclosedAddress, setDisclosedAddress] = useState<string | null>(null);
+  const [ibFulfilment, setIbFulfilment] = useState<InstantBuyFulfilment | null>(
+    null,
+  );
+  const [ibSlots] = useState<ManagedPickupSlot[]>(() =>
+    generateWatPickupSlots(6),
+  );
+  const [ibBusy, setIbBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!orderId) return;
@@ -699,6 +782,12 @@ export function OrderDetailModal({
         }
       } else {
         setShipment(null);
+      }
+      try {
+        const ib = await getInstantBuyByOrder(token, orderId);
+        setIbFulfilment(ib);
+      } catch {
+        setIbFulfilment(null);
       }
       if (detail.status === "COMPLETED" && meId) {
         const counterpartId =
@@ -813,7 +902,7 @@ export function OrderDetailModal({
         </View>
         {loading ? (
           <View style={styles.centered}>
-            <ActivityIndicator color="#0E9F6E" />
+            <ActivityIndicator color={colors.orange} />
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.pad}>
@@ -826,9 +915,16 @@ export function OrderDetailModal({
                 <Text style={styles.price}>
                   {formatNgnFromKobo(order.totalKobo)}
                 </Text>
-                <Text style={styles.badge}>
-                  {orderStatusLabel(String(order.status))}
-                </Text>
+                <View style={styles.badgeRow}>
+                  <Image
+                    source={orderStatusBadgeSource(String(order.status))}
+                    style={styles.statusBadgeIcon}
+                    resizeMode="contain"
+                  />
+                  <Text style={styles.badge}>
+                    {orderStatusLabel(String(order.status))}
+                  </Text>
+                </View>
                 <Text style={styles.muted}>
                   {isBuyer ? "Buying" : isSeller ? "Selling" : "Order"} ·{" "}
                   {fulfilmentLabel(String(order.fulfilmentMethod))}
@@ -923,16 +1019,40 @@ export function OrderDetailModal({
                 ) : null}
 
                 <Text style={styles.section}>Timeline</Text>
-                {order.events.map((ev) => (
-                  <View key={ev.id} style={styles.event}>
-                    <Text style={styles.eventType}>
-                      {ev.type.replace(/_/g, " ")}
-                    </Text>
-                    <Text style={styles.muted}>
-                      {new Date(ev.createdAt).toLocaleString()}
-                    </Text>
-                  </View>
-                ))}
+                {order.events.map((ev, idx) => {
+                  const current = idx === order.events.length - 1;
+                  return (
+                    <View
+                      key={ev.id}
+                      style={[
+                        styles.event,
+                        current && styles.eventCurrent,
+                      ]}
+                    >
+                      <Image
+                        source={orderStatusBadgeSource(String(ev.type))}
+                        style={[
+                          styles.eventBadgeIcon,
+                          !current && { opacity: 0.55 },
+                        ]}
+                        resizeMode="contain"
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text
+                          style={[
+                            styles.eventType,
+                            current && styles.eventTypeCurrent,
+                          ]}
+                        >
+                          {ev.type.replace(/_/g, " ")}
+                        </Text>
+                        <Text style={styles.muted}>
+                          {new Date(ev.createdAt).toLocaleString()}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
 
                 <View style={styles.actionsCol}>
                   {isSeller &&
@@ -1016,8 +1136,94 @@ export function OrderDetailModal({
                   {order.rejectionReason ? (
                     <Text style={styles.muted}>Rejected: {order.rejectionReason}</Text>
                   ) : null}
-                  {isSeller &&
-                  ["FUNDED", "IN_AUTHENTICATION"].includes(String(order.status)) ? (
+                  {ibFulfilment ? (
+                    <View style={styles.disputeBox}>
+                      <Text style={styles.section}>
+                        Instant Buy · {String(ibFulfilment.status)}
+                      </Text>
+                      {isSeller && !ibFulfilment.slotStartAt ? (
+                        <>
+                          <Text style={styles.muted}>
+                            Pick a pickup window (WAT)
+                          </Text>
+                          {ibSlots.map((slot) => (
+                            <ActionBtn
+                              key={slot.slotStartAt}
+                              label={slot.label}
+                              disabled={ibBusy}
+                              onPress={() => {
+                                void (async () => {
+                                  const token = await getAccessToken();
+                                  if (!token || !ibFulfilment) return;
+                                  setIbBusy(true);
+                                  try {
+                                    await scheduleInstantBuy(
+                                      token,
+                                      ibFulfilment.id,
+                                      {
+                                        slotStartAt: slot.slotStartAt,
+                                        slotEndAt: slot.slotEndAt,
+                                      },
+                                    );
+                                    await load();
+                                  } catch (err) {
+                                    setError(
+                                      err instanceof ApiError
+                                        ? err.message
+                                        : "Schedule failed",
+                                    );
+                                  } finally {
+                                    setIbBusy(false);
+                                  }
+                                })();
+                              }}
+                            />
+                          ))}
+                        </>
+                      ) : null}
+                      {ibFulfilment.slotStartAt ? (
+                        <Text style={styles.muted}>
+                          Slot{" "}
+                          {new Date(ibFulfilment.slotStartAt).toLocaleString(
+                            "en-NG",
+                            { timeZone: "Africa/Lagos" },
+                          )}
+                        </Text>
+                      ) : null}
+                      {isBuyer &&
+                      ["DELIVERED", "OUT_FOR_DELIVERY", "IN_TRANSIT"].includes(
+                        String(ibFulfilment.status).toUpperCase(),
+                      ) ? (
+                        <ActionBtn
+                          label="Confirm Instant Buy delivery"
+                          disabled={ibBusy}
+                          onPress={() => {
+                            void (async () => {
+                              const token = await getAccessToken();
+                              if (!token || !ibFulfilment) return;
+                              setIbBusy(true);
+                              try {
+                                await confirmInstantBuy(
+                                  token,
+                                  ibFulfilment.id,
+                                );
+                                await load();
+                              } catch (err) {
+                                setError(
+                                  err instanceof ApiError
+                                    ? err.message
+                                    : "Confirm failed",
+                                );
+                              } finally {
+                                setIbBusy(false);
+                              }
+                            })();
+                          }}
+                        />
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {isSeller && order.status === "FUNDED" ? (
                     <ActionBtn
                       label="Mark handed over"
                       disabled={busy}
@@ -1310,7 +1516,7 @@ export function DisputeModal({
         </View>
         {loading ? (
           <View style={styles.centered}>
-            <ActivityIndicator color="#0E9F6E" />
+            <ActivityIndicator color={colors.orange} />
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.pad}>
@@ -1320,9 +1526,16 @@ export function DisputeModal({
                 <Text style={styles.cardTitle}>
                   {disputeReasonLabel(String(dispute.reason))}
                 </Text>
-                <Text style={styles.badge}>
-                  {disputeStatusLabel(String(dispute.status))}
-                </Text>
+                <View style={styles.badgeRow}>
+                  <Image
+                    source={orderStatusBadgeSource(String(dispute.status))}
+                    style={styles.statusBadgeIcon}
+                    resizeMode="contain"
+                  />
+                  <Text style={styles.badge}>
+                    {disputeStatusLabel(String(dispute.status))}
+                  </Text>
+                </View>
                 {dispute.detail ? (
                   <Text style={styles.muted}>{dispute.detail}</Text>
                 ) : null}
@@ -1486,7 +1699,7 @@ export async function fetchMeId(): Promise<string | null> {
 }
 
 const styles = StyleSheet.create({
-  modalRoot: { flex: 1, backgroundColor: "#FAF9F7" },
+  modalRoot: { flex: 1, backgroundColor: colors.canvas },
   modalHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1495,9 +1708,9 @@ const styles = StyleSheet.create({
     paddingTop: 56,
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E5E2DC",
+    borderBottomColor: colors.border,
   },
-  brand: { fontSize: 18, fontWeight: "700", color: "#1A1A1A" },
+  brand: { fontSize: 18, fontWeight: "700", color: colors.ink },
   roleTabs: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1510,57 +1723,104 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 13,
     fontWeight: "700",
-    color: "#6B7280",
+    color: colors.muted,
     textTransform: "uppercase",
     letterSpacing: 0.4,
   },
   roleTab: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
   },
-  roleTabOn: { backgroundColor: "#0E9F6E", borderColor: "#0E9F6E" },
-  roleTabText: { fontSize: 13, fontWeight: "700", color: "#111315" },
+  roleTabOn: { backgroundColor: colors.orange, borderColor: colors.orange },
+  roleTabText: { fontSize: 13, fontWeight: "700", color: colors.ink },
   roleTabTextOn: { color: "#fff" },
-  link: { color: "#0E9F6E", fontWeight: "600", fontSize: 15 },
+  link: { color: colors.orange, fontWeight: "600", fontSize: 15 },
   pad: { padding: 16, paddingBottom: 40, gap: 10 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
-  error: { color: "#B42318", marginBottom: 8 },
+  error: { color: colors.error, marginBottom: 8 },
   emptyTitle: { fontSize: 18, fontWeight: "600", marginBottom: 6 },
-  muted: { color: "#6B7280", fontSize: 14, lineHeight: 20 },
+  muted: { color: colors.muted, fontSize: 14, lineHeight: 20 },
   card: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     padding: 14,
     marginBottom: 10,
   },
-  cardTitle: { fontSize: 17, fontWeight: "600", color: "#1A1A1A" },
-  price: { fontSize: 28, fontWeight: "700", color: "#1A1A1A" },
+  cardTitle: { fontSize: 17, fontWeight: "600", color: colors.ink },
+  price: { fontSize: 28, fontWeight: "700", color: colors.ink },
   badge: {
     alignSelf: "flex-start",
-    marginTop: 6,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
-    backgroundColor: "#D1FAE5",
-    color: "#065F46",
+    backgroundColor: colors.orangeWash,
+    color: colors.orange,
     overflow: "hidden",
     fontSize: 13,
     fontWeight: "600",
   },
+  badgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+    alignSelf: "flex-start",
+  },
+  statusBadgeIcon: {
+    width: 28,
+    height: 28,
+  },
+  eventBadgeIcon: {
+    width: 22,
+    height: 22,
+    marginTop: 2,
+  },
   protect: {
-    backgroundColor: "#ECFDF5",
+    backgroundColor: colors.orangeWash,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(14,159,110,0.3)",
+    borderColor: colors.border,
     padding: 12,
   },
-  protectTitle: { fontWeight: "700", color: "#0E9F6E", marginBottom: 4 },
+  protectHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 6,
+  },
+  protectIcon: { width: 28, height: 28 },
+  protectTitle: { fontWeight: "700", color: colors.orange, fontSize: 16 },
+  trustSignals: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+  trustSignal: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.surface,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  trustSignalIcon: { width: 16, height: 16 },
+  trustSignalLabel: { fontSize: 11, fontWeight: "600", color: colors.muted },
+  fulfilHint: { marginTop: 8, marginBottom: 4 },
+  checkoutThumb: {
+    marginTop: 16,
+    width: "100%",
+    height: 160,
+    borderRadius: 12,
+    backgroundColor: colors.beige,
+  },
   section: { fontSize: 16, fontWeight: "600", marginTop: 8 },
   rowWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
@@ -1568,17 +1828,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#fff",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
-  chipOn: { backgroundColor: "#0E9F6E", borderColor: "#0E9F6E" },
-  chipText: { fontSize: 13, color: "#1A1A1A" },
-  chipTextOn: { color: "#fff", fontWeight: "600" },
+  chipOn: { backgroundColor: colors.orange, borderColor: colors.orange },
+  chipText: { fontSize: 13, color: colors.ink },
+  chipTextOn: { color: colors.onAccent, fontWeight: "600" },
   breakdown: {
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     padding: 12,
     gap: 8,
   },
@@ -1589,46 +1849,71 @@ const styles = StyleSheet.create({
   },
   bold: { fontWeight: "700", fontSize: 16 },
   primaryBtn: {
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     marginTop: 8,
   },
   dangerBtn: {
-    backgroundColor: "#B42318",
+    backgroundColor: colors.error,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: "center",
     marginTop: 8,
   },
-  primaryBtnText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  primaryBtnText: { color: colors.onAccent, fontWeight: "700", fontSize: 16 },
   secondaryBtn: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: colors.surface,
     marginTop: 8,
   },
-  secondaryBtnText: { fontWeight: "600", color: "#1A1A1A" },
+  secondaryBtnText: { fontWeight: "600", color: colors.ink },
   disabled: { opacity: 0.5 },
   event: {
-    borderLeftWidth: 2,
-    borderLeftColor: "#0E9F6E",
-    paddingLeft: 10,
-    marginBottom: 8,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingVertical: 8,
+    borderLeftWidth: 0,
+    marginBottom: 4,
   },
-  eventType: { fontWeight: "600", textTransform: "capitalize" },
+  eventCurrent: {
+    backgroundColor: colors.beige,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+  },
+  eventDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 4,
+    backgroundColor: colors.border,
+  },
+  eventDotCurrent: {
+    backgroundColor: colors.orange,
+  },
+  eventType: {
+    fontWeight: "600",
+    textTransform: "capitalize",
+    fontSize: 15,
+    color: colors.ink,
+  },
+  eventTypeCurrent: {
+    color: colors.orange,
+  },
   actionsCol: { gap: 4, marginTop: 8 },
   disputeBox: {
     marginTop: 12,
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#fff",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     gap: 8,
   },
   reviewBox: {
@@ -1636,26 +1921,26 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#fff",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     gap: 10,
   },
   waitCard: {
     padding: 12,
     borderRadius: 12,
-    backgroundColor: "#F5EDD0",
+    backgroundColor: colors.goldWash,
     gap: 4,
   },
-  waitTitle: { fontWeight: "700", color: "#1A1A1A", fontSize: 16 },
+  waitTitle: { fontWeight: "700", color: colors.ink, fontSize: 16 },
   doneCard: {
     padding: 12,
     borderRadius: 12,
-    backgroundColor: "#D1FAE5",
+    backgroundColor: colors.orangeWash,
     gap: 4,
   },
-  doneTitle: { fontWeight: "700", color: "#0E9F6E", fontSize: 16 },
+  doneTitle: { fontWeight: "700", color: colors.orange, fontSize: 16 },
   starRow: { gap: 6 },
-  starLabel: { fontSize: 13, fontWeight: "600", color: "#1A1A1A" },
+  starLabel: { fontSize: 13, fontWeight: "600", color: colors.ink },
   starBtns: { flexDirection: "row", gap: 6 },
   starBtn: {
     width: 36,
@@ -1663,16 +1948,16 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#FAF9F7",
+    backgroundColor: colors.canvas,
   },
-  starBtnOn: { backgroundColor: "#F5EDD0" },
-  starGlyph: { fontSize: 18, color: "#C9A227" },
+  starBtnOn: { backgroundColor: colors.goldWash },
+  starGlyph: { fontSize: 18, color: colors.gold },
   input: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 10,
     padding: 12,
-    backgroundColor: "#FAF9F7",
+    backgroundColor: colors.canvas,
     minHeight: 44,
     textAlignVertical: "top",
   },

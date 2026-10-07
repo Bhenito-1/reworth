@@ -60,14 +60,15 @@ export class AuthService {
   }
 
   private get accessTtl(): string {
-    return this.config.get<string>('JWT_ACCESS_TTL') ?? '15m';
+    return this.config.get<string>('JWT_ACCESS_TTL') ?? '24h';
   }
 
   private get refreshTtl(): string {
     return this.config.get<string>('JWT_REFRESH_TTL') ?? '30d';
   }
 
-  async register(    dto: RegisterDto,
+  async register(
+    dto: RegisterDto,
     ip?: string,
   ): Promise<TokenPair & { userId: string }> {
     const email = dto.email.trim().toLowerCase();

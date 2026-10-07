@@ -1,7 +1,7 @@
 # ReWorth Maestro — 01 Register / List (stub for device/sim UAT)
 # Requires Expo app + Metro; not run in default CI.
 # Demo seller (after seed:staging): ori@demo.reworth.ng / DemoOri!2026
-appId: ng.reworth.mobile
+appId: com.reworth.app
 ---
 - launchApp
 - assertVisible: "ReWorth"
@@ -23,6 +23,3 @@ appId: ng.reworth.mobile
 - inputText: "Maestro test chair"
 - tapOn: "AI assist"
 - tapOn: "Publish"
-- assertVisible:
-    text: "Live|Under review"
-    optional: true

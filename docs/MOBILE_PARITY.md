@@ -2,7 +2,7 @@
 
 > **Doctrine:** ReWorth is mobile-first. Primary surface = iOS + Android (`apps/mobile`). Web = companion. Admin = out of scope.  
 > **Statuses:** `full` · `partial` · `missing`  
-> **Audited:** 2026-09-14 · Post `v2.1-expansion` + Mobile/Store/Ops tranche  
+> **Audited:** 2026-09-16 · Post adoption P0–P11 (B2B mobile)  
 > **Owners:** Mobile Lead + Product · update when shipping consumer surfaces
 
 ## Legend
@@ -26,7 +26,7 @@ Companion column notes web’s intended role when mobile is primary.
 | Search | **full** | **full** | `SearchPanel` vs `/search` |
 | Favourites / wishlist | **full** | **full** | Heart saves for later. Profile → Wishlist and web `/wishlist` can add those items to the cart |
 | Listing detail (PDP) | **full** | **full** | Modal vs `/listings/[id]` — companion OK |
-| Sell / publish | **full** | **full** | `SellFlow` vs `/sell` (modes SELL/SWAP/GIVE_AWAY) |
+| Sell / publish | **full** | **full** | `SellFlow` vs `/sell` — camera + gallery filmstrip on mobile |
 | Chat / messaging | **full** | **full** | `ChatScreens` vs `/chats` |
 | Checkout (mock Paystack) | **full** | **full** | `CheckoutModal` vs `/checkout` |
 | Orders list + detail | **full** | **full** | Profile orders vs `/orders`. Seller confirm/reject and pay-after-confirm on both |
@@ -37,7 +37,7 @@ Companion column notes web’s intended role when mobile is primary.
 | Privacy / account delete | **full** | **full** | `PrivacySettings` vs `/settings/privacy` |
 | Notification preferences | **full** | **full** | Mobile centre + §29 prefs + quiet hours; web `/settings/notifications` |
 | In-app notification centre | **full** | **full** | Mobile `NotificationsScreens`; web `/notifications` |
-| OAuth Google / Apple | **missing** | **missing*** | *API supports; neither consumer UI complete — track together, mobile first |
+| OAuth Google / Apple | **full** | **full** | Mobile + web method step → mock/live `POST /auth/oauth/:provider/callback` |
 
 ---
 
@@ -45,21 +45,21 @@ Companion column notes web’s intended role when mobile is primary.
 
 | Flow | Mobile | Web | Notes |
 | --- | --- | --- | --- |
-| Swap propose / respond | **partial** | **full** | Mobile: propose from PDP; web fuller thread UX |
+| Swap propose / respond | **full** | **full** | Mobile: PDP propose → chat; Accept/Reject on `SWAP_PROPOSAL_CARD` |
 | Give-away claim | **full** | **full** | Claim on PDP; web also `/listings/[id]/claims` queue |
-| Moving sales browse / follow | **missing** | **full** | Mobile: lib + home rail link only; no dedicated screens (`lib/moving-sales.ts` unwired) |
-| Moving sale create | **missing** | **full** | Web `/moving-sales/new` |
-| Estate communities browse / join | **missing** | **full** | Mobile: `lib/estate-communities.ts` unwired; web `/communities` |
-| My communities / invites | **missing** | **full** | Web `/account/communities` |
-| Saved-search alerts | **missing** | **full** | Intelligence alerts on web; no mobile alerts UI |
-| Recommendations (similar / home) | **partial** | **full** | Mobile: similar on PDP; web home rails + surfaces |
-| Price intelligence on sell | **partial** | **full** | Mobile sell shows comps when available; web richer |
-| Seller analytics | **missing** | **full** | Mobile: `fetchSellerAnalytics` lib only; web `/sell/analytics` |
-| Vehicle inspection (book / badge) | **partial** | **full** | Mobile: Inspected badge display; no book flow |
-| Luxury authentication badge | **partial** | **full** | Display on PDP; no auth request flow |
-| Pro seller / bulk tools | **missing** | **full** | Web `/pro` |
-| Referrals | **missing** | **full** | Web `/referrals` |
-| Storefront handle | **missing** | **full** | Web `/u/[handle]` pro storefront extras |
+| Moving sales browse / follow | **full** | **full** | Mobile: `MovingSalesModal` + Home rail; web `/moving-sales` |
+| Moving sale create | **full** | **full** | Mobile create in modal; web `/moving-sales/new` |
+| Estate communities browse / join | **full** | **full** | Mobile: `CommunitiesModal`; web `/communities` |
+| My communities / invites | **full** | **full** | Mobile Mine tab + invite redeem; web `/account/communities` |
+| Saved-search alerts | **full** | **full** | Mobile: Search → Save alert; Profile → Saved → Alerts (pause/digest/delete); web `/my` + `/search` |
+| Recommendations (similar / home) | **full** | **full** | Mobile: PDP similar + Home **For you** (`surface=home`); web rails |
+| Price intelligence on sell | **full** | **full** | Mobile sell: range, quick/max, confidence, Use recommended |
+| Seller analytics | **full** | **full** | Mobile: Profile → Stats (`SellerAnalyticsPanel`); web `/sell/analytics` |
+| Vehicle inspection (book / badge) | **full** | **full** | Mobile: Book inspection sheet (request/pay/schedule); web paths fixed to `/listings/:id/inspections` |
+| Luxury authentication badge | **full** | **full** | Sell **Require luxury authentication**; PDP badge; post-fund job |
+| Pro seller / bulk tools | **full** | **full** | Mobile: Profile → Pro seller modal; web `/pro` |
+| Referrals | **full** | **full** | Mobile: Profile → Referrals modal; web `/referrals` |
+| Storefront handle | **full** | **full** | Mobile: `StorefrontModal` + Pro view/share; deep link `/u/:handle`; web `/u/[handle]` |
 
 ---
 
@@ -67,19 +67,19 @@ Companion column notes web’s intended role when mobile is primary.
 
 | Flow | Mobile | Web | Notes |
 | --- | --- | --- | --- |
-| Ask ReWorth assistant | **partial** | **full** | Mobile: `PlatformTools` Ask panel; web `/ask` + confirm UX |
-| Shared budget bundles | **missing** | **full** | Web `/ask/bundles/[token]` |
-| Room scan | **partial** | **full** | Mobile: demo scan modal; web `/room-scan` multi-photo |
-| What's it worth | **partial** | **full** | Mobile: estimate card; web `/worth` + photo/share |
-| Instant Buy | **partial** | **full** | Mobile: badge + buy path; no fulfilment scheduling UI |
-| Consignment | **partial** | **full** | Mobile: create/list modal; web `/consign` fuller lifecycle |
-| Managed pickup | **partial** | **full** | Mobile: book slots modal; web `/pickup` |
-| Listing Boost / Featured | **full** | **missing*** | *Phase 3.3 mobile-shipped (`ListingDetailModal` boost sheet + chips); web PDP parity tracked |
-| Seller Plus (upgrade / cancel) | **full** | **missing*** | *Phase 3.3 mobile-shipped (`SellFlow` plan card); web sell/account parity tracked |
-| Corporate relocation workspace | **missing** | **full** | Web `/corporate` — B2B; still mobile-first for coordinators on phone |
-| Estate partner console | **missing** | **full** | Web `/partner` |
-| Circular donate-if-unsold (seller) | **missing** | **partial** | Web sell checkbox; hand-off mostly admin/API |
-| Region / multi-city picker | **partial** | **full** | Mobile: home city label from `/regions`; web Account/Sell/Corporate pickers |
+| Ask ReWorth assistant | **full** | **full** | Mobile: suggestions, confirmToken, search/bundle cards; web `/ask` |
+| Shared budget bundles | **full** | **full** | Mobile: Save & share + `SharedBundleModal` deep link; web `/ask/bundles/[token]` |
+| Room scan | **full** | **full** | Mobile: multi-photo upload, item toggle, drafts; web `/room-scan` |
+| What's it worth | **full** | **full** | Mobile: photo upload + share estimate; web `/worth` |
+| Instant Buy | **full** | **full** | Sell toggle; order schedule/confirm; `GET /instant-buy/by-order/:orderId` |
+| Consignment | **full** | **full** | Mobile: create + list/sold/return lifecycle; web `/consign` |
+| Managed pickup | **full** | **full** | Mobile: book slots + my pickups list; web `/pickup` |
+| Listing Boost / Featured | **full** | **full** | Mobile PDP boost sheet; web PDP owner monetization card |
+| Seller Plus (upgrade / cancel) | **full** | **full** | Mobile `SellFlow` plan card; web `/sell` Seller plan section |
+| Corporate relocation workspace | **full** | **full** | Mobile: Profile → Corporate modal (apply/projects/intake/complete/invoice share); web `/corporate` |
+| Estate partner console | **full** | **full** | Mobile: Profile → Partner console (KPIs + queue + session API key); web `/partner` |
+| Circular donate-if-unsold (seller) | **full** | **full** | Sell checkbox → `POST /listings/:id/donate-if-unsold` (mobile + web) |
+| Region / multi-city picker | **full** | **full** | Pilot SW + Edo + Abuja + PH + Kano; mobile Home sheet + Profile chips; web Account/Sell |
 
 ---
 
@@ -89,7 +89,7 @@ These are **expected** on web even when mobile leads; keep parity **full** or do
 
 | Flow | Mobile | Web | Intent |
 | --- | --- | --- | --- |
-| Shareable listing URLs | deep link TBD | **full** | Web companion for links |
+| Shareable listing URLs | **full** | **full** | Mobile PDP **Share** → `https://reworth.ng/listings/:id`; deep link opens PDP (`parseDeepLink`) |
 | SEO / marketing landing | N/A | **full** | Web-only OK |
 | Admin ops | N/A | Admin app | Out of scope |
 
@@ -99,9 +99,9 @@ These are **expected** on web even when mobile leads; keep parity **full** or do
 
 | | full | partial | missing |
 | --- | ---: | ---: | ---: |
-| Mobile | ~16 | ~14 | ~14 |
+| Mobile | ~29 | ~5 | ~5 |
 
-Exact rows: see tables. **Priority close order (mobile-first):** communities → moving sales → seller analytics → Ask/Scan depth → corporate (if Persona C on-device) → referrals/pro · web Boost/Plus companion.
+Exact rows: see tables. **Priority close order (mobile-first):** Maestro ≤60s device recording (testIDs ready); staging k6; Termii keys.
 
 ---
 

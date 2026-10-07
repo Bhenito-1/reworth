@@ -1,4 +1,4 @@
-/** PRD §21 community marketplace examples (Phase 2.2). */
+/** PRD §21 community marketplace examples (Phase 2.2) + Abuja pilot. */
 export const PHASE22_COMMUNITY_SEEDS: Array<{
   slug: string;
   name: string;
@@ -7,6 +7,7 @@ export const PHASE22_COMMUNITY_SEEDS: Array<{
   about: string;
   geoLat: number;
   geoLng: number;
+  city?: string;
   verified?: boolean;
 }> = [
   {
@@ -17,6 +18,7 @@ export const PHASE22_COMMUNITY_SEEDS: Array<{
     about: 'Private estate marketplace for Banana Island residents.',
     geoLat: 6.4667,
     geoLng: 3.45,
+    city: 'Lagos',
     verified: true,
   },
   {
@@ -27,6 +29,7 @@ export const PHASE22_COMMUNITY_SEEDS: Array<{
     about: 'Victoria Garden City verified resident marketplace.',
     geoLat: 6.425,
     geoLng: 3.535,
+    city: 'Lagos',
     verified: true,
   },
   {
@@ -37,6 +40,7 @@ export const PHASE22_COMMUNITY_SEEDS: Array<{
     about: 'Lekki Phase 1 community listings with membership trust.',
     geoLat: 6.4474,
     geoLng: 3.4721,
+    city: 'Lagos',
     verified: true,
   },
   {
@@ -47,6 +51,7 @@ export const PHASE22_COMMUNITY_SEEDS: Array<{
     about: 'Eko Atlantic resident recommerce hub.',
     geoLat: 6.4,
     geoLng: 3.4,
+    city: 'Lagos',
     verified: true,
   },
   {
@@ -57,6 +62,7 @@ export const PHASE22_COMMUNITY_SEEDS: Array<{
     about: 'Employer-verified corporate relocation & office clearouts.',
     geoLat: 6.4281,
     geoLng: 3.4219,
+    city: 'Lagos',
   },
   {
     slug: 'church',
@@ -66,6 +72,7 @@ export const PHASE22_COMMUNITY_SEEDS: Array<{
     about: 'Faith-community recommerce for congregation members.',
     geoLat: 6.45,
     geoLng: 3.43,
+    city: 'Lagos',
   },
   {
     slug: 'alumni',
@@ -75,5 +82,49 @@ export const PHASE22_COMMUNITY_SEEDS: Array<{
     about: 'Alumni network marketplace — invite or approval required.',
     geoLat: 6.44,
     geoLng: 3.46,
+    city: 'Lagos',
+  },
+  {
+    slug: 'maitama',
+    name: 'Maitama Marketplace',
+    type: 'ESTATE',
+    privacy: 'PRIVATE',
+    about: 'Abuja pilot — Maitama resident recommerce.',
+    geoLat: 9.0882,
+    geoLng: 7.4914,
+    city: 'Abuja',
+    verified: true,
+  },
+  {
+    slug: 'asokoro',
+    name: 'Asokoro Marketplace',
+    type: 'ESTATE',
+    privacy: 'PRIVATE',
+    about: 'Abuja pilot — Asokoro estate marketplace.',
+    geoLat: 9.0435,
+    geoLng: 7.526,
+    city: 'Abuja',
+    verified: true,
+  },
+  {
+    slug: 'wuse',
+    name: 'Wuse Marketplace',
+    type: 'ESTATE',
+    privacy: 'SEMI_PRIVATE',
+    about: 'Abuja pilot — Wuse district recommerce hub.',
+    geoLat: 9.064,
+    geoLng: 7.483,
+    city: 'Abuja',
+    verified: true,
+  },
+  {
+    slug: 'jabi',
+    name: 'Jabi Marketplace',
+    type: 'ESTATE',
+    privacy: 'SEMI_PRIVATE',
+    about: 'Abuja pilot — Jabi / lake area listings.',
+    geoLat: 9.069,
+    geoLng: 7.423,
+    city: 'Abuja',
   },
 ];

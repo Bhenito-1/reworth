@@ -5,6 +5,11 @@ export type AiListingDraftInput = {
   communityHint?: string;
   /** Opaque keys / labels from uploaded images (e.g. filename hints). */
   imageHints?: string[];
+  /**
+   * Public https URLs or data:image/…;base64,… for vision models.
+   * Prefer data URLs for local MinIO that OpenAI cannot reach.
+   */
+  imageUrls?: string[];
 };
 
 export type AiListingDraft = {

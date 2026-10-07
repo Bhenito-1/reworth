@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { apiFetch, ApiError } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
+import { colors } from "./theme/tokens";
 
 type ConsentChannel = "MARKETING" | "EMAIL";
 
@@ -137,10 +138,10 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingVertical: 10,
     alignItems: "center",
-    backgroundColor: "#1a1a1a",
+    backgroundColor: colors.navy,
   },
-  btnText: { color: "#fff", fontWeight: "600" },
+  btnText: { color: colors.onAccent, fontWeight: "600" },
   danger: { paddingVertical: 10, alignItems: "center" },
-  dangerText: { color: "#b91c1c", fontWeight: "600" },
-  msg: { fontSize: 13, color: "#525252", marginTop: 4 },
+  dangerText: { color: colors.error, fontWeight: "600" },
+  msg: { fontSize: 13, color: colors.muted, marginTop: 4 },
 });

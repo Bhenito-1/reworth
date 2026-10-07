@@ -69,5 +69,6 @@
   "psp": {
     "enabled": true,
     "provider": "paystack"
-  }
+  },
+  "status": "pilot"
 }

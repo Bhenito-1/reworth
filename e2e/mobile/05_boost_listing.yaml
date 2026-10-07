@@ -1,7 +1,7 @@
 # ReWorth Maestro — 05 Boost listing (stub)
 # Seller owns a LIVE listing; mock PSP succeeds boost purchase.
 # Demo seller (after seed:staging): Ori +2348010000001 / DemoOri!2026
-appId: ng.reworth.mobile
+appId: com.reworth.app
 ---
 - launchApp
 - assertVisible: "ReWorth"

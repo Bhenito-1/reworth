@@ -12,14 +12,20 @@ import type {
   SearchResult,
 } from "./types";
 
-export const RADIUS_OPTIONS: Array<{ label: string; value: RadiusKm | "all" }> =
-  [
+export function radiusOptionsForCity(
+  cityLabel = "Lagos",
+): Array<{ label: string; value: RadiusKm | "all" }> {
+  return [
     { label: "2 km", value: 2 },
     { label: "5 km", value: 5 },
     { label: "10 km", value: 10 },
     { label: "25 km", value: 25 },
-    { label: "All Lagos", value: "all" },
+    { label: `All ${cityLabel}`, value: "all" },
   ];
+}
+
+/** @deprecated Prefer radiusOptionsForCity — kept for callers that ignore city. */
+export const RADIUS_OPTIONS = radiusOptionsForCity("Lagos");
 
 export const SORT_OPTIONS: Array<{
   label: string;
@@ -72,6 +78,7 @@ export function buildSearchQueryString(filters: SearchFilters): string {
   appendParam(params, "priceMaxKobo", filters.priceMaxKobo);
   appendParam(params, "condition", filters.condition);
   appendParam(params, "community", filters.community);
+  appendParam(params, "city", filters.city);
   appendParam(params, "radiusKm", filters.radiusKm);
   appendParam(params, "lat", filters.lat);
   appendParam(params, "lng", filters.lng);
@@ -125,6 +132,7 @@ export function searchFiltersFromParams(
     priceMaxKobo: num("priceMaxKobo"),
     condition: params.get("condition") || undefined,
     community: params.get("community") || undefined,
+    city: params.get("city") || undefined,
     radiusKm,
     lat: num("lat"),
     lng: num("lng"),
@@ -162,6 +170,7 @@ export async function fetchCategories(): Promise<CategoryNode[]> {
 export async function fetchHome(
   params: {
     community?: string;
+    city?: string;
     radiusKm?: RadiusKm;
     lat?: number;
     lng?: number;
@@ -170,6 +179,7 @@ export async function fetchHome(
 ): Promise<HomeResponse> {
   const qs = buildSearchQueryString({
     community: params.community,
+    city: params.city,
     radiusKm: params.radiusKm,
     lat: params.lat,
     lng: params.lng,
@@ -287,24 +297,26 @@ export async function updateSavedSearch(
 const LOC_KEY = "rw_discovery_location";
 
 export type DiscoveryLocation = {
+  city: string;
   community: string;
   radiusKm: RadiusKm | "all";
 };
 
 export function loadDiscoveryLocation(): DiscoveryLocation {
   if (typeof window === "undefined") {
-    return { community: "", radiusKm: "all" };
+    return { city: "lagos", community: "", radiusKm: "all" };
   }
   try {
     const raw = localStorage.getItem(LOC_KEY);
-    if (!raw) return { community: "", radiusKm: "all" };
+    if (!raw) return { city: "lagos", community: "", radiusKm: "all" };
     const parsed = JSON.parse(raw) as DiscoveryLocation;
     return {
+      city: parsed.city || "lagos",
       community: parsed.community ?? "",
       radiusKm: parsed.radiusKm ?? "all",
     };
   } catch {
-    return { community: "", radiusKm: "all" };
+    return { city: "lagos", community: "", radiusKm: "all" };
   }
 }
 

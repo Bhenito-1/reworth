@@ -12,11 +12,12 @@ export type OfferStatus =
   | "WITHDRAWN"
   | "EXPIRED";
 
-export type MessageType =
+  export type MessageType =
   | "TEXT"
   | "IMAGE"
   | "LISTING_CARD"
   | "OFFER_CARD"
+  | "SWAP_PROPOSAL_CARD"
   | "SYSTEM";
 
 export type ConversationListItem = {

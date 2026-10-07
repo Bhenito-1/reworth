@@ -1,5 +1,6 @@
 /**
  * Phase 2.4 — Referral programme client.
+ * API: GET /me/referrals · POST /referrals/attribute
  */
 
 import { apiFetch } from "./api";
@@ -7,20 +8,13 @@ import { apiFetch } from "./api";
 export type ReferralCodeResponse = {
   code: string;
   shareUrl?: string;
-  createdAt?: string;
+  invited?: MyReferralRow[];
 };
 
-export type ReferralAttributionStatus =
-  | "REGISTERED"
-  | "PHONE_VERIFIED"
-  | "FIRST_TXN"
-  | "REWARDED"
-  | "RISK_FLAGGED"
-  | "PENDING"
-  | string;
+export type ReferralAttributionStatus = string;
 
 export type MyReferralRow = {
-  id: string;
+  id?: string;
   referredUserId?: string;
   displayName?: string | null;
   status: ReferralAttributionStatus;
@@ -45,7 +39,15 @@ export type AttributeReferralBody = {
 export async function getMyReferralCode(
   token: string,
 ): Promise<ReferralCodeResponse> {
-  return apiFetch<ReferralCodeResponse>("/referrals/me", { token });
+  const raw = await apiFetch<{
+    code: string;
+    invited?: MyReferralRow[];
+  }>("/me/referrals", { token });
+  return {
+    code: raw.code,
+    invited: raw.invited,
+    shareUrl: referralShareUrl(raw.code),
+  };
 }
 
 export async function attributeReferral(
@@ -62,12 +64,15 @@ export async function attributeReferral(
 export async function listMyReferrals(
   token: string,
 ): Promise<MyReferralsResponse> {
-  const raw = await apiFetch<MyReferralsResponse | MyReferralRow[]>(
-    "/referrals/mine",
-    { token },
-  );
-  if (Array.isArray(raw)) return { items: raw };
-  return { items: raw.items ?? [], code: raw.code };
+  const raw = await apiFetch<{
+    code: string;
+    invited?: MyReferralRow[];
+  }>("/me/referrals", { token });
+  const items = (raw.invited ?? []).map((row, i) => ({
+    ...row,
+    id: row.referredUserId ?? `ref-${i}`,
+  }));
+  return { items, code: raw.code };
 }
 
 export function referralShareUrl(code: string, origin?: string): string {
@@ -85,11 +90,13 @@ export function whatsappShareHref(code: string, shareUrl: string): string {
 export function referralStatusLabel(status: string): string {
   switch (status) {
     case "REGISTERED":
+    case "invited":
       return "Signed up";
     case "PHONE_VERIFIED":
+    case "registered":
       return "Phone verified";
     case "FIRST_TXN":
-      return "First transaction";
+    case "rewarded":
     case "REWARDED":
       return "Reward granted";
     case "RISK_FLAGGED":

@@ -5,6 +5,8 @@
 **Base (local):** `http://localhost:3001/api/v1`  
 **Auth:** `Authorization: Bearer <accessToken>` (user). Admin routes require admin JWT (+ optional TOTP session).
 
+**Postman:** import `docs/postman/ReWorth-API.postman_collection.json` + Local/Staging env (`docs/postman/README.md`).
+
 ## Health
 
 | Method | Path | Auth | Notes |

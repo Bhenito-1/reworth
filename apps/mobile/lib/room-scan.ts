@@ -54,6 +54,18 @@ export async function createRoomScanDrafts(
   });
 }
 
+export async function patchRoomScanItems(
+  token: string,
+  scanId: string,
+  items: Array<{ id: string; selected?: boolean; condition?: string }>,
+): Promise<RoomScan> {
+  return apiFetch(`/room-scans/${scanId}/items`, {
+    method: "PATCH",
+    token,
+    body: { items },
+  });
+}
+
 export async function pollRoomScanUntilReady(
   token: string,
   scanId: string,

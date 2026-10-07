@@ -119,7 +119,7 @@ export default function AdminLoginPage() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 50% 40% at 50% 0%, rgba(14,159,110,0.12), transparent 55%), linear-gradient(180deg, #FAF9F7, #EEF2F0)",
+            "radial-gradient(ellipse 50% 40% at 50% 0%, rgba(14,159,110,0.12), transparent 55%), linear-gradient(180deg, #FCFAF6, #EEF2F0)",
         }}
       />
 

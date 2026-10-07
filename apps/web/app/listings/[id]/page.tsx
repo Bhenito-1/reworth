@@ -55,6 +55,16 @@ import type {
   PublicListing,
 } from "../../../lib/types";
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
+import {
+  BOOST_DURATIONS_HOURS,
+  newIdempotencyKey,
+  purchaseBoost,
+  purchaseFeatured,
+  quoteBoost,
+  quoteFeatured,
+  type BoostQuote,
+  type FeaturedQuote,
+} from "../../../lib/monetization";
 
 export default function ListingPdpPage() {
   const params = useParams<{ id: string }>();
@@ -94,6 +104,13 @@ export default function ListingPdpPage() {
     useState<InspectionReport | null>(null);
   const [inspectionBusy, setInspectionBusy] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
+  const [boostHours, setBoostHours] =
+    useState<(typeof BOOST_DURATIONS_HOURS)[number]>(24);
+  const [boostQuote, setBoostQuote] = useState<BoostQuote | null>(null);
+  const [featuredQuote, setFeaturedQuote] = useState<FeaturedQuote | null>(
+    null,
+  );
+  const [monetizeBusy, setMonetizeBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -653,6 +670,24 @@ export default function ListingPdpPage() {
               Share
             </Button>
           </div>
+
+          {meId && meId === listing.seller.id ? (
+            <OwnerMonetization
+              listingId={listing.id}
+              boosted={Boolean(listing.boosted)}
+              featured={Boolean(listing.featured)}
+              boostHours={boostHours}
+              setBoostHours={setBoostHours}
+              boostQuote={boostQuote}
+              setBoostQuote={setBoostQuote}
+              featuredQuote={featuredQuote}
+              setFeaturedQuote={setFeaturedQuote}
+              busy={monetizeBusy}
+              setBusy={setMonetizeBusy}
+              onToast={(message, tone) => setToast({ message, tone })}
+              onRefresh={() => void load()}
+            />
+          ) : null}
         </section>
 
         {meId === listing.seller.id ? null : (
@@ -1053,5 +1088,162 @@ export default function ListingPdpPage() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function OwnerMonetization({
+  listingId,
+  boosted,
+  featured,
+  boostHours,
+  setBoostHours,
+  boostQuote,
+  setBoostQuote,
+  featuredQuote,
+  setFeaturedQuote,
+  busy,
+  setBusy,
+  onToast,
+  onRefresh,
+}: {
+  listingId: string;
+  boosted: boolean;
+  featured: boolean;
+  boostHours: (typeof BOOST_DURATIONS_HOURS)[number];
+  setBoostHours: (h: (typeof BOOST_DURATIONS_HOURS)[number]) => void;
+  boostQuote: BoostQuote | null;
+  setBoostQuote: (q: BoostQuote | null) => void;
+  featuredQuote: FeaturedQuote | null;
+  setFeaturedQuote: (q: FeaturedQuote | null) => void;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  onToast: (message: string, tone?: "info" | "success" | "warn" | "error") => void;
+  onRefresh: () => void;
+}) {
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [bq, fq] = await Promise.all([
+          quoteBoost(token, boostHours),
+          quoteFeatured(token),
+        ]);
+        if (!cancelled) {
+          setBoostQuote(bq);
+          setFeaturedQuote(fq);
+        }
+      } catch {
+        if (!cancelled) {
+          setBoostQuote(null);
+          setFeaturedQuote(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [boostHours, listingId, setBoostQuote, setFeaturedQuote]);
+
+  async function onBoost() {
+    const token = getAccessToken();
+    if (!token) {
+      onToast("Sign in to boost", "warn");
+      return;
+    }
+    setBusy(true);
+    try {
+      await purchaseBoost(token, {
+        listingId,
+        hours: boostHours,
+        idempotencyKey: newIdempotencyKey("boost"),
+      });
+      onToast("Boost purchased", "success");
+      onRefresh();
+    } catch (err) {
+      onToast(err instanceof ApiError ? err.message : "Boost failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onFeature() {
+    const token = getAccessToken();
+    if (!token) {
+      onToast("Sign in to feature", "warn");
+      return;
+    }
+    setBusy(true);
+    try {
+      await purchaseFeatured(token, {
+        listingId,
+        idempotencyKey: newIdempotencyKey("featured"),
+      });
+      onToast("Featured slot purchased", "success");
+      onRefresh();
+    } catch (err) {
+      onToast(
+        err instanceof ApiError ? err.message : "Featured failed",
+        "error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="mt-6 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
+      aria-label="Promote listing"
+    >
+      <h2 className="text-base font-semibold tracking-tight">Promote</h2>
+      <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
+        {boosted ? "Boosted · " : ""}
+        {featured ? "Featured" : "Reach more Lagos buyers"}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {BOOST_DURATIONS_HOURS.map((h) => (
+          <button
+            key={h}
+            type="button"
+            onClick={() => setBoostHours(h)}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+              boostHours === h
+                ? "border-[var(--rw-accent)] bg-[var(--rw-accent-muted)] text-[var(--rw-ink)]"
+                : "border-[var(--rw-border)] text-[var(--rw-ink-muted)]"
+            }`}
+          >
+            {h}h
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={busy || !boostQuote || boosted}
+          onClick={() => void onBoost()}
+        >
+          {boosted
+            ? "Already boosted"
+            : boostQuote
+              ? `Boost · ${formatNgn({ amountKobo: boostQuote.priceKobo })}`
+              : "Boost…"}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={busy || !featuredQuote || featured}
+          onClick={() => void onFeature()}
+        >
+          {featured
+            ? "Already featured"
+            : featuredQuote
+              ? `Feature · ${formatNgn({ amountKobo: featuredQuote.priceKobo })}`
+              : "Feature…"}
+        </Button>
+      </div>
+    </div>
   );
 }

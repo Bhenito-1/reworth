@@ -59,6 +59,18 @@ export class PlatformServicesController {
     return this.instantBuy.get(id, user.id, Boolean(isOps));
   }
 
+  @Get('instant-buy/by-order/:orderId')
+  @UseGuards(JwtAuthGuard)
+  getFulfilmentByOrder(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+  ) {
+    const isOps = user.roles?.some((r) =>
+      ['SUPER_ADMIN', 'OPERATIONS', 'OPS'].includes(r),
+    );
+    return this.instantBuy.getByOrder(orderId, user.id, Boolean(isOps));
+  }
+
   @Post('instant-buy/fulfilments/:id/schedule')
   @UseGuards(JwtAuthGuard)
   schedule(

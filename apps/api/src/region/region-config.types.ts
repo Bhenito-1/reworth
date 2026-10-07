@@ -14,6 +14,8 @@ export type RegionPriceBand = {
   maxKobo: number | null;
 };
 
+export type RegionStatus = 'pilot' | 'supply' | 'disabled';
+
 export type RegionConfig = {
   city: string;
   displayName: string;
@@ -23,6 +25,8 @@ export type RegionConfig = {
   logistics: RegionLogistics;
   priceBands: Record<string, RegionPriceBand>;
   psp: { enabled: boolean; provider?: string };
+  /** Public picker: pilot cities only. supply = ops/config-ready, not marketed. */
+  status?: RegionStatus;
 };
 
 export const REGION_REQUIRED_KEYS = [
@@ -37,3 +41,17 @@ export const REGION_REQUIRED_KEYS = [
 ] as const;
 
 export const DEFAULT_CITY_KEY = 'lagos';
+
+/** Default consumer pilot: SW + Abuja + PH. Override via REGION_PILOT_CITIES. */
+export const DEFAULT_PILOT_CITY_KEYS = [
+  'lagos',
+  'ogun',
+  'ibadan',
+  'osun',
+  'ondo',
+  'ekiti',
+  'edo',
+  'abuja',
+  'port-harcourt',
+  'kano',
+] as const;

@@ -13,7 +13,7 @@ import {
   View,
 } from "react-native";
 import { ApiError } from "./lib/api";
-import { getAccessToken } from "./lib/auth";
+import { clearTokens, ensureAccessToken, getAccessToken } from "./lib/auth";
 import {
   acceptOffer,
   blockUser,
@@ -43,7 +43,16 @@ import {
   subscribeChat,
   type InboxUpdate,
 } from "./lib/chat-socket";
+import {
+  acceptSwapProposal,
+  parseSwapProposalCard,
+  rejectSwapProposal,
+} from "./lib/swap";
 import { formatNgnFromKobo } from "./lib/types";
+import { EmptyState } from "./components/EmptyState";
+import { brandAssets } from "./lib/brandAssets";
+import { useColors } from "./theme/ThemeProvider";
+import { colors } from "./theme/tokens";
 
 type Props = {
   meId: string;
@@ -54,6 +63,9 @@ type Props = {
     offerId?: string;
     orderIntentId?: string;
   }) => void;
+  onBrowse?: () => void;
+  /** Called when session cannot be recovered — parent should return to onboarding */
+  onSessionExpired?: () => void;
 };
 
 type ThreadItem =
@@ -65,21 +77,40 @@ export function ChatsPanel({
   openConversationId,
   onConversationOpened,
   onCheckout,
+  onBrowse,
+  onSessionExpired,
 }: Props) {
+  const theme = useColors();
   const [items, setItems] = useState<ConversationListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const token = await getAccessToken();
-    if (!token) return;
     setLoading(true);
     setError(null);
+    setSessionExpired(false);
     try {
+      const token = await ensureAccessToken();
+      if (!token) {
+        setSessionExpired(true);
+        setError("Session expired — sign in again");
+        setItems([]);
+        return;
+      }
       setItems(await listConversations(token));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not load chats");
+      const unauthorized =
+        err instanceof ApiError && err.status === 401;
+      if (unauthorized) {
+        setSessionExpired(true);
+        setError("Session expired — sign in again");
+        await clearTokens();
+      } else {
+        setError(err instanceof ApiError ? err.message : "Could not load chats");
+      }
+      setItems([]);
     } finally {
       setLoading(false);
     }
@@ -167,30 +198,43 @@ export function ChatsPanel({
   }
 
   return (
-    <View style={styles.flex}>
-      <Text style={styles.brand} accessibilityRole="header">
+    <View style={[styles.flex, { backgroundColor: theme.canvas }]}>
+      <Text style={[styles.brand, { color: theme.ink }]} accessibilityRole="header">
         Chats
       </Text>
-      <Text style={styles.copy}>Offers and messages with local buyers.</Text>
+      <Text style={[styles.copy, { color: theme.muted }]}>
+        Offers and messages with local buyers.
+      </Text>
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator color="#0E9F6E" accessibilityLabel="Loading" />
+          <ActivityIndicator color={theme.orange} accessibilityLabel="Loading" />
         </View>
+      ) : sessionExpired ? (
+        <EmptyState
+          title="Sign in again"
+          body="Your session expired. Sign back in to see chats and offers."
+          ctaLabel="Sign in"
+          onCta={() => {
+            void clearTokens().then(() => onSessionExpired?.());
+          }}
+          illustration="messages"
+        />
       ) : error ? (
         <View style={styles.center}>
-          <Text style={styles.error}>{error}</Text>
+          <Text style={[styles.error, { color: theme.error }]}>{error}</Text>
           <Pressable onPress={() => void load()} style={styles.retry}>
-            <Text style={styles.retryText}>Retry</Text>
+            <Text style={[styles.retryText, { color: theme.orange }]}>Retry</Text>
           </Pressable>
         </View>
       ) : items.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyTitle}>No conversations yet</Text>
-          <Text style={styles.muted}>
-            Open a listing and tap Chat or Make offer.
-          </Text>
-        </View>
+        <EmptyState
+          title="No messages"
+          body="Open a listing and tap Chat or Make offer."
+          ctaLabel="Browse listings"
+          onCta={() => onBrowse?.()}
+          illustration="messages"
+        />
       ) : (
         <FlatList
           data={items}
@@ -200,43 +244,67 @@ export function ChatsPanel({
             const thumb = conversationThumbUrl(c.listingThumb);
             return (
               <Pressable
-                style={styles.row}
+                style={[
+                  styles.row,
+                  {
+                    borderColor: theme.border,
+                    backgroundColor: theme.surface,
+                  },
+                ]}
                 onPress={() => setActiveId(c.id)}
                 accessibilityRole="button"
                 accessibilityLabel={c.listingTitle}
               >
-                <View style={styles.thumb}>
+                <View style={[styles.thumb, { backgroundColor: theme.border }]}>
                   {thumb ? (
                     <Image source={{ uri: thumb }} style={styles.thumbImg} />
                   ) : (
-                    <Text style={styles.thumbLetter}>
+                    <Text style={[styles.thumbLetter, { color: theme.muted }]}>
                       {(c.listingTitle || "?").slice(0, 1).toUpperCase()}
                     </Text>
                   )}
                 </View>
                 <View style={styles.rowBody}>
                   <View style={styles.rowTop}>
-                    <Text style={styles.rowTitle} numberOfLines={1}>
+                    <Text
+                      style={[styles.rowTitle, { color: theme.ink }]}
+                      numberOfLines={1}
+                    >
                       {c.listingTitle || "Listing"}
                     </Text>
                     {c.unreadCount > 0 ? (
-                      <View style={styles.badge}>
+                      <View
+                        style={[styles.badge, { backgroundColor: theme.orange }]}
+                      >
                         <Text style={styles.badgeText}>
                           {c.unreadCount > 99 ? "99+" : c.unreadCount}
                         </Text>
                       </View>
                     ) : c.muted ? (
-                      <Text style={styles.mutedChip}>Muted</Text>
+                      <Text style={[styles.mutedChip, { color: theme.muted }]}>
+                        Muted
+                      </Text>
                     ) : null}
                   </View>
-                  <Text style={styles.rowPreview} numberOfLines={1}>
+                  <Text
+                    style={[styles.rowPreview, { color: theme.muted }]}
+                    numberOfLines={1}
+                  >
                     {c.counterpart.displayName}
                     {c.lastMessagePreview
                       ? ` · ${c.lastMessagePreview}`
                       : " · No messages yet"}
                   </Text>
                   {c.activeOffer ? (
-                    <Text style={styles.offerChip}>
+                    <Text
+                      style={[
+                        styles.offerChip,
+                        {
+                          backgroundColor: theme.orangeWash,
+                          color: theme.orange,
+                        },
+                      ]}
+                    >
                       {formatNgnFromKobo(c.activeOffer.amountKobo)} ·{" "}
                       {offerStatusLabel(String(c.activeOffer.status))}
                     </Text>
@@ -266,6 +334,7 @@ function ChatThread({
     orderIntentId?: string;
   }) => void;
 }) {
+  const theme = useColors();
   const [meta, setMeta] = useState<ConversationListItem | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [offers, setOffers] = useState<OfferDto[]>([]);
@@ -282,11 +351,12 @@ function ChatThread({
   const [reportReason, setReportReason] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [swapBusyId, setSwapBusyId] = useState<string | null>(null);
   const marked = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
 
   const refresh = useCallback(async () => {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token) return;
     const [convos, msgs] = await Promise.all([
       listConversations(token),
@@ -440,7 +510,7 @@ function ChatThread({
   }, [offers]);
 
   async function sendText() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     const text = draft.trim();
     if (!token || !text) return;
     setSending(true);
@@ -484,7 +554,7 @@ function ChatThread({
   }
 
   async function submitOffer() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !meta) return;
     const value = Number(offerNaira.replace(/,/g, ""));
     if (!Number.isFinite(value) || value < 1) {
@@ -513,7 +583,7 @@ function ChatThread({
     action: "accept" | "reject" | "withdraw",
     offer: OfferDto,
   ) {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token) return;
     setBusy(true);
     try {
@@ -559,7 +629,7 @@ function ChatThread({
   }
 
   async function submitCounter() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !counterFor) return;
     const value = Number(counterNaira.replace(/,/g, ""));
     if (!Number.isFinite(value) || value < 1) {
@@ -584,7 +654,7 @@ function ChatThread({
   }
 
   async function doBlock() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !meta) return;
     setBusy(true);
     try {
@@ -600,7 +670,7 @@ function ChatThread({
   }
 
   async function doReport() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !meta) return;
     if (!reportReason.trim()) {
       setToast("Add a reason");
@@ -623,7 +693,7 @@ function ChatThread({
   }
 
   async function doMuteToggle() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !meta) return;
     setBusy(true);
     try {
@@ -642,6 +712,75 @@ function ChatThread({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function runSwapAction(
+    action: "accept" | "reject",
+    proposalId: string,
+  ) {
+    const token = await ensureAccessToken();
+    if (!token) return;
+    setSwapBusyId(proposalId);
+    try {
+      if (action === "accept") {
+        await acceptSwapProposal(token, proposalId);
+        setToast("Swap accepted");
+      } else {
+        await rejectSwapProposal(token, proposalId);
+        setToast("Swap rejected");
+      }
+      await refresh();
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Swap action failed");
+    } finally {
+      setSwapBusyId(null);
+    }
+  }
+
+  function renderSwapCard(m: ChatMessage) {
+    const parsed = parseSwapProposalCard(m.body);
+    if (!parsed) {
+      return (
+        <View style={styles.offerCard}>
+          <Text style={styles.offerLabel}>Swap proposal</Text>
+          <Text style={styles.offerStatus}>{m.body}</Text>
+        </View>
+      );
+    }
+    const isListingSeller = Boolean(meta && meId === meta.sellerId);
+    const cash = parsed.cashComponentKobo ?? 0;
+    return (
+      <View style={styles.offerCard}>
+        <Text style={styles.offerLabel}>Swap proposal</Text>
+        <Text style={styles.offerAmount}>
+          {cash > 0
+            ? `Item + ${formatNgnFromKobo(cash)}`
+            : "Item for item"}
+        </Text>
+        <Text style={styles.offerStatus}>Pending response</Text>
+        {isListingSeller ? (
+          <View style={styles.offerActions}>
+            <MiniBtn
+              label="Accept"
+              primary
+              disabled={swapBusyId === parsed.swapProposalId}
+              onPress={() =>
+                void runSwapAction("accept", parsed.swapProposalId)
+              }
+            />
+            <MiniBtn
+              label="Reject"
+              disabled={swapBusyId === parsed.swapProposalId}
+              onPress={() =>
+                void runSwapAction("reject", parsed.swapProposalId)
+              }
+            />
+          </View>
+        ) : (
+          <Text style={styles.muted}>Waiting for seller</Text>
+        )}
+      </View>
+    );
   }
 
   function renderOfferCard(offer: OfferDto) {
@@ -715,7 +854,7 @@ function ChatThread({
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator color="#0E9F6E" />
+          <ActivityIndicator color={theme.orange} />
       </View>
     );
   }
@@ -781,20 +920,29 @@ function ChatThread({
                 ) : null}
                 {m.type === "OFFER_CARD" && linked ? (
                   <View style={styles.offerWrap}>{renderOfferCard(linked)}</View>
+                ) : m.type === "SWAP_PROPOSAL_CARD" ? (
+                  <View style={styles.offerWrap}>{renderSwapCard(m)}</View>
                 ) : m.type === "SYSTEM" ? (
                   <Text style={[styles.muted, styles.centerText]}>{m.body}</Text>
                 ) : (
                   <View
                     style={[
                       styles.bubble,
-                      mine ? styles.bubbleMine : styles.bubbleTheirs,
+                      mine
+                        ? {
+                            alignSelf: "flex-end",
+                            backgroundColor: theme.orangeWash,
+                          }
+                        : {
+                            alignSelf: "flex-start",
+                            backgroundColor: theme.beige,
+                            borderWidth: StyleSheet.hairlineWidth,
+                            borderColor: theme.border,
+                          },
                     ]}
                   >
                     <Text
-                      style={[
-                        styles.bubbleText,
-                        mine && styles.bubbleTextMine,
-                      ]}
+                      style={[styles.bubbleText, { color: theme.ink }]}
                     >
                       {m.body}
                     </Text>
@@ -813,19 +961,37 @@ function ChatThread({
 
       <View style={styles.composer}>
         <TextInput
-          style={styles.composerInput}
+          style={[
+            styles.composerInput,
+            {
+              borderColor: theme.border,
+              backgroundColor: theme.surface,
+              color: theme.ink,
+            },
+          ]}
           value={draft}
           onChangeText={setDraft}
           placeholder="Message…"
+          placeholderTextColor={theme.muted}
           accessibilityLabel="Message"
           maxLength={4000}
         />
         <Pressable
-          style={[styles.sendBtn, (!draft.trim() || sending) && styles.disabled]}
+          style={[
+            styles.sendBtn,
+            { backgroundColor: theme.orange },
+            (!draft.trim() || sending) && styles.disabled,
+          ]}
           disabled={!draft.trim() || sending}
           onPress={() => void sendText()}
+          accessibilityRole="button"
+          accessibilityLabel="Send message"
         >
-          <Text style={styles.sendText}>{sending ? "…" : "Send"}</Text>
+          <Image
+            source={brandAssets.actionChat}
+            style={styles.sendIcon}
+            resizeMode="contain"
+          />
         </Pressable>
         <Pressable
           style={[styles.offerBtn, !meta && styles.disabled]}
@@ -949,20 +1115,32 @@ function MiniBtn({
   danger?: boolean;
   disabled?: boolean;
 }) {
+  const theme = useColors();
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
       style={[
         styles.miniBtn,
-        primary && styles.miniPrimary,
-        danger && styles.miniDanger,
+        {
+          borderColor: theme.border,
+          backgroundColor: theme.canvas,
+        },
+        primary && {
+          backgroundColor: theme.orange,
+          borderColor: theme.orange,
+        },
+        danger && {
+          backgroundColor: theme.error,
+          borderColor: theme.error,
+        },
         disabled && styles.disabled,
       ]}
     >
       <Text
         style={[
           styles.miniText,
+          { color: theme.ink },
           (primary || danger) && styles.miniTextOn,
         ]}
       >
@@ -977,10 +1155,10 @@ const styles = StyleSheet.create({
   brand: {
     fontSize: 32,
     fontWeight: "700",
-    color: "#111315",
+    color: colors.ink,
     letterSpacing: -0.4,
   },
-  copy: { marginTop: 8, fontSize: 15, color: "#5C636A", marginBottom: 12 },
+  copy: { marginTop: 8, fontSize: 15, color: colors.muted, marginBottom: 12 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8 },
   listPad: { paddingBottom: 24 },
   row: {
@@ -990,24 +1168,24 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#FFFFFF",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
   thumb: {
     width: 56,
     height: 56,
     borderRadius: 12,
-    backgroundColor: "#E5E2DC",
+    backgroundColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
   thumbImg: { width: "100%", height: "100%" },
-  thumbLetter: { fontWeight: "700", color: "#5C636A" },
+  thumbLetter: { fontWeight: "700", color: colors.muted },
   rowBody: { flex: 1, minWidth: 0 },
   rowTop: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-  rowTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: "#111315" },
-  rowPreview: { marginTop: 4, fontSize: 13, color: "#5C636A" },
+  rowTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: colors.ink },
+  rowPreview: { marginTop: 4, fontSize: 13, color: colors.muted },
   offerChip: {
     marginTop: 6,
     alignSelf: "flex-start",
@@ -1015,8 +1193,8 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: "#D1FAE5",
-    color: "#0E9F6E",
+    backgroundColor: colors.orangeWash,
+    color: colors.orange,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -1024,22 +1202,22 @@ const styles = StyleSheet.create({
     minWidth: 20,
     paddingHorizontal: 6,
     borderRadius: 999,
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     alignItems: "center",
   },
-  badgeText: { color: "#FFF", fontSize: 11, fontWeight: "700" },
+  badgeText: { color: colors.onAccent, fontSize: 11, fontWeight: "700" },
   mutedChip: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#5C636A",
+    color: colors.muted,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  emptyTitle: { fontSize: 17, fontWeight: "700", color: "#111315" },
-  muted: { fontSize: 14, color: "#5C636A" },
-  error: { color: "#DC2626", fontSize: 15 },
+  emptyTitle: { fontSize: 17, fontWeight: "700", color: colors.ink },
+  muted: { fontSize: 14, color: colors.muted },
+  error: { color: colors.error, fontSize: 15 },
   retry: { marginTop: 8, padding: 8 },
-  retryText: { color: "#0E9F6E", fontWeight: "700" },
+  retryText: { color: colors.orange, fontWeight: "700" },
   threadHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1047,12 +1225,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   threadTitles: { flex: 1, minWidth: 0 },
-  threadTitle: { fontSize: 16, fontWeight: "700", color: "#111315" },
-  link: { color: "#0E9F6E", fontWeight: "700", fontSize: 14 },
+  threadTitle: { fontSize: 16, fontWeight: "700", color: colors.ink },
+  link: { color: colors.orange, fontWeight: "700", fontSize: 14 },
   linkCenter: {
     marginTop: 14,
     textAlign: "center",
-    color: "#0E9F6E",
+    color: colors.orange,
     fontWeight: "600",
   },
   threadPad: { paddingBottom: 16, gap: 10 },
@@ -1064,89 +1242,104 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
-  bubbleMine: { alignSelf: "flex-end", backgroundColor: "#0E9F6E" },
+  bubbleMine: { alignSelf: "flex-end", backgroundColor: colors.orangeWash },
   bubbleTheirs: {
     alignSelf: "flex-start",
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
+    backgroundColor: colors.beige,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
-  bubbleText: { fontSize: 15, color: "#111315", lineHeight: 20 },
-  bubbleTextMine: { color: "#FFFFFF" },
+  bubbleText: { fontSize: 15, color: colors.ink, lineHeight: 20 },
+  bubbleTextMine: { color: colors.ink },
   warn: {
     borderRadius: 10,
-    backgroundColor: "#FEF3C7",
+    backgroundColor: colors.goldWash,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.warning,
     padding: 10,
   },
-  warnText: { color: "#92400E", fontSize: 13, fontWeight: "600" },
+  warnText: { color: colors.muted, fontSize: 13, fontWeight: "600" },
   offerWrap: { alignItems: "center" },
   offerCard: {
     width: "100%",
     maxWidth: 320,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     padding: 14,
   },
   offerLabel: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#5C636A",
+    color: colors.muted,
     textTransform: "uppercase",
   },
   offerAmount: {
     marginTop: 4,
     fontSize: 22,
     fontWeight: "700",
-    color: "#111315",
+    color: colors.ink,
   },
-  offerStatus: { marginTop: 4, fontSize: 13, color: "#0E9F6E", fontWeight: "600" },
+  offerStatus: {
+    marginTop: 4,
+    fontSize: 13,
+    color: colors.orange,
+    fontWeight: "600",
+  },
   offerActions: { marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 },
   miniBtn: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: "#FAF9F7",
+    backgroundColor: colors.canvas,
   },
-  miniPrimary: { backgroundColor: "#0E9F6E", borderColor: "#0E9F6E" },
-  miniDanger: { backgroundColor: "#DC2626", borderColor: "#DC2626" },
-  miniText: { fontSize: 13, fontWeight: "700", color: "#111315" },
-  miniTextOn: { color: "#FFFFFF" },
+  miniPrimary: { backgroundColor: colors.orange, borderColor: colors.orange },
+  miniDanger: { backgroundColor: colors.error, borderColor: colors.error },
+  miniText: { fontSize: 13, fontWeight: "700", color: colors.ink },
+  miniTextOn: { color: colors.onAccent },
   composer: { flexDirection: "row", gap: 8, alignItems: "center" },
   composerInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
     fontSize: 16,
-    color: "#111315",
+    color: colors.ink,
   },
   sendBtn: {
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  sendText: { color: "#FFF", fontWeight: "700" },
+  sendIcon: { width: 22, height: 22 },
+  sendText: { color: colors.onAccent, fontWeight: "700" },
   offerBtn: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     paddingVertical: 12,
     paddingHorizontal: 12,
-    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
   },
-  offerBtnText: { fontWeight: "700", color: "#111315" },
+  offerBtnIcon: { width: 22, height: 22 },
+  offerBtnText: { fontWeight: "700", color: colors.ink },
   toast: {
     marginTop: 8,
     textAlign: "center",
-    color: "#0E9F6E",
+    color: colors.orange,
     fontWeight: "600",
   },
   sheetBackdrop: {
@@ -1155,55 +1348,55 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   sheet: {
-    backgroundColor: "#FAF9F7",
+    backgroundColor: colors.canvas,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: 32,
   },
-  sheetTitle: { fontSize: 20, fontWeight: "700", color: "#111315" },
+  sheetTitle: { fontSize: 20, fontWeight: "700", color: colors.ink },
   label: {
     marginTop: 16,
     marginBottom: 8,
     fontSize: 14,
     fontWeight: "600",
-    color: "#111315",
+    color: colors.ink,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
-    color: "#111315",
-    backgroundColor: "#FFFFFF",
+    color: colors.ink,
+    backgroundColor: colors.surface,
   },
   primaryBtn: {
     marginTop: 20,
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
   },
-  primaryBtnText: { color: "#FFF", fontWeight: "700", fontSize: 16 },
+  primaryBtnText: { color: colors.onAccent, fontWeight: "700", fontSize: 16 },
   secondaryBtn: {
     marginTop: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
   },
-  secondaryBtnText: { fontWeight: "700", color: "#111315" },
+  secondaryBtnText: { fontWeight: "700", color: colors.ink },
   dangerBtn: {
     marginTop: 10,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
-    backgroundColor: "#DC2626",
+    backgroundColor: colors.error,
   },
-  dangerBtnText: { fontWeight: "700", color: "#FFFFFF" },
+  dangerBtnText: { fontWeight: "700", color: colors.onAccent },
   disabled: { opacity: 0.55 },
 });
