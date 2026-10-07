@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "@reworth/ui-web/tokens.css";
 import "./globals.css";
+import { SessionGate } from "../components/SessionGate";
 
 export const metadata: Metadata = {
   title: "ReWorth",
@@ -17,7 +18,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en-NG" className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      <body className="font-sans antialiased">{children}</body>
+      <body className="font-sans antialiased">
+        <SessionGate>{children}</SessionGate>
+      </body>
     </html>
   );
 }

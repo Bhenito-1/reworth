@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
@@ -26,6 +28,7 @@ export class NotificationsController {
   constructor(private readonly notifications: NotificationsService) {}
 
   @Get()
+  @Header('Cache-Control', 'private, no-store')
   list(
     @CurrentUser() user: AuthUser,
     @Query() query: ListNotificationsQueryDto,
@@ -40,6 +43,12 @@ export class NotificationsController {
       category: query.category,
       unread,
     });
+  }
+
+  @Get('unread-count')
+  @Header('Cache-Control', 'private, no-store')
+  unreadCount(@CurrentUser() user: AuthUser) {
+    return this.notifications.unreadCount(user.id);
   }
 
   @Get('preferences')
@@ -63,6 +72,11 @@ export class NotificationsController {
   @Post('read-all')
   markAllRead(@CurrentUser() user: AuthUser) {
     return this.notifications.markAllRead(user.id);
+  }
+
+  @Delete()
+  clear(@CurrentUser() user: AuthUser) {
+    return this.notifications.clearInbox(user.id);
   }
 
   @Post(':id/read')

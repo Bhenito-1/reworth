@@ -12,12 +12,22 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   FulfilmentMethod,
+  NotificationChannel,
   Order,
+  OrderConfirmationStatus,
   OrderStatus,
   Prisma,
   SwapLegStatus,
   TransactionType,
 } from '@prisma/client';
+import {
+  buildEscrowSnapshot,
+  buildOrderLifecycle,
+  type EscrowSnapshot,
+  type OrderLifecycleStage,
+} from '@reworth/shared';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { SUPPORT } from '../admin/admin-roles';
 import { DeliveryService } from '../delivery/delivery.service';
 import { ListingStateMachine } from '../listings/listing-state.machine';
 import { NotificationCategory } from '../notifications/notification-categories';
@@ -29,6 +39,7 @@ import {
   type DeliveryProvider,
 } from '../providers/delivery.provider';
 import { haversineKm } from '../providers/search.provider';
+import { MockPsp } from '../providers/mock-psp';
 import {
   PAYMENT_PROVIDER,
   type PaymentProvider,
@@ -37,7 +48,12 @@ import { ReferralsService } from '../referrals/referrals.service';
 import { TrustScoreService } from '../reviews/trust-score.service';
 import { InstantBuyService } from '../platform-services/instant-buy.service';
 import { LuxuryAuthService } from '../verticals/luxury-auth.service';
-import { CreateOrderDto } from './dto/orders.dto';
+import { InventoryService } from '../inventory/inventory.service';
+import {
+  ConfirmOrderDto,
+  CreateOrderDto,
+  RejectOrderDto,
+} from './dto/orders.dto';
 import {
   computeOrderTotalKobo,
   computeProtectionFeeKobo,
@@ -59,9 +75,36 @@ export type MeetPointSummaryDto = {
   lng: number;
 };
 
+/** One placed order, enough to describe it in a combined email. */
+export type PlacedOrderMail = {
+  id: string;
+  sellerId: string;
+  quantity: number;
+  totalKobo: number;
+  title: string;
+};
+
+const NO_EMAIL: NotificationChannel[] = [
+  NotificationChannel.IN_APP,
+  NotificationChannel.PUSH,
+];
+
+function formatNaira(kobo: number): string {
+  return new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+  }).format(kobo / 100);
+}
+
+function orderMailLine(order: PlacedOrderMail): string {
+  const title = order.title.trim() || 'Item';
+  return `${order.quantity} × ${title} — ${formatNaira(order.totalKobo)}`;
+}
+
 export type OrderDto = {
   id: string;
   listingId: string;
+  listingTitle?: string | null;
   buyerId: string;
   sellerId: string;
   offerId: string | null;
@@ -70,8 +113,14 @@ export type OrderDto = {
   protectionFeeKobo: number;
   deliveryFeeKobo: number;
   totalKobo: number;
+  quantity: number;
+  unitPriceKobo: number;
   fulfilmentMethod: FulfilmentMethod;
   status: OrderStatus;
+  confirmationStatus: OrderConfirmationStatus;
+  rejectionReason: string | null;
+  sellerNote: string | null;
+  deliveryDate: Date | null;
   buyerProtection: boolean;
   coverageEndsAt: Date | null;
   autoReleaseAt: Date | null;
@@ -90,6 +139,10 @@ export type OrderDto = {
   legAStatus?: SwapLegStatus | null;
   legBStatus?: SwapLegStatus | null;
   cashRecipientId?: string | null;
+  /** Escrow journey stages for UI. */
+  lifecycle?: OrderLifecycleStage[];
+  escrow?: EscrowSnapshot;
+  deliveryStatus?: string | null;
 };
 
 function toOrderDto(
@@ -113,8 +166,14 @@ function toOrderDto(
     protectionFeeKobo: o.protectionFeeKobo,
     deliveryFeeKobo: o.deliveryFeeKobo,
     totalKobo: o.totalKobo,
+    quantity: o.quantity ?? 1,
+    unitPriceKobo: o.unitPriceKobo || o.amountKobo,
     fulfilmentMethod: o.fulfilmentMethod,
     status: o.status,
+    confirmationStatus: o.confirmationStatus ?? 'CONFIRMED',
+    rejectionReason: o.rejectionReason ?? null,
+    sellerNote: o.sellerNote ?? null,
+    deliveryDate: o.deliveryDate ?? null,
     buyerProtection: o.buyerProtection,
     coverageEndsAt: o.coverageEndsAt,
     autoReleaseAt: o.autoReleaseAt,
@@ -174,6 +233,8 @@ export class OrdersService {
     @Optional()
     @Inject(forwardRef(() => InstantBuyService))
     private readonly instantBuy?: InstantBuyService,
+    @Optional() private readonly inventory?: InventoryService,
+    @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
   private feePct(): number {
@@ -194,7 +255,11 @@ export class OrdersService {
     return Number(this.config.get('BUYER_PROTECTION_COVERAGE_DAYS') ?? 7);
   }
 
-  async create(buyerId: string, dto: CreateOrderDto): Promise<OrderDto> {
+  async create(
+    buyerId: string,
+    dto: CreateOrderDto,
+    opts?: { skipEmail?: boolean },
+  ): Promise<OrderDto> {
     const listing = await this.prisma.listing.findUnique({
       where: { id: dto.listingId },
     });
@@ -248,6 +313,25 @@ export class OrdersService {
         'Provide buyNow=true, offerId, or orderIntentId',
       );
     }
+
+    const negotiated = Boolean(dto.offerId || dto.orderIntentId);
+    const quantity = negotiated
+      ? 1
+      : Math.min(999, Math.max(1, dto.quantity ?? 1));
+    const unitPriceKobo = amountKobo;
+    if (!negotiated && listing.sellingMode !== 'SELL') {
+      throw new BadRequestException('This listing is not sold by the unit');
+    }
+    if (
+      !negotiated &&
+      typeof listing.quantityAvailable === 'number' &&
+      listing.quantityAvailable < quantity
+    ) {
+      throw new ConflictException(
+        `Only ${listing.quantityAvailable} unit(s) available`,
+      );
+    }
+    amountKobo = unitPriceKobo * quantity;
 
     const protectionFeeKobo = computeProtectionFeeKobo(
       amountKobo,
@@ -303,12 +387,15 @@ export class OrdersService {
           offerId: offerId ?? null,
           orderIntentId: orderIntentId ?? null,
           amountKobo,
+          quantity,
+          unitPriceKobo,
           protectionFeeKobo,
           deliveryFeeKobo,
           totalKobo,
           fulfilmentMethod: dto.fulfilmentMethod,
           meetPointId,
           status: 'CREATED',
+          confirmationStatus: 'PENDING',
           buyerProtection: true,
         },
       });
@@ -340,25 +427,23 @@ export class OrdersService {
         });
       }
 
-      OrderStateMachine.assertTransition('CREATED', 'PAYMENT_PENDING');
-      const pending = await tx.order.update({
-        where: { id: created.id },
-        data: { status: 'PAYMENT_PENDING' },
-      });
+      if (this.inventory) {
+        await this.inventory.reserveStock(tx, listing.id, quantity, buyerId);
+      }
 
       await tx.orderEvent.create({
         data: {
           orderId: created.id,
           type: 'CREATED',
           actorUserId: buyerId,
-          payload: { amountKobo, protectionFeeKobo, totalKobo },
-        },
-      });
-      await tx.orderEvent.create({
-        data: {
-          orderId: created.id,
-          type: 'PAYMENT_PENDING',
-          actorUserId: buyerId,
+          payload: {
+            amountKobo,
+            quantity,
+            unitPriceKobo,
+            protectionFeeKobo,
+            totalKobo,
+            confirmationStatus: 'PENDING',
+          },
         },
       });
 
@@ -369,16 +454,148 @@ export class OrdersService {
         });
       }
 
-      return pending;
+      return created;
     });
 
-    this.notifications.log('order.payment_pending', {
+    this.notifications.log('order.awaiting_confirmation', {
       orderId: order.id,
       buyerId,
       sellerId: listing.sellerId,
+      quantity,
+    });
+
+    const title = listing.title?.trim() || 'your listing';
+    const orderLink = `reworth://orders/${order.id}`;
+    const channels = opts?.skipEmail ? NO_EMAIL : undefined;
+    await this.notifications.notify({
+      userId: buyerId,
+      category: NotificationCategory.ORDER_PLACED,
+      title: 'Order placed',
+      body: `You ordered ${quantity} × ${title}. The seller will accept or reject it. You can pay after they accept.`,
+      deepLink: orderLink,
+      channels,
+      meta: { orderId: order.id, quantity, listingId: listing.id },
+    });
+    await this.notifications.notify({
+      userId: listing.sellerId,
+      category: NotificationCategory.ORDER_PLACED,
+      title: 'New order to accept',
+      body: `A buyer ordered ${quantity} × ${title}. Open this to accept the order or reject it with a reason. Those units stay reserved until you respond.`,
+      deepLink: orderLink,
+      channels,
+      meta: { orderId: order.id, quantity, listingId: listing.id },
     });
 
     return toOrderDto(order);
+  }
+
+  /**
+   * One email per person for orders placed in the same checkout.
+   * In-app notices stay per order. A mail failure does not undo the orders.
+   */
+  async emailOrdersPlaced(
+    buyerId: string,
+    orders: PlacedOrderMail[],
+  ): Promise<void> {
+    if (orders.length === 0) return;
+    if (orders.length === 1) {
+      await this.emailSingleOrderPlaced(buyerId, orders[0]);
+      return;
+    }
+
+    const total = orders.reduce((sum, order) => sum + order.totalKobo, 0);
+    await this.sendOrderMail(buyerId, () =>
+      this.notifications.notify({
+        userId: buyerId,
+        category: NotificationCategory.ORDER_PLACED,
+        title: 'Orders placed',
+        body: [
+          `You placed ${orders.length} orders. Each seller will accept or reject their order. You can pay after they accept.`,
+          ...orders.map(orderMailLine),
+          `Total ${formatNaira(total)}.`,
+        ].join('\n\n'),
+        deepLink: 'reworth://orders',
+        channels: [NotificationChannel.EMAIL],
+        meta: { orderIds: orders.map((order) => order.id) },
+      }),
+    );
+
+    const bySeller = new Map<string, PlacedOrderMail[]>();
+    for (const order of orders) {
+      const group = bySeller.get(order.sellerId) ?? [];
+      group.push(order);
+      bySeller.set(order.sellerId, group);
+    }
+    for (const [sellerId, sellerOrders] of bySeller) {
+      if (sellerOrders.length === 1) {
+        await this.sendOrderMail(sellerId, () =>
+          this.emailSellerNewOrder(sellerOrders[0]),
+        );
+        continue;
+      }
+      await this.sendOrderMail(sellerId, () =>
+        this.notifications.notify({
+          userId: sellerId,
+          category: NotificationCategory.ORDER_PLACED,
+          title: 'New orders to accept',
+          body: [
+            `A buyer placed ${sellerOrders.length} orders with you. Open them to accept or reject. Those units stay reserved until you respond.`,
+            ...sellerOrders.map(orderMailLine),
+          ].join('\n\n'),
+          deepLink: 'reworth://orders',
+          channels: [NotificationChannel.EMAIL],
+          meta: { orderIds: sellerOrders.map((order) => order.id) },
+        }),
+      );
+    }
+  }
+
+  private async sendOrderMail(
+    userId: string,
+    send: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await send();
+    } catch (err) {
+      this.logger.warn(
+        `Order email failed for ${userId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async emailSingleOrderPlaced(
+    buyerId: string,
+    order: PlacedOrderMail,
+  ): Promise<void> {
+    const title = order.title.trim() || 'your listing';
+    const orderLink = `reworth://orders/${order.id}`;
+    await this.sendOrderMail(buyerId, () =>
+      this.notifications.notify({
+        userId: buyerId,
+        category: NotificationCategory.ORDER_PLACED,
+        title: 'Order placed',
+        body: `You ordered ${order.quantity} × ${title}. The seller will accept or reject it. You can pay after they accept.`,
+        deepLink: orderLink,
+        channels: [NotificationChannel.EMAIL],
+        meta: { orderId: order.id, quantity: order.quantity },
+      }),
+    );
+    await this.sendOrderMail(order.sellerId, () =>
+      this.emailSellerNewOrder(order),
+    );
+  }
+
+  private async emailSellerNewOrder(order: PlacedOrderMail): Promise<void> {
+    const title = order.title.trim() || 'your listing';
+    await this.notifications.notify({
+      userId: order.sellerId,
+      category: NotificationCategory.ORDER_PLACED,
+      title: 'New order to accept',
+      body: `A buyer ordered ${order.quantity} × ${title}. Open this to accept the order or reject it with a reason. Those units stay reserved until you respond.`,
+      deepLink: `reworth://orders/${order.id}`,
+      channels: [NotificationChannel.EMAIL],
+      meta: { orderId: order.id, quantity: order.quantity },
+    });
   }
 
   async listForUser(userId: string): Promise<OrderDto[]> {
@@ -386,7 +603,7 @@ export class OrdersService {
       where: { OR: [{ buyerId: userId }, { sellerId: userId }] },
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map(toOrderDto);
+    return Promise.all(rows.map((r) => this.toEnrichedOrderDto(r.id)));
   }
 
   async getById(
@@ -405,7 +622,8 @@ export class OrdersService {
     if (order.buyerId !== userId && order.sellerId !== userId) {
       throw new ForbiddenException('Not a participant');
     }
-    return { ...toOrderDto(order), events: order.events };
+    const dto = await this.toEnrichedOrderDto(orderId);
+    return { ...dto, events: order.events };
   }
 
   async markHandedOver(orderId: string, sellerId: string): Promise<OrderDto> {
@@ -421,18 +639,24 @@ export class OrdersService {
       this.luxuryAuth.assertCanHandOver(listing, order.status);
     }
 
-    OrderStateMachine.assertTransition(order.status, 'HANDED_OVER');
+    // Delivery → SHIPPED; meet/pickup → HANDED_OVER
+    const nextStatus: OrderStatus =
+      order.fulfilmentMethod === FulfilmentMethod.DELIVERY
+        ? 'SHIPPED'
+        : 'HANDED_OVER';
+    OrderStateMachine.assertTransition(order.status, nextStatus);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.order.update({
         where: { id: orderId },
-        data: { status: 'HANDED_OVER' },
+        data: { status: nextStatus },
       });
       await tx.orderEvent.create({
         data: {
           orderId,
-          type: 'HANDED_OVER',
+          type: nextStatus,
           actorUserId: sellerId,
+          payload: { fulfilmentMethod: order.fulfilmentMethod },
         },
       });
       return row;
@@ -442,8 +666,21 @@ export class OrdersService {
       orderId,
       buyerId: order.buyerId,
       sellerId,
+      status: nextStatus,
     });
-    return toOrderDto(updated);
+    await this.notifications.notify({
+      userId: order.buyerId,
+      category: NotificationCategory.DELIVERY_UPDATE,
+      title:
+        nextStatus === 'SHIPPED' ? 'Order shipped' : 'Item handed over',
+      body:
+        nextStatus === 'SHIPPED'
+          ? 'Your order is on the way. Confirm receipt when it arrives.'
+          : 'The seller marked the item as handed over. Confirm when you have it.',
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId, status: nextStatus },
+    });
+    return this.toEnrichedOrderDto(updated.id);
   }
 
   async confirmReceipt(orderId: string, buyerId: string): Promise<OrderDto> {
@@ -456,15 +693,33 @@ export class OrdersService {
     if (order.status === 'DISPUTE_HOLD') {
       throw new ConflictException('Order is in dispute hold');
     }
+    if (order.status === 'COMPLETED') {
+      return toOrderDto(order);
+    }
+    // A previous attempt may have saved RECEIVED and then failed to release.
+    if (order.status === 'RECEIVED') {
+      return this.releaseEscrow(orderId, buyerId, 'confirm_receipt');
+    }
     OrderStateMachine.assertTransition(order.status, 'RECEIVED');
 
     const coverageEndsAt = new Date(
       Date.now() + this.coverageDays() * 24 * 60 * 60 * 1000,
     );
 
+    const fromStatuses: OrderStatus[] = [
+      'HANDED_OVER',
+      'DELIVERED',
+      'SHIPPED',
+    ];
+    if (!fromStatuses.includes(order.status)) {
+      throw new ConflictException(
+        `Cannot confirm receipt from status ${order.status}`,
+      );
+    }
+
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.order.updateMany({
-        where: { id: orderId, status: 'HANDED_OVER' },
+        where: { id: orderId, status: { in: fromStatuses } },
         data: {
           status: 'RECEIVED',
           coverageEndsAt,
@@ -478,7 +733,7 @@ export class OrdersService {
           orderId,
           type: 'RECEIVED',
           actorUserId: buyerId,
-          payload: { coverageEndsAt },
+          payload: { coverageEndsAt, previousStatus: order.status },
         },
       });
     });
@@ -487,6 +742,148 @@ export class OrdersService {
 
     // Release escrow → COMPLETED + Payout
     return this.releaseEscrow(orderId, buyerId, 'confirm_receipt');
+  }
+
+  async confirm(
+    orderId: string,
+    sellerId: string,
+    dto: ConfirmOrderDto,
+  ): Promise<OrderDto> {
+    const order = await this.requireOrder(orderId);
+    if (order.sellerId !== sellerId) {
+      throw new ForbiddenException('Only the seller can confirm');
+    }
+    if (order.confirmationStatus === 'CONFIRMED' && order.status === 'PAYMENT_PENDING') {
+      return toOrderDto(order);
+    }
+    if (order.confirmationStatus !== 'PENDING' || order.status !== 'CREATED') {
+      throw new ConflictException('This order is not awaiting confirmation');
+    }
+    const deliveryDate = new Date(dto.deliveryDate);
+    if (Number.isNaN(deliveryDate.getTime())) {
+      throw new BadRequestException('Delivery date is invalid');
+    }
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    if (deliveryDate < startOfToday) {
+      throw new BadRequestException('Delivery date must be today or later');
+    }
+
+    OrderStateMachine.assertTransition('CREATED', 'PAYMENT_PENDING');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: 'PAYMENT_PENDING',
+          confirmationStatus: 'CONFIRMED',
+          deliveryDate,
+          sellerNote: dto.sellerNote?.trim() || null,
+        },
+      });
+      await tx.orderEvent.create({
+        data: {
+          orderId,
+          type: 'CONFIRMED',
+          actorUserId: sellerId,
+          payload: {
+            deliveryDate: deliveryDate.toISOString(),
+            sellerNote: dto.sellerNote?.trim() || null,
+          },
+        },
+      });
+      return row;
+    });
+
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: order.listingId },
+      select: { title: true },
+    });
+    const title = listing?.title?.trim() || 'your item';
+    const when = deliveryDate.toLocaleDateString('en-NG', {
+      timeZone: 'Africa/Lagos',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+    const note = dto.sellerNote?.trim();
+    await this.notifications.notify({
+      userId: order.buyerId,
+      category: NotificationCategory.ORDER_CONFIRMED,
+      title: 'Order in progress',
+      body: note
+        ? `The seller accepted ${order.quantity} × ${title}. Delivery date: ${when}. Note: ${note}. Complete payment to confirm, or cancel.`
+        : `The seller accepted ${order.quantity} × ${title}. Delivery date: ${when}. Complete payment to confirm, or cancel.`,
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId, deliveryDate: deliveryDate.toISOString() },
+    });
+
+    return toOrderDto(updated);
+  }
+
+  async reject(
+    orderId: string,
+    sellerId: string,
+    dto: RejectOrderDto,
+  ): Promise<OrderDto> {
+    const order = await this.requireOrder(orderId);
+    if (order.sellerId !== sellerId) {
+      throw new ForbiddenException('Only the seller can reject');
+    }
+    if (order.confirmationStatus === 'REJECTED') {
+      return toOrderDto(order);
+    }
+    if (order.confirmationStatus !== 'PENDING' || order.status !== 'CREATED') {
+      throw new ConflictException('This order is not awaiting confirmation');
+    }
+    const reason = dto.reason.trim();
+    if (reason.length < 3) {
+      throw new BadRequestException('A reason is required');
+    }
+
+    OrderStateMachine.assertTransition(order.status, 'CANCELLED');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (this.inventory && !order.inventoryCommitted) {
+        await this.inventory.releaseStock(
+          tx,
+          order.listingId,
+          order.quantity ?? 1,
+          sellerId,
+        );
+      }
+      const row = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: 'CANCELLED',
+          confirmationStatus: 'REJECTED',
+          rejectionReason: reason,
+        },
+      });
+      await tx.orderEvent.create({
+        data: {
+          orderId,
+          type: 'REJECTED',
+          actorUserId: sellerId,
+          payload: { reason },
+        },
+      });
+      return row;
+    });
+
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: order.listingId },
+      select: { title: true },
+    });
+    const title = listing?.title?.trim() || 'your item';
+    await this.notifications.notify({
+      userId: order.buyerId,
+      category: NotificationCategory.ORDER_REJECTED,
+      title: 'Order rejected',
+      body: `The seller rejected your order for ${title}. Reason: ${reason}`,
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId, reason },
+    });
+
+    return toOrderDto(updated);
   }
 
   async cancel(orderId: string, buyerId: string): Promise<OrderDto> {
@@ -500,6 +897,14 @@ export class OrdersService {
     OrderStateMachine.assertTransition(order.status, 'CANCELLED');
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (this.inventory && !order.inventoryCommitted) {
+        await this.inventory.releaseStock(
+          tx,
+          order.listingId,
+          order.quantity ?? 1,
+          buyerId,
+        );
+      }
       const row = await tx.order.update({
         where: { id: orderId },
         data: { status: 'CANCELLED' },
@@ -512,6 +917,20 @@ export class OrdersService {
         },
       });
       return row;
+    });
+
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: order.listingId },
+      select: { title: true },
+    });
+    const title = listing?.title?.trim() || 'a listing';
+    await this.notifications.notify({
+      userId: order.sellerId,
+      category: NotificationCategory.ORDER_CANCELLED,
+      title: 'Order cancelled',
+      body: `The buyer cancelled ${order.quantity ?? 1} × ${title} before paying. Those units are available again.`,
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId },
     });
 
     this.notifications.log('order.cancelled', { orderId, buyerId });
@@ -540,6 +959,7 @@ export class OrdersService {
           status: 'FUNDED',
           fundedAt,
           autoReleaseAt,
+          ...(this.inventory ? { inventoryCommitted: true } : {}),
         },
       });
       if (claimed.count === 0) {
@@ -554,16 +974,24 @@ export class OrdersService {
         },
       });
 
-      // Keep listing RESERVED until completed (MVP)
-      const listing = await tx.listing.findUnique({
-        where: { id: order.listingId },
-      });
-      if (listing && listing.status === 'LIVE') {
-        ListingStateMachine.assertTransition(listing.status, 'RESERVED');
-        await tx.listing.update({
-          where: { id: listing.id },
-          data: { status: 'RESERVED' },
+      if (this.inventory) {
+        await this.inventory.commitSale(
+          tx,
+          order.listingId,
+          order.quantity ?? 1,
+          null,
+        );
+      } else {
+        const listing = await tx.listing.findUnique({
+          where: { id: order.listingId },
         });
+        if (listing && listing.status === 'LIVE') {
+          ListingStateMachine.assertTransition(listing.status, 'RESERVED');
+          await tx.listing.update({
+            where: { id: listing.id },
+            data: { status: 'RESERVED' },
+          });
+        }
       }
 
       return tx.order.findUniqueOrThrow({ where: { id: orderId } });
@@ -630,7 +1058,7 @@ export class OrdersService {
       return this.completeSwapOrGiveaway(orderId, null);
     }
 
-    return toOrderDto(updated);
+    return this.toEnrichedOrderDto(orderId);
   }
 
   /**
@@ -672,6 +1100,13 @@ export class OrdersService {
     }
     if (payment.status === 'RELEASED') {
       return this.finalizeCompleted(orderId, actorUserId, reason);
+    }
+
+    if (this.psp instanceof MockPsp || this.psp.name === 'mock-psp') {
+      (this.psp as MockPsp).ensureFunded({
+        reference: payment.reference,
+        amountKobo: payment.amountKobo,
+      });
     }
 
     const releaseResult = await this.psp.release({
@@ -734,6 +1169,8 @@ export class OrdersService {
     if (
       order.status !== 'RECEIVED' &&
       order.status !== 'HANDED_OVER' &&
+      order.status !== 'SHIPPED' &&
+      order.status !== 'DELIVERED' &&
       order.status !== 'FUNDED' &&
       order.status !== 'DISPUTE_HOLD' &&
       order.status !== 'CREATED'
@@ -752,6 +1189,8 @@ export class OrdersService {
       OrderStateMachine.assertTransition(order.status, 'COMPLETED');
     } else if (
       order.status === 'HANDED_OVER' ||
+      order.status === 'SHIPPED' ||
+      order.status === 'DELIVERED' ||
       order.status === 'FUNDED'
     ) {
       // Auto-release may skip RECEIVED
@@ -786,6 +1225,20 @@ export class OrdersService {
       });
 
       for (const listingId of listingIds) {
+        const qty = listingId === order.listingId ? (order.quantity ?? 1) : 1;
+        if (this.inventory) {
+          if (!order.inventoryCommitted) {
+            await this.inventory.commitSale(tx, listingId, qty, actorUserId);
+          } else if (listingId === order.listingId) {
+            await this.inventory.syncVisibility(
+              tx,
+              listingId,
+              actorUserId,
+              'order_completed',
+            );
+          }
+          continue;
+        }
         const listing = await tx.listing.findUnique({
           where: { id: listingId },
         });
@@ -808,6 +1261,13 @@ export class OrdersService {
             },
           });
         }
+      }
+
+      if (this.inventory && !order.inventoryCommitted) {
+        await tx.order.update({
+          where: { id: orderId },
+          data: { inventoryCommitted: true },
+        });
       }
 
       if (order.swapProposalId) {
@@ -1098,6 +1558,16 @@ export class OrdersService {
       return row;
     });
 
+    await this.alerts?.notify({
+      roles: SUPPORT,
+      kind: 'SUPPORT',
+      title: 'Swap leg failed',
+      body: `Leg ${leg} failed and needs support.`,
+      href: '/support',
+      entityType: 'Order',
+      entityId: orderId,
+    });
+
     await this.notifications.notify({
       userId: order.buyerId,
       category: NotificationCategory.DISPUTE_UPDATE,
@@ -1158,9 +1628,11 @@ export class OrdersService {
   }
 
   async autoReleaseDue(now = new Date()): Promise<number> {
+    // Only after dispatch/delivery progress — never release from FUNDED alone
+    // (buyer must have had a chance to receive, or seller marked handover).
     const due = await this.prisma.order.findMany({
       where: {
-        status: { in: ['FUNDED', 'HANDED_OVER'] },
+        status: { in: ['SHIPPED', 'HANDED_OVER', 'DELIVERED'] },
         autoReleaseAt: { lte: now },
       },
       select: { id: true },
@@ -1192,12 +1664,48 @@ export class OrdersService {
   private isPostFunded(status: OrderStatus): boolean {
     return [
       'IN_AUTHENTICATION',
+      'SHIPPED',
       'HANDED_OVER',
+      'DELIVERED',
       'RECEIVED',
       'COMPLETED',
       'DISPUTE_HOLD',
       'REFUND_REQUESTED',
       'REFUND_ISSUED',
     ].includes(status);
+  }
+
+  /** Load order with escrow/lifecycle enrichment for API responses. */
+  async toEnrichedOrderDto(orderId: string): Promise<OrderDto> {
+    const order = await this.prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      include: {
+        meetPoint: true,
+        addressDisclosure: true,
+        payments: { orderBy: { createdAt: 'desc' }, take: 1 },
+        payouts: { orderBy: { createdAt: 'desc' }, take: 1 },
+        deliveryShipment: { select: { status: true } },
+        listing: { select: { title: true } },
+      },
+    });
+    const paymentStatus = order.payments?.[0]?.status ?? null;
+    const payoutStatus = order.payouts?.[0] ? 'RELEASED' : null;
+    const deliveryStatus = order.deliveryShipment?.status ?? null;
+    const base = toOrderDto(order);
+    return {
+      ...base,
+      listingTitle: order.listing?.title?.trim() || null,
+      deliveryStatus,
+      lifecycle: buildOrderLifecycle({
+        status: order.status,
+        fulfilmentMethod: order.fulfilmentMethod,
+        deliveryStatus,
+      }),
+      escrow: buildEscrowSnapshot({
+        orderStatus: order.status,
+        paymentStatus,
+        payoutStatus,
+      }),
+    };
   }
 }

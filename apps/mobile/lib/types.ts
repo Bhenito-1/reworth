@@ -46,6 +46,8 @@ export type PublicListing = {
   model: string | null;
   condition: string;
   priceKobo: number;
+  quantityAvailable?: number;
+  quantityTotal?: number;
   negotiable: boolean;
   sellingMode: string;
   status: string;
@@ -102,6 +104,7 @@ export type PublicListing = {
   featuredUntil?: string | null;
   /** Owner publish path — moderation rejection reasons. */
   moderationReasons?: string[];
+  rejectionReason?: string | null;
 };
 
 export type PriceIntelligence = {

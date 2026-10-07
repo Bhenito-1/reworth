@@ -2,7 +2,6 @@ import { apiFetch } from "./api";
 import type {
   AssistResponse,
   CreateListingBody,
-  PresignMediaResponse,
   PriceIntelligence,
   PublicListing,
   UpdateListingBody,
@@ -119,41 +118,43 @@ export async function reportListing(
 }
 
 /**
- * Presign → optional PUT → collect key.
- * Mock storage may reject PUT; then complete via attachListingImages is enough.
+ * Upload photo bytes via authenticated multipart — stores + processes to READY.
+ * Prefer this over silent-failing presigned PUT.
  */
 export async function uploadListingPhoto(
   token: string,
   listingId: string,
   file: File,
-): Promise<{ key: string; previewUrl: string }> {
-  const presign = await apiFetch<PresignMediaResponse>("/media/presign", {
+  sortOrder = 0,
+): Promise<{ key: string; previewUrl: string; publicUrl?: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("listingId", listingId);
+  form.append("sortOrder", String(sortOrder));
+
+  const image = await apiFetch<{
+    originalKey: string;
+    status: string;
+    variants?: { original?: string };
+  }>("/media/direct", {
     method: "POST",
     token,
-    body: {
-      listingId,
-      contentType: file.type || "image/jpeg",
-      contentLength: file.size || 1024,
-      fileName: file.name || "photo.jpg",
-    },
+    body: form,
   });
 
-  try {
-    const put = await fetch(presign.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": file.type || "image/jpeg" },
-      body: file,
-    });
-    if (!put.ok) {
-      // Mock / unsigned URLs often fail — proceed with key for complete/attach
-    }
-  } catch {
-    // Network or CORS — skip PUT for mock path
+  if (image.status !== "READY") {
+    throw new Error(
+      "Photo upload did not finish processing. Please try another image.",
+    );
   }
 
   return {
-    key: presign.key,
+    key: image.originalKey,
     previewUrl: URL.createObjectURL(file),
+    publicUrl:
+      typeof image.variants?.original === "string"
+        ? image.variants.original
+        : undefined,
   };
 }
 

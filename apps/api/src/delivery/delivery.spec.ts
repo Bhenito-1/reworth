@@ -159,7 +159,13 @@ describe('NotificationsService', () => {
     };
     const push = new MockPushProvider();
     const email = new MockEmailProvider();
-    const svc = new NotificationsService(prisma, push, email);
+    const config = {
+      get: (key: string) =>
+        key === 'APP_URL' || key === 'WEB_ORIGIN'
+          ? 'http://localhost:3000'
+          : undefined,
+    } as unknown as import('@nestjs/config').ConfigService;
+    const svc = new NotificationsService(prisma, config, push, email);
     return { svc, push, email, created, prisma };
   }
 

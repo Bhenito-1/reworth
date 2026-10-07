@@ -3,6 +3,8 @@
  * Prefer EXPO_PUBLIC_API_URL when injected by the bundler.
  */
 
+import { getAccessToken, refreshSession } from "./auth";
+
 const fromEnv = (
   globalThis as { process?: { env?: Record<string, string | undefined> } }
 ).process?.env?.EXPO_PUBLIC_API_URL;
@@ -35,17 +37,30 @@ export async function apiFetch<T>(
     method?: string;
     body?: unknown;
     token?: string | null;
+    cache?: RequestCache;
+    /** Internal: do not rotate again after one renewal attempt. */
+    retried?: boolean;
   } = {},
 ): Promise<T> {
-  const { method = "GET", body, token } = options;
+  const { method = "GET", body, token, retried, cache } = options;
+  const isFormData =
+    typeof FormData !== "undefined" && body instanceof FormData;
   const res = await fetch(`${API_URL}${path.startsWith("/") ? path : `/${path}`}`, {
     method,
+    cache,
     headers: {
       Accept: "application/json",
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(body !== undefined && !isFormData
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : isFormData
+          ? (body as FormData)
+          : JSON.stringify(body),
   });
 
   const text = await res.text();
@@ -59,6 +74,16 @@ export async function apiFetch<T>(
   }
 
   if (!res.ok) {
+    if (res.status === 401 && token && !retried) {
+      const outcome = await refreshSession(true);
+      if (outcome === "ok") {
+        return apiFetch<T>(path, {
+          ...options,
+          token: await getAccessToken(),
+          retried: true,
+        });
+      }
+    }
     throw new ApiError(
       messageFromBody(parsed, res.statusText || "Request failed"),
       res.status,

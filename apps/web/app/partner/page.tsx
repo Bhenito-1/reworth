@@ -34,7 +34,7 @@ export default function PartnerConsolePage() {
     const token = getAccessToken();
     const partnerKey = getStoredPartnerKey();
     if (!token && !partnerKey) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);

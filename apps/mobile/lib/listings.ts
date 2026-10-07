@@ -19,6 +19,23 @@ export async function getListing(
   return apiFetch<PublicListing>(`/listings/${id}`, { token });
 }
 
+export type MineListing = {
+  id: string;
+  title: string;
+  status: string;
+  priceKobo: number;
+  updatedAt: string;
+  reviewState: string;
+  reviewLabel: string;
+  reviewNote: string | null;
+};
+
+export async function listMine(
+  token: string,
+): Promise<{ items: MineListing[] }> {
+  return apiFetch<{ items: MineListing[] }>("/listings/mine", { token });
+}
+
 export async function browseListings(
   token?: string | null,
 ): Promise<PublicListing[]> {
@@ -96,6 +113,37 @@ export async function attachListingImages(
     token,
     body: { images },
   });
+}
+
+/** Authenticated multipart upload — stores bytes and marks image READY. */
+export async function uploadListingPhotoDirect(
+  token: string,
+  listingId: string,
+  file: {
+    uri: string;
+    name: string;
+    type: string;
+  },
+  sortOrder: number,
+): Promise<{ key: string; status: string }> {
+  const form = new FormData();
+  form.append("file", {
+    uri: file.uri,
+    name: file.name || "photo.jpg",
+    type: file.type || "image/jpeg",
+  } as unknown as Blob);
+  form.append("listingId", listingId);
+  form.append("sortOrder", String(sortOrder));
+
+  const image = await apiFetch<{ originalKey: string; status: string }>(
+    "/media/direct",
+    {
+      method: "POST",
+      token,
+      body: form,
+    },
+  );
+  return { key: image.originalKey, status: image.status };
 }
 
 export async function presignMedia(

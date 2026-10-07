@@ -60,7 +60,7 @@ describe('UsersService privacy', () => {
       profile: { displayName: 'Ada', fullName: 'Ada Lovelace' },
       addresses: [{ id: 'a1', line1: '12 Admiralty' }],
       devices: [{ id: 'd1', name: 'iPhone', platform: 'IOS' }],
-      consentRecords: [{ channel: 'SMS', granted: true }],
+      consentRecords: [{ channel: 'MARKETING', granted: true }],
       listings: [{ id: 'l1', title: 'Sofa', status: 'LIVE' }],
       ordersAsBuyer: [{ id: 'o1', status: 'COMPLETED', totalKobo: 100 }],
       ordersAsSeller: [],
@@ -118,11 +118,11 @@ describe('UsersService privacy', () => {
   it('updateConsents upserts channels', async () => {
     const prisma = buildPrisma();
     (prisma.consentRecord.findMany as jest.Mock).mockResolvedValue([
-      { channel: 'SMS', granted: true, updatedAt: new Date() },
+      { channel: 'MARKETING', granted: true, updatedAt: new Date() },
     ]);
     const service = new UsersService(prisma as never, audit as never);
     await service.updateConsents('u1', {
-      consents: [{ channel: 'SMS', granted: true }],
+      consents: [{ channel: 'MARKETING', granted: true }],
     });
     expect(prisma.consentRecord.upsert).toHaveBeenCalled();
   });

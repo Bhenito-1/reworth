@@ -10,7 +10,7 @@ import {
 import { apiFetch, ApiError } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 
-type ConsentChannel = "SMS" | "MARKETING" | "EMAIL";
+type ConsentChannel = "MARKETING" | "EMAIL";
 
 type ConsentRow = {
   channel: ConsentChannel;
@@ -18,7 +18,6 @@ type ConsentRow = {
 };
 
 const LABELS: Record<ConsentChannel, string> = {
-  SMS: "SMS alerts",
   MARKETING: "Marketing",
   EMAIL: "Email updates",
 };

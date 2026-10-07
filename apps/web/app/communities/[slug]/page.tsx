@@ -81,7 +81,7 @@ export default function CommunityDetailPage() {
     const token = getAccessToken();
     if (!token) {
       setToast("Sign in to continue");
-      router.push("/onboarding");
+      router.push("/");
       return null;
     }
     return token;
@@ -138,12 +138,6 @@ export default function CommunityDetailPage() {
             className="text-sm font-medium text-[var(--rw-accent)]"
           >
             ← Communities
-          </Link>
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
           </Link>
         </header>
 

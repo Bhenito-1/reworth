@@ -41,6 +41,7 @@ export default function CheckoutPage() {
   const offerId = search.get("offerId") ?? undefined;
   const orderIntentId = search.get("orderIntentId") ?? undefined;
   const instantBuy = search.get("instantBuy") === "1";
+  const qty = Math.max(1, Number(search.get("qty") ?? "1") || 1);
 
   const [listing, setListing] = useState<PublicListing | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,7 +112,9 @@ export default function CheckoutPage() {
     void load();
   }, [load]);
 
-  const amountKobo = listing?.priceKobo ?? 0;
+  const unitKobo = listing?.priceKobo ?? 0;
+  const amountKobo =
+    offerId || orderIntentId ? unitKobo : unitKobo * qty;
   const protectionFeeKobo = useMemo(
     () => computeProtectionFeeKobo(amountKobo),
     [amountKobo],
@@ -153,6 +156,7 @@ export default function CheckoutPage() {
       const order = await createOrder(token, {
         listingId,
         fulfilmentMethod: fulfilment,
+        ...(qty > 1 ? { quantity: qty } : {}),
         ...(orderIntentId
           ? { orderIntentId }
           : offerId
@@ -160,6 +164,15 @@ export default function CheckoutPage() {
             : { buyNow: true }),
       });
       setOrderId(order.id);
+
+      if (order.confirmationStatus === "PENDING" || order.status === "CREATED") {
+        setToast({
+          message: "Order placed. The seller confirms it before you pay.",
+          tone: "success",
+        });
+        router.replace(`/orders/${order.id}`);
+        return;
+      }
 
       if (fulfilment === "MEET_POINT" && meetPointId) {
         await setOrderMeetPoint(token, order.id, meetPointId);
@@ -276,7 +289,7 @@ export default function CheckoutPage() {
         <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
           {instantBuy && listing.instantBuyEligible
             ? "Platform pickup + delivery with SLA — funds held until you confirm receipt."
-            : "Pay securely — funds held until you confirm receipt."}
+            : "Place an order. The seller confirms the delivery date before you pay. Units are reserved until you pay, cancel, or the seller declines."}
         </p>
 
         <section
@@ -296,6 +309,11 @@ export default function CheckoutPage() {
             <p className="mt-1 text-lg font-semibold tracking-tight">
               {formatNgn({ amountKobo })}
             </p>
+            {!offerId && !orderIntentId ? (
+              <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
+                {qty} × {formatNgn({ amountKobo: unitKobo })} per unit
+              </p>
+            ) : null}
             {offerId || orderIntentId ? (
               <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
                 {orderIntentId ? "From accepted offer" : "Offer price at pay"}
@@ -409,7 +427,7 @@ export default function CheckoutPage() {
               disabled={busy || !fulfilment}
               onClick={() => void placeAndPay()}
             >
-              {busy ? "Creating order…" : "Pay with ReWorth"}
+              {busy ? "Placing order…" : "Place order"}
             </Button>
           </div>
         ) : (

@@ -1,10 +1,13 @@
 import {
-  PutObjectCommand,
-  S3Client,
+  CreateBucketCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { Logger } from '@nestjs/common';
 import type {
   GetSignedUrlInput,
   PutObjectInput,
@@ -12,7 +15,7 @@ import type {
   StorageProvider,
 } from './storage.provider';
 
-export type MinioStorageConfig = {
+export type S3StorageConfig = {
   endpoint: string;
   region: string;
   accessKeyId: string;
@@ -22,13 +25,19 @@ export type MinioStorageConfig = {
   publicUrl?: string;
 };
 
-export class MinioStorageAdapter implements StorageProvider {
-  readonly name = 'minio';
+/**
+ * S3 API client. Local compose uses adobe/s3mock (`S3_ENDPOINT`, default
+ * http://localhost:9000). The same client talks to AWS S3 when the endpoint changes.
+ * Used whenever STORAGE_DRIVER=s3.
+ */
+export class S3StorageAdapter implements StorageProvider {
+  readonly name = 's3';
   private readonly client: S3Client;
   readonly bucket: string;
   private readonly publicBase: string;
+  private readonly logger = new Logger(S3StorageAdapter.name);
 
-  constructor(config: MinioStorageConfig) {
+  constructor(config: S3StorageConfig) {
     this.bucket = config.bucket;
     this.publicBase =
       config.publicUrl ??
@@ -42,6 +51,17 @@ export class MinioStorageAdapter implements StorageProvider {
         secretAccessKey: config.secretAccessKey,
       },
     });
+  }
+
+  /** Ensure the bucket exists. adobe/s3mock does not implement PutBucketCors. */
+  async ensureBucket(): Promise<void> {
+    try {
+      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+      this.logger.log(`Bucket ready: ${this.bucket}`);
+    } catch {
+      await this.client.send(new CreateBucketCommand({ Bucket: this.bucket }));
+      this.logger.log(`Created bucket: ${this.bucket}`);
+    }
   }
 
   async putObject(input: PutObjectInput): Promise<PutObjectResult> {
@@ -100,6 +120,10 @@ export class MinioStorageAdapter implements StorageProvider {
   }
 
   publicUrl(key: string): string {
-    return `${this.publicBase.replace(/\/$/, '')}/${key}`;
+    const encoded = key
+      .split('/')
+      .map((p) => encodeURIComponent(p))
+      .join('/');
+    return `${this.publicBase.replace(/\/$/, '')}/${encoded}`;
   }
 }

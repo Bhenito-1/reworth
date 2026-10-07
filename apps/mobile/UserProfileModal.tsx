@@ -33,6 +33,7 @@ type Props = {
   userId: string | null;
   meId: string | null;
   onClose: () => void;
+  dismissLabel?: string;
   onOpenListing?: (listingId: string) => void;
 };
 
@@ -40,6 +41,7 @@ export function UserProfileModal({
   userId,
   meId,
   onClose,
+  dismissLabel = "Close",
   onOpenListing,
 }: Props) {
   const [profile, setProfile] = useState<PublicProfile | null>(null);
@@ -142,8 +144,12 @@ export function UserProfileModal({
     >
       <View style={styles.safe}>
         <View style={styles.header}>
-          <Pressable onPress={onClose} accessibilityRole="button">
-            <Text style={styles.close}>Close</Text>
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel={dismissLabel}
+          >
+            <Text style={styles.close}>{dismissLabel}</Text>
           </Pressable>
           <Text style={styles.brand}>ReWorth</Text>
           <View style={{ width: 48 }} />

@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -7,7 +8,9 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ListingStatus, Prisma } from '@prisma/client';
+import { ListingStatus, OrderStatus, Prisma } from '@prisma/client';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { LISTINGS_MOD, REPORTS } from '../admin/admin-roles';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   GEOCODING_PROVIDER,
@@ -17,13 +20,22 @@ import { MediaService } from '../media/media.service';
 import { FavouritesService } from '../favourites/favourites.service';
 import { CommunityVisibilityService } from '../communities/community-visibility.service';
 import { ModerationService } from '../moderation/moderation.service';
+import { NotificationCategory } from '../notifications/notification-categories';
+import { activeSellerWhere } from './public-seller';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RiskEngineService } from '../risk/risk-engine.service';
 import { AnalyticsService } from './analytics.service';
 import { ListingAssistService } from './listing-assist.service';
+import {
+  ACTIVE_ORDER_STATUSES,
+  sellerRemovalBlockReason,
+} from './listing-removal';
 import { ListingStateMachine } from './listing-state.machine';
 import { PriceIntelligenceService } from './price-intelligence.service';
 import { toPublicListing } from './public-listing.mapper';
 import { FeatureStoreService } from '../intelligence/feature-store.service';
+import { InventoryService } from '../inventory/inventory.service';
+import { SellerPayoutService } from '../payouts/seller-payout.service';
 import type {
   AttachImagesDto,
   BrowseListingsQueryDto,
@@ -33,6 +45,17 @@ import type {
 } from './dto/listings.dto';
 
 const PUBLIC_STATUSES: ListingStatus[] = ['LIVE', 'RESERVED'];
+
+const EMPTY_REMOVAL_ACTIVITY = {
+  activeOrders: 0,
+  openDisputes: 0,
+  openSwaps: 0,
+  openGiveaways: 0,
+  pendingIntents: 0,
+  openOffers: 0,
+};
+
+type RemovalActivity = typeof EMPTY_REMOVAL_ACTIVITY;
 
 const listingInclude = {
   category: true,
@@ -69,15 +92,19 @@ export class ListingsService {
     @Inject(forwardRef(() => RiskEngineService))
     private readonly riskEngine: RiskEngineService,
     private readonly moderation: ModerationService,
+    private readonly notifications: NotificationsService,
     private readonly assistService: ListingAssistService,
     private readonly priceIntel: PriceIntelligenceService,
     private readonly media: MediaService,
     @Inject(GEOCODING_PROVIDER) private readonly geo: GeocodingProvider,
     private readonly visibility: CommunityVisibilityService,
+    private readonly inventory: InventoryService,
+    private readonly payouts: SellerPayoutService,
     @Optional()
     @Inject(forwardRef(() => FavouritesService))
     private readonly favourites?: FavouritesService,
     @Optional() private readonly features?: FeatureStoreService,
+    @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
   async listCategories() {
@@ -115,6 +142,10 @@ export class ListingsService {
       }
     }
 
+    const sellingMode = dto.sellingMode ?? 'SELL';
+    const units =
+      sellingMode === 'SELL' ? Math.min(999, Math.max(1, dto.quantity ?? 1)) : 1;
+
     const listing = await this.prisma.listing.create({
       data: {
         sellerId,
@@ -129,7 +160,7 @@ export class ListingsService {
         originalPriceKobo: dto.originalPriceKobo,
         priceKobo: dto.priceKobo ?? 0,
         negotiable: dto.negotiable ?? true,
-        sellingMode: dto.sellingMode ?? 'SELL',
+        sellingMode,
         status: 'DRAFT',
         community: dto.community ?? '',
         communityId: dto.communityId,
@@ -144,6 +175,13 @@ export class ListingsService {
         fulfilmentDelivery: dto.fulfilmentDelivery ?? false,
         vehicle: dto.vehicle ? (dto.vehicle as Prisma.InputJsonValue) : undefined,
         instantBuyEligible: dto.instantBuyEligible ?? false,
+        quantityTotal: units,
+        quantityAvailable: units,
+        quantityReserved: 0,
+        quantitySold: 0,
+        ...(dto.donateIfUnsoldDays !== undefined
+          ? { donateIfUnsoldDays: dto.donateIfUnsoldDays }
+          : {}),
         ...(await this.luxuryAuthDefaults(dto.categoryId)),
       },
       include: listingInclude,
@@ -157,10 +195,42 @@ export class ListingsService {
     return toPublicListing(listing);
   }
 
+  async listMine(sellerId: string) {
+    const rows = await this.prisma.listing.findMany({
+      where: { sellerId },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+      include: {
+        listingModerations: {
+          orderBy: { assessedAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+    return {
+      items: rows.map((row) => {
+        const latest = row.listingModerations[0];
+        const note = latest?.rejectionReason?.trim() || null;
+        const review = reviewStateFor(row.status, latest?.decision ?? null, note);
+        return {
+          id: row.id,
+          title: row.title,
+          status: row.status,
+          priceKobo: row.priceKobo,
+          updatedAt: row.updatedAt.toISOString(),
+          reviewState: review.state,
+          reviewLabel: review.label,
+          reviewNote: review.note,
+        };
+      }),
+    };
+  }
+
   async browse(query: BrowseListingsQueryDto, viewerId?: string | null) {
     const status = (query.status as ListingStatus) || 'LIVE';
     const where: Prisma.ListingWhereInput = {
       status: status === 'LIVE' ? { in: PUBLIC_STATUSES } : status,
+      ...activeSellerWhere,
       AND: [this.visibility.visibleListingWhere(viewerId)],
     };
     if (query.community) where.community = query.community;
@@ -169,7 +239,10 @@ export class ListingsService {
     if (query.mine === '1' && viewerId) {
       where.sellerId = viewerId;
       where.status = status;
+      delete where.seller;
       delete where.AND;
+    } else {
+      where.quantityAvailable = { gt: 0 };
     }
 
     const rows = await this.prisma.listing.findMany({
@@ -252,6 +325,20 @@ export class ListingsService {
     });
   }
 
+  private async ownerRejectionReason(
+    listingId: string,
+    status: string,
+  ): Promise<string | null> {
+    if (status !== 'REJECTED') return null;
+    const latest = await this.prisma.listingModeration.findFirst({
+      where: { listingId },
+      orderBy: { assessedAt: 'desc' },
+    });
+    const note = latest?.rejectionReason?.trim() || null;
+    if (!note || note === 'Admin approved') return null;
+    return note;
+  }
+
   async getById(id: string, viewerId?: string | null) {
     const listing = await this.prisma.listing.findUnique({
       where: { id },
@@ -262,6 +349,9 @@ export class ListingsService {
     const isOwner = viewerId && listing.sellerId === viewerId;
     const isPublic = PUBLIC_STATUSES.includes(listing.status);
     if (!isPublic && !isOwner) {
+      throw new NotFoundException('Listing not found');
+    }
+    if (!isOwner && listing.seller.status !== 'ACTIVE') {
       throw new NotFoundException('Listing not found');
     }
 
@@ -319,12 +409,15 @@ export class ListingsService {
     const boost = activePromos.find((p) => p.kind === 'BOOST');
     const featured = activePromos.find((p) => p.kind === 'FEATURED');
 
-    return toPublicListing(listing, {
-      boosted: Boolean(boost),
-      featured: Boolean(featured),
-      boostedUntil: boost?.endsAt ?? null,
-      featuredUntil: featured?.endsAt ?? null,
-    });
+    return {
+      ...toPublicListing(listing, {
+        boosted: Boolean(boost),
+        featured: Boolean(featured),
+        boostedUntil: boost?.endsAt ?? null,
+        featuredUntil: featured?.endsAt ?? null,
+      }),
+      rejectionReason: isOwner ? await this.ownerRejectionReason(id, listing.status) : null,
+    };
   }
 
   async update(id: string, sellerId: string, dto: UpdateListingDto) {
@@ -396,6 +489,9 @@ export class ListingsService {
         ...(dto.instantBuyEligible !== undefined
           ? { instantBuyEligible: dto.instantBuyEligible }
           : {}),
+        ...(dto.donateIfUnsoldDays !== undefined
+          ? { donateIfUnsoldDays: dto.donateIfUnsoldDays }
+          : {}),
         ...(dto.categoryId !== undefined
           ? await this.luxuryAuthDefaults(dto.categoryId, dto.authRequired)
           : {}),
@@ -431,11 +527,71 @@ export class ListingsService {
       }
     }
 
+    if (dto.quantity !== undefined) {
+      await this.inventory.adjustListedQuantity(id, sellerId, dto.quantity);
+      const fresh = await this.prisma.listing.findUniqueOrThrow({
+        where: { id },
+        include: listingInclude,
+      });
+      return toPublicListing(fresh);
+    }
+
     return toPublicListing(updated);
+  }
+
+  /** Every listing this seller has created, including sold and unavailable. */
+  async sellerInventory(sellerId: string) {
+    const rows = await this.prisma.listing.findMany({
+      where: { sellerId },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      },
+    });
+    const blocks = await this.removalActivity(rows.map((row) => row.id));
+    return rows.map((row) => {
+      const activity = blocks.get(row.id) ?? EMPTY_REMOVAL_ACTIVITY;
+      const removeBlockedReason = sellerRemovalBlockReason({
+        status: row.status,
+        quantityAvailable: row.quantityAvailable,
+        quantityReserved: row.quantityReserved,
+        quantitySold: row.quantitySold,
+        ...activity,
+      });
+      return {
+        id: row.id,
+        title: row.title,
+        status: row.status,
+        sellingMode: row.sellingMode,
+        priceKobo: row.priceKobo,
+        quantityTotal: row.quantityTotal,
+        quantityAvailable: row.quantityAvailable,
+        quantityReserved: row.quantityReserved,
+        quantitySold: row.quantitySold,
+        publishedAt: row.publishedAt,
+        updatedAt: row.updatedAt,
+        onMarketplace: row.status === 'LIVE' && row.quantityAvailable > 0,
+        canRemove: removeBlockedReason == null,
+        removeBlockedReason,
+        images: row.images.map((img) => ({
+          id: img.id,
+          variants: (img.variants as Record<string, unknown>) ?? {},
+        })),
+      };
+    });
   }
 
   async softRemove(id: string, sellerId: string) {
     const listing = await this.requireOwner(id, sellerId);
+    const activity = (await this.removalActivity([id])).get(id) ?? EMPTY_REMOVAL_ACTIVITY;
+    const blocked = sellerRemovalBlockReason({
+      status: listing.status,
+      quantityAvailable: listing.quantityAvailable,
+      quantityReserved: listing.quantityReserved,
+      quantitySold: listing.quantitySold,
+      ...activity,
+    });
+    if (blocked) throw new ConflictException(blocked);
     ListingStateMachine.assertTransition(listing.status, 'REMOVED');
     const updated = await this.prisma.listing.update({
       where: { id },
@@ -456,17 +612,21 @@ export class ListingsService {
 
   async publish(id: string, sellerId: string) {
     const listing = await this.requireOwner(id, sellerId);
+    await this.payouts.requireVerified(sellerId);
     const startedAt = listing.createdAt.getTime();
 
-    // 1. Moderation first
+    // 1. Content + image moderation first
     const mod = await this.moderation.evaluateOnPublish(id);
     if (mod.outcome === 'REJECTED') {
-      ListingStateMachine.assertTransition(listing.status, 'REJECTED');
-      await this.emitStatus(id, sellerId, listing.status, 'REJECTED');
+      if (listing.status !== 'REJECTED') {
+        ListingStateMachine.assertTransition(listing.status, 'REJECTED');
+        await this.emitStatus(id, sellerId, listing.status, 'REJECTED');
+      }
       this.analytics.log('published', {
         listingId: id,
         status: 'REJECTED',
         moderationReasons: mod.reasons,
+        moderationId: mod.moderationId,
       });
       const rejected = await this.prisma.listing.findUniqueOrThrow({
         where: { id },
@@ -474,21 +634,37 @@ export class ListingsService {
       });
       return {
         ...toPublicListing(rejected),
-        moderationReasons: mod.reasons,
+        moderationReasons: mod.reasons.length
+          ? mod.reasons
+          : mod.rejectionReason
+            ? [mod.rejectionReason]
+            : [],
       };
     }
 
     // 2. Risk engine
     const risk = await this.riskEngine.evaluateOnPublish(id, sellerId);
 
+    // 3. Canonical ListingModeration snapshot (content + risk)
+    const finalized = await this.moderation.finalizeWithRisk({
+      listingId: id,
+      content: mod,
+      riskScore: risk.score,
+      riskLevel: risk.level,
+      riskFlags: risk.flags,
+      riskForceReview: risk.forceUnderReview,
+    });
+
     const forceReview =
-      risk.forceUnderReview || mod.outcome === 'UNDER_REVIEW';
+      risk.forceUnderReview || finalized.outcome === 'UNDER_REVIEW';
     const target: ListingStatus = forceReview ? 'UNDER_REVIEW' : 'LIVE';
 
-    ListingStateMachine.assertTransition(listing.status, target);
+    if (listing.status !== target) {
+      ListingStateMachine.assertTransition(listing.status, target);
+    }
 
     const expiryDays = Number(
-      this.config.get<string>('LISTING_EXPIRY_DAYS') ?? '7',
+      this.config.get<string>('LISTING_EXPIRY_DAYS') ?? '60',
     );
     const publishedAt = new Date();
     const expiresAt =
@@ -509,6 +685,25 @@ export class ListingsService {
 
     await this.emitStatus(id, sellerId, listing.status, target);
 
+    if (target === 'UNDER_REVIEW') {
+      await this.notifications.notify({
+        userId: sellerId,
+        category: NotificationCategory.VERIFICATION_UPDATE,
+        title: 'Listing submitted for review',
+        body: `"${updated.title}" is being checked. You can follow it under Your listings.`,
+        deepLink: '/selling',
+      });
+      await this.alerts?.notify({
+        roles: LISTINGS_MOD,
+        kind: 'LISTING_REVIEW',
+        title: 'Listing needs review',
+        body: `"${updated.title}" is waiting for a photo and details check.`,
+        href: '/listings',
+        entityType: 'Listing',
+        entityId: id,
+      });
+    }
+
     if (target === 'LIVE' && this.favourites) {
       await this.favourites.onListingLive(updated).catch(() => undefined);
     }
@@ -518,7 +713,10 @@ export class ListingsService {
       status: target,
       riskFlags: risk.flags,
       riskLevel: risk.level,
-      moderationOutcome: mod.outcome,
+      moderationOutcome: finalized.outcome,
+      moderationId: finalized.moderationId,
+      imageScore: finalized.imageScore,
+      riskScore: risk.score,
     });
     this.analytics.log('publish_duration_ms', {
       listingId: id,
@@ -557,15 +755,27 @@ export class ListingsService {
   async report(id: string, reporterId: string, dto: ReportListingDto) {
     const listing = await this.prisma.listing.findUnique({ where: { id } });
     if (!listing) throw new NotFoundException('Listing not found');
-    return this.prisma.report.create({
+    const report = await this.prisma.report.create({
       data: {
         listingId: id,
+        reportedUserId:
+          listing.sellerId === reporterId ? undefined : listing.sellerId,
         reporterId,
         reason: dto.reason,
         detail: dto.detail,
         status: 'OPEN',
       },
     });
+    await this.alerts?.notify({
+      roles: REPORTS,
+      kind: 'REPORT',
+      title: 'Listing reported',
+      body: `"${listing.title}" was reported: ${dto.reason}`,
+      href: '/reports',
+      entityType: 'Report',
+      entityId: report.id,
+    });
+    return report;
   }
 
   private async requireOwner(id: string, sellerId: string) {
@@ -603,6 +813,129 @@ export class ListingsService {
     return { authRequired: true, authenticationStatus: 'REQUIRED' };
   }
 
+  private async removalActivity(ids: string[]) {
+    const map = new Map<string, RemovalActivity>();
+    if (ids.length === 0) return map;
+    const wanted = new Set(ids);
+    const bump = (
+      id: string | null | undefined,
+      key: keyof RemovalActivity,
+    ) => {
+      if (!id || !wanted.has(id)) return;
+      const current = map.get(id) ?? { ...EMPTY_REMOVAL_ACTIVITY };
+      current[key] += 1;
+      map.set(id, current);
+    };
+    const touchOrder = (order: {
+      listingId: string;
+      swapListingAId: string | null;
+      swapListingBId: string | null;
+    }) => {
+      const touched = new Set(
+        [order.listingId, order.swapListingAId, order.swapListingBId].filter(
+          (id): id is string => Boolean(id),
+        ),
+      );
+      for (const id of touched) bump(id, 'activeOrders');
+    };
+
+    const now = new Date();
+    const listingMatch = {
+      OR: [
+        { listingId: { in: ids } },
+        { swapListingAId: { in: ids } },
+        { swapListingBId: { in: ids } },
+      ],
+    };
+    const [orders, disputes, swaps, claims, intents, offers] =
+      await Promise.all([
+        this.prisma.order.findMany({
+          where: {
+            status: { in: [...ACTIVE_ORDER_STATUSES] as OrderStatus[] },
+            ...listingMatch,
+          },
+          select: {
+            listingId: true,
+            swapListingAId: true,
+            swapListingBId: true,
+          },
+        }),
+        this.prisma.dispute.findMany({
+          where: {
+            status: { in: ['OPENED', 'AWAITING_SELLER', 'AWAITING_ADMIN'] },
+            order: listingMatch,
+          },
+          select: {
+            order: {
+              select: {
+                listingId: true,
+                swapListingAId: true,
+                swapListingBId: true,
+              },
+            },
+          },
+        }),
+        this.prisma.swapProposal.findMany({
+          where: {
+            status: { in: ['PENDING', 'ACCEPTED'] },
+            OR: [
+              { listingId: { in: ids } },
+              { offeredListingId: { in: ids } },
+            ],
+          },
+          select: { listingId: true, offeredListingId: true },
+        }),
+        this.prisma.giveawayClaim.findMany({
+          where: {
+            listingId: { in: ids },
+            status: { in: ['CLAIMED', 'APPROVED'] },
+          },
+          select: { listingId: true },
+        }),
+        this.prisma.orderIntent.findMany({
+          where: {
+            listingId: { in: ids },
+            status: 'PENDING',
+            reservedUntil: { gt: now },
+          },
+          select: { listingId: true },
+        }),
+        this.prisma.offer.findMany({
+          where: {
+            listingId: { in: ids },
+            OR: [
+              { status: 'ACCEPTED' },
+              {
+                status: { in: ['PENDING', 'COUNTERED'] },
+                expiresAt: { gt: now },
+              },
+            ],
+          },
+          select: { listingId: true },
+        }),
+      ]);
+
+    for (const order of orders) touchOrder(order);
+    for (const dispute of disputes) {
+      const touched = new Set(
+        [
+          dispute.order.listingId,
+          dispute.order.swapListingAId,
+          dispute.order.swapListingBId,
+        ].filter((id): id is string => Boolean(id)),
+      );
+      for (const id of touched) bump(id, 'openDisputes');
+    }
+    for (const swap of swaps) {
+      bump(swap.listingId, 'openSwaps');
+      bump(swap.offeredListingId, 'openSwaps');
+    }
+    for (const claim of claims) bump(claim.listingId, 'openGiveaways');
+    for (const intent of intents) bump(intent.listingId, 'pendingIntents');
+    for (const offer of offers) bump(offer.listingId, 'openOffers');
+    return map;
+  }
+
   private async emitStatus(
     listingId: string,
     actorUserId: string | null,
@@ -618,4 +951,48 @@ export class ListingsService {
       },
     });
   }
+}
+
+function reviewStateFor(
+  status: string,
+  decision: string | null,
+  note: string | null,
+): { state: string; label: string; note: string | null } {
+  if (status === 'UNDER_REVIEW') {
+    return {
+      state: 'waiting',
+      label: 'Waiting for review',
+      note: 'We are checking the photos and item details.',
+    };
+  }
+  if (status === 'REJECTED') {
+    return {
+      state: 'rejected',
+      label: 'Rejected',
+      note: note && note !== 'Admin approved' ? note : 'This listing was rejected.',
+    };
+  }
+  if (status === 'LIVE' || status === 'RESERVED' || status === 'SOLD') {
+    const custom =
+      decision === 'PASS' && note && note !== 'Admin approved' ? note : null;
+    return {
+      state: 'approved',
+      label: status === 'LIVE' ? 'Live' : status === 'SOLD' ? 'Sold' : 'Reserved',
+      note: custom,
+    };
+  }
+  if (status === 'REMOVED') {
+    return {
+      state: 'waiting',
+      label: 'Held for review',
+      note:
+        note && note !== 'Admin approved'
+          ? note
+          : 'Taken off the marketplace while it is reviewed.',
+    };
+  }
+  if (status === 'DRAFT') {
+    return { state: 'draft', label: 'Draft', note: null };
+  }
+  return { state: 'closed', label: 'Closed', note };
 }

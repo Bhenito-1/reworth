@@ -27,7 +27,7 @@ export function ListingCard({
   return (
     <article
       className={[
-        "flex flex-col overflow-hidden rounded-[var(--rw-radius-lg)]",
+        "flex h-full flex-col overflow-hidden rounded-[var(--rw-radius-lg)]",
         "bg-[var(--rw-bg-elevated)] border border-[var(--rw-border)]",
         className,
       ]
@@ -35,7 +35,7 @@ export function ListingCard({
         .join(" ")}
       {...rest}
     >
-      <div className="relative aspect-[4/3] bg-[var(--rw-accent-muted)]">
+      <div className="relative aspect-[4/3] shrink-0 bg-[var(--rw-accent-muted)]">
         {imageSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -65,15 +65,15 @@ export function ListingCard({
         ) : null}
       </div>
       <div className="flex flex-1 flex-col gap-1 p-3">
-        <h3 className="text-base font-medium text-[var(--rw-ink)] line-clamp-2">
+        <h3 className="line-clamp-2 min-h-11 text-base font-medium leading-snug text-[var(--rw-ink)]">
           {title}
         </h3>
-        <p className="text-lg font-semibold text-[var(--rw-accent)]">
+        <p className="truncate text-lg font-semibold leading-tight text-[var(--rw-accent)]">
           {priceLabel}
         </p>
-        {community ? (
-          <p className="text-sm text-[var(--rw-ink-muted)]">{community}</p>
-        ) : null}
+        <p className="min-h-5 truncate text-sm leading-5 text-[var(--rw-ink-muted)]">
+          {community || "\u00a0"}
+        </p>
         {footer ? <div className="mt-auto pt-2">{footer}</div> : null}
       </div>
     </article>

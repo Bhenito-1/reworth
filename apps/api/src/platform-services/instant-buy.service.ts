@@ -6,10 +6,12 @@ import {
   Logger,
   NotFoundException,
   Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { OrderStateMachine } from '../orders/order-state.machine';
+import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   PAYMENT_PROVIDER,
@@ -31,6 +33,9 @@ export class InstantBuyService {
     @Optional()
     @Inject(PAYMENT_PROVIDER)
     private readonly psp?: PaymentProvider,
+    @Optional()
+    @Inject(forwardRef(() => OrdersService))
+    private readonly orders?: OrdersService,
   ) {}
 
   slaHours(): number {
@@ -145,9 +150,30 @@ export class InstantBuyService {
   }
 
   async markDelivered(id: string, actorUserId: string, isOps = false) {
-    await this.get(id, actorUserId, isOps);
+    const row = await this.get(id, actorUserId, isOps);
     if (!isOps) throw new ForbiddenException('Ops required');
-    return this.fulfilment.markDelivered(id);
+    const result = await this.fulfilment.markDelivered(id);
+    // Align cash order with courier delivered (escrow still held)
+    if (
+      this.orders &&
+      OrderStateMachine.canTransition(row.order.status, 'DELIVERED')
+    ) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.order.update({
+          where: { id: row.orderId },
+          data: { status: 'DELIVERED' },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: row.orderId,
+            type: 'DELIVERED',
+            actorUserId,
+            payload: { source: 'instant_buy' },
+          },
+        });
+      });
+    }
+    return result;
   }
 
   async buyerConfirm(id: string, buyerId: string) {
@@ -159,9 +185,41 @@ export class InstantBuyService {
       throw new BadRequestException('Fulfilment not ready to confirm');
     }
     const now = new Date();
-    return this.prisma.instantBuyFulfilment.update({
+    await this.prisma.instantBuyFulfilment.update({
       where: { id },
       data: { status: 'CONFIRMED', confirmedAt: now },
+    });
+
+    // Ensure order is confirmable, then release escrow via standard path
+    const orderStatus = row.order.status;
+    if (
+      ['FUNDED', 'IN_AUTHENTICATION', 'SHIPPED', 'HANDED_OVER'].includes(
+        orderStatus,
+      ) &&
+      OrderStateMachine.canTransition(orderStatus, 'DELIVERED')
+    ) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.order.update({
+          where: { id: row.orderId },
+          data: { status: 'DELIVERED' },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: row.orderId,
+            type: 'DELIVERED',
+            actorUserId: buyerId,
+            payload: { source: 'instant_buy_pre_confirm' },
+          },
+        });
+      });
+    }
+
+    if (this.orders) {
+      return this.orders.confirmReceipt(row.orderId, buyerId);
+    }
+
+    return this.prisma.instantBuyFulfilment.findUniqueOrThrow({
+      where: { id },
     });
   }
 

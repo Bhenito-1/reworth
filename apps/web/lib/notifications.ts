@@ -138,12 +138,21 @@ export function deepLinkToPath(deepLink: string | null | undefined): string | nu
   }
 
   const known =
-    /^\/(orders|disputes|chats|listings|notifications|account|checkout|search|my|sell|settings)(\/|$)/;
+    /^\/(orders|disputes|chats|listings|notifications|account|checkout|search|my|sell|selling|settings)(\/|$)/;
   if (!known.test(path)) {
     // Still allow /orders/:id style even if not in list above
     if (!/^\/[a-z][\w-]*(\/[\w-]+)*\/?$/i.test(path)) return null;
   }
   return path;
+}
+
+export function unreadNotificationCount(
+  token: string,
+): Promise<{ count: number }> {
+  return apiFetch<{ count: number }>("/notifications/unread-count", {
+    token,
+    cache: "no-store",
+  });
 }
 
 export function listNotifications(
@@ -157,7 +166,7 @@ export function listNotifications(
   const qs = q.toString();
   return apiFetch<AppNotification[]>(
     `/notifications${qs ? `?${qs}` : ""}`,
-    { token },
+    { token, cache: "no-store" },
   );
 }
 
@@ -177,6 +186,17 @@ export function markAllNotificationsRead(
   return apiFetch<{ updated: number }>("/notifications/read-all", {
     method: "POST",
     token,
+    cache: "no-store",
+  });
+}
+
+export function clearNotifications(
+  token: string,
+): Promise<{ deleted: number }> {
+  return apiFetch<{ deleted: number }>("/notifications", {
+    method: "DELETE",
+    token,
+    cache: "no-store",
   });
 }
 

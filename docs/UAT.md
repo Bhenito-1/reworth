@@ -13,8 +13,8 @@
 
 | # | Step | Preconditions | Expected | Web | iOS | Android | Auto |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| U01 | Create an account | Fresh phone | Account created; OTP request succeeds | ☐ | ☐ | ☐ | ☐ |
-| U02 | Verify mobile number | OTP from mock/console | Phone verified; L1 | ☐ | ☐ | ☐ | ☐ |
+| U01 | Create an account | Fresh email | Account created; session issued | ☐ | ☐ | ☐ | ☐ |
+| U02 | Login with email | Existing account | Landing → home; JWT session | ☐ | ☐ | ☐ | ☐ |
 | U03 | Create listing with photographs | Ori logged in | Draft listing + media attached | ☐ | ☐ | ☐ | G01 |
 | U04 | Receive AI-generated draft title/description | Listing + images | Assist returns title/description | ☐ | ☐ | ☐ | G01 |
 | U05 | Set a price | Draft listing | Price saved in NGN kobo | ☐ | ☐ | ☐ | G01 |

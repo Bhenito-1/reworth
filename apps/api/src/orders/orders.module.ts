@@ -11,7 +11,9 @@ import { PlatformServicesModule } from '../platform-services/platform-services.m
 import { ReferralsModule } from '../referrals/referrals.module';
 import { ReviewsModule } from '../reviews/reviews.module';
 import { VerticalsModule } from '../verticals/verticals.module';
+import { AdminAlertsModule } from '../admin/admin-alerts.module';
 import { AutoReleaseScheduler } from './auto-release.scheduler';
+import { InventoryModule } from '../inventory/inventory.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 
@@ -36,11 +38,13 @@ export function createPaymentProvider(config: ConfigService) {
     AuthModule,
     ConfigModule,
     NotificationsModule,
+    AdminAlertsModule,
     ReviewsModule,
     forwardRef(() => DeliveryModule),
     forwardRef(() => VerticalsModule),
     forwardRef(() => PlatformServicesModule),
     ReferralsModule,
+    InventoryModule,
   ],
   controllers: [OrdersController],
   providers: [

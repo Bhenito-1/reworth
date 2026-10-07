@@ -80,7 +80,7 @@ export default function MovingSalePage() {
     const token = getAccessToken();
     if (!token) {
       setToast("Sign in to follow");
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     setFollowBusy(true);
@@ -104,13 +104,7 @@ export default function MovingSalePage() {
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
+        <header className="mb-8 flex items-center justify-end gap-4">
           <Link
             href="/moving-sales/new"
             className="text-sm font-medium text-[var(--rw-accent)]"

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import {
   Button,
@@ -25,6 +25,8 @@ import {
   getMeFavourites,
   unfavouriteListing,
 } from "../../../lib/discovery";
+import { addToCart } from "../../../lib/cart";
+import { CartIcon } from "../../../components/AppNav";
 import { fetchRecommendations } from "../../../lib/intelligence";
 import {
   CONDITION_LABELS,
@@ -58,6 +60,8 @@ export default function ListingPdpPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
   const router = useRouter();
+  const from = useSearchParams().get("from");
+  const backHref = from && /^\/users\/[\w-]+$/.test(from) ? from : null;
 
   const [listing, setListing] = useState<PublicListing | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,6 +76,10 @@ export default function ListingPdpPage() {
   const [reportDetail, setReportDetail] = useState("");
   const [reporting, setReporting] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [qty, setQty] = useState(1);
+  const [cartBusy, setCartBusy] = useState(false);
+  const [cartReady, setCartReady] = useState(false);
+  const [cartFormOpen, setCartFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
@@ -146,14 +154,14 @@ export default function ListingPdpPage() {
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to continue", tone: "warn" });
-      router.push("/onboarding");
+      router.push("/");
       return null;
     }
     return token;
   }
 
   async function startChat() {
-    if (!id) return;
+    if (!id || chatBusy) return;
     const token = requireAuth();
     if (!token) return;
     setChatBusy(true);
@@ -161,12 +169,11 @@ export default function ListingPdpPage() {
       const conv = await createConversation(token, id);
       router.push(`/chats/${conv.id}`);
     } catch (err) {
+      setChatBusy(false);
       setToast({
         message: err instanceof ApiError ? err.message : "Could not start chat",
         tone: "error",
       });
-    } finally {
-      setChatBusy(false);
     }
   }
 
@@ -195,12 +202,29 @@ export default function ListingPdpPage() {
     }
   }
 
-  function buyNow(opts?: { instantBuy?: boolean }) {
+  async function saveToCart() {
     if (!id) return;
-    if (!requireAuth()) return;
-    const qs = new URLSearchParams({ listingId: id });
-    if (opts?.instantBuy) qs.set("instantBuy", "1");
-    router.push(`/checkout?${qs.toString()}`);
+    const token = requireAuth();
+    if (!token) return;
+    setCartBusy(true);
+    try {
+      await addToCart(token, id, qty);
+      setCartReady(true);
+      setToast({
+        message:
+          qty === 1
+            ? "Added to cart. Open your cart to place the order."
+            : `Added ${qty} to cart. Open your cart to place the order.`,
+        tone: "success",
+      });
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not add to cart",
+        tone: "error",
+      });
+    } finally {
+      setCartBusy(false);
+    }
   }
 
   async function toggleSave() {
@@ -216,7 +240,7 @@ export default function ListingPdpPage() {
       if (next) await favouriteListing(id, token);
       else await unfavouriteListing(id, token);
       setToast({
-        message: next ? "Saved" : "Removed from saved",
+        message: next ? "Added to wishlist" : "Removed from wishlist",
         tone: "success",
       });
     } catch (err) {
@@ -388,21 +412,27 @@ export default function ListingPdpPage() {
         }}
       />
 
-      <div className="relative z-10 mx-auto max-w-3xl px-4 pb-28 pt-6 sm:px-8">
+      <div className="relative z-10 mx-auto max-w-3xl px-4 pb-16 pt-6 sm:px-8">
         <header className="mb-6 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
-          <button
-            type="button"
-            onClick={() => setReportOpen(true)}
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            Report
-          </button>
+          <div className="flex items-center gap-3">
+            {backHref ? (
+              <Link
+                href={backHref}
+                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
+              >
+                ← Back
+              </Link>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setReportOpen(true)}
+              className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
+            >
+              Report
+            </button>
+          </div>
         </header>
 
         <section aria-label="Photo gallery" className="rw-fade-up">
@@ -463,6 +493,14 @@ export default function ListingPdpPage() {
               : isSwap
                 ? "Swap"
                 : formatNgn({ amountKobo: listing.priceKobo })}
+            {!isGiveAway && !isSwap ? (
+              <span className="ml-2 text-base font-medium text-[var(--rw-ink-muted)]">
+                per unit
+                {typeof listing.quantityAvailable === "number"
+                  ? ` · ${listing.quantityAvailable} available`
+                  : ""}
+              </span>
+            ) : null}
             {!isGiveAway && !isSwap && listing.negotiable ? (
               <span className="ml-2 text-base font-medium text-[var(--rw-ink-muted)]">
                 · Negotiable
@@ -592,15 +630,39 @@ export default function ListingPdpPage() {
               </Link>
             </p>
           ) : null}
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={saving}
+              onClick={() => void toggleSave()}
+              aria-label={saved ? "Remove from wishlist" : "Add to wishlist"}
+              aria-pressed={saved}
+            >
+              <span aria-hidden style={{ color: saved ? "#DC2626" : "#5C636A" }}>
+                {saved ? "♥" : "♡"}
+              </span>
+              <span className="ml-1.5">{saved ? "Saved" : "Save"}</span>
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void shareListing()}
+              aria-label="Share listing"
+            >
+              Share
+            </Button>
+          </div>
         </section>
 
+        {meId === listing.seller.id ? null : (
         <section
-          className="mt-8 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-4"
+          className="mt-8 flex items-center gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-4"
           aria-label="Seller"
         >
           <Link
-            href={`/users/${listing.seller.id}`}
-            className="flex items-center gap-4 rounded-[var(--rw-radius)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+            href={`/users/${listing.seller.id}?from=/listings/${listing.id}`}
+            className="flex min-w-0 flex-1 items-center gap-4 rounded-[var(--rw-radius)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
           >
             <div
               className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--rw-accent-muted)] text-lg font-semibold text-[var(--rw-accent)]"
@@ -637,7 +699,18 @@ export default function ListingPdpPage() {
               Profile →
             </span>
           </Link>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="w-16 shrink-0"
+            disabled={chatBusy}
+            aria-busy={chatBusy}
+            onClick={() => void startChat()}
+          >
+            Chat
+          </Button>
         </section>
+        )}
 
         <section className="mt-8" aria-labelledby="pdp-desc">
           <h2 id="pdp-desc" className="text-lg font-semibold">
@@ -646,6 +719,104 @@ export default function ListingPdpPage() {
           <p className="mt-3 whitespace-pre-wrap leading-relaxed text-[var(--rw-ink-muted)]">
             {listing.description || "No description provided."}
           </p>
+          {!isGiveAway && !isSwap && meId !== listing.seller.id ? (
+            <div className="mt-6 flex flex-col items-center gap-3">
+              <CartIcon className="h-20 w-20 text-[var(--rw-ink-muted)]" />
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  className="px-5"
+                  disabled={(listing.quantityAvailable ?? 1) < 1}
+                  onClick={() => setCartFormOpen(true)}
+                >
+                  Add to cart
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    if (!requireAuth()) return;
+                    setOfferOpen(true);
+                  }}
+                >
+                  Make offer
+                </Button>
+              </div>
+              {(listing.quantityAvailable ?? 1) < 1 ? (
+                <p className="mt-2 text-sm font-medium text-[var(--rw-ink-muted)]">
+                  No units left
+                </p>
+              ) : null}
+              {cartFormOpen && (listing.quantityAvailable ?? 1) > 0 ? (
+                <form
+                  className="mt-4 w-full space-y-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (meId && meId === listing.seller.id) {
+                      setToast({
+                        message: "You can't add your own listing to the cart",
+                        tone: "warn",
+                      });
+                      return;
+                    }
+                    void saveToCart();
+                  }}
+                >
+                  <p className="text-sm font-medium">How many units?</p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="h-10 w-10 rounded-full border border-[var(--rw-border)]"
+                      onClick={() => setQty((n) => Math.max(1, n - 1))}
+                      aria-label="Decrease quantity"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-6 text-center text-sm font-semibold">
+                      {qty}
+                    </span>
+                    <button
+                      type="button"
+                      className="h-10 w-10 rounded-full border border-[var(--rw-border)] disabled:opacity-40"
+                      disabled={qty >= (listing.quantityAvailable ?? 1)}
+                      onClick={() =>
+                        setQty((n) =>
+                          Math.min(listing.quantityAvailable ?? 1, n + 1),
+                        )
+                      }
+                      aria-label="Increase quantity"
+                    >
+                      +
+                    </button>
+                    <span className="text-sm text-[var(--rw-ink-muted)]">
+                      {listing.quantityAvailable ?? 1} available
+                    </span>
+                  </div>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    className="w-full"
+                    disabled={cartBusy}
+                  >
+                    {cartBusy ? "Adding…" : `Add ${qty} to cart`}
+                  </Button>
+                  {cartReady ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full"
+                      onClick={() => router.push("/cart")}
+                    >
+                      Go to cart
+                    </Button>
+                  ) : null}
+                </form>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <section className="mt-8" aria-labelledby="pdp-delivery">
@@ -684,10 +855,55 @@ export default function ListingPdpPage() {
           </aside>
         ) : null}
 
-        {isSwap ? (
-          <p className="mt-8 text-center text-sm font-medium text-[var(--rw-ink-muted)]">
-            Interested in swapping? Chat with the seller
-          </p>
+        {isSwap && meId !== listing.seller.id ? (
+          <div className="mt-8 flex flex-col items-center gap-3">
+            <p className="text-center text-sm font-medium text-[var(--rw-ink-muted)]">
+              Interested in swapping? Chat with the seller
+            </p>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                if (!requireAuth()) return;
+                setSwapOpen(true);
+              }}
+            >
+              Swap
+            </Button>
+          </div>
+        ) : null}
+
+        {isGiveAway && meId !== listing.seller.id ? (
+          <div className="mt-8 flex justify-center">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={claimBusy}
+              onClick={async () => {
+                if (!id) return;
+                const token = requireAuth();
+                if (!token) return;
+                setClaimBusy(true);
+                try {
+                  await createGiveawayClaim(token, id);
+                  setToast({
+                    message: "Claim sent — seller will review",
+                    tone: "success",
+                  });
+                } catch (err) {
+                  setToast({
+                    message:
+                      err instanceof ApiError ? err.message : "Could not claim",
+                    tone: "error",
+                  });
+                } finally {
+                  setClaimBusy(false);
+                }
+              }}
+            >
+              {claimBusy ? "Claiming…" : "Claim this item"}
+            </Button>
+          </div>
         ) : null}
 
         {similar.length > 0 ? (
@@ -704,129 +920,6 @@ export default function ListingPdpPage() {
             </ul>
           </section>
         ) : null}
-      </div>
-
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-3xl flex-wrap gap-2 px-4 py-3 sm:px-8">
-          {isSwap ? (
-            <>
-              <Button
-                variant="primary"
-                className="flex-1"
-                onClick={() => {
-                  if (!requireAuth()) return;
-                  setSwapOpen(true);
-                }}
-              >
-                Swap
-              </Button>
-              <Button
-                variant="ghost"
-                className="flex-1"
-                disabled={chatBusy}
-                onClick={() => void startChat()}
-              >
-                {chatBusy ? "Opening…" : "Chat"}
-              </Button>
-            </>
-          ) : isGiveAway ? (
-            <>
-              <Button
-                variant="primary"
-                className="flex-1"
-                disabled={claimBusy}
-                onClick={async () => {
-                  if (!id) return;
-                  const token = requireAuth();
-                  if (!token) return;
-                  setClaimBusy(true);
-                  try {
-                    await createGiveawayClaim(token, id);
-                    setToast({
-                      message: "Claim sent — seller will review",
-                      tone: "success",
-                    });
-                  } catch (err) {
-                    setToast({
-                      message:
-                        err instanceof ApiError
-                          ? err.message
-                          : "Could not claim",
-                      tone: "error",
-                    });
-                  } finally {
-                    setClaimBusy(false);
-                  }
-                }}
-              >
-                {claimBusy ? "Claiming…" : "Claim this item"}
-              </Button>
-              <Button
-                variant="ghost"
-                className="flex-1"
-                disabled={chatBusy}
-                onClick={() => void startChat()}
-              >
-                Chat
-              </Button>
-            </>
-          ) : (
-            <>
-              {listing.instantBuyEligible ? (
-                <Button
-                  variant="primary"
-                  className="flex-1"
-                  onClick={() => buyNow({ instantBuy: true })}
-                >
-                  Instant Buy
-                </Button>
-              ) : null}
-              <Button
-                variant="secondary"
-                className="flex-1"
-                onClick={() => {
-                  if (!requireAuth()) return;
-                  setOfferOpen(true);
-                }}
-              >
-                Make offer
-              </Button>
-              <Button
-                variant={listing.instantBuyEligible ? "ghost" : "primary"}
-                className="flex-1"
-                onClick={() => buyNow()}
-              >
-                Buy now
-              </Button>
-              <Button
-                variant="ghost"
-                className="flex-1"
-                disabled={chatBusy}
-                onClick={() => void startChat()}
-              >
-                {chatBusy ? "Opening…" : "Chat"}
-              </Button>
-            </>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={saving}
-            onClick={() => void toggleSave()}
-            aria-label={saved ? "Remove from saved" : "Save listing"}
-            aria-pressed={saved}
-          >
-            {saved ? "Saved ♥" : "Save"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void shareListing()}
-            aria-label="Share listing"
-          >
-            Share
-          </Button>
-        </div>
       </div>
 
       <MakeOfferModal
@@ -951,7 +1044,7 @@ export default function ListingPdpPage() {
       </Modal>
 
       {toast ? (
-        <div className="fixed bottom-24 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2">
+        <div className="fixed bottom-6 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2 lg:left-[calc(50%+var(--rw-sidebar-offset,0px))]">
           <Toast
             message={toast.message}
             tone={toast.tone}

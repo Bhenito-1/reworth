@@ -2,10 +2,63 @@
  * Phase 8 admin session — localStorage (prefer httpOnly cookies before prod).
  */
 
+import { useSyncExternalStore } from "react";
+
 const ACCESS_KEY = "rw_admin_access";
 const REFRESH_KEY = "rw_admin_refresh";
+const REFRESH_LOCK_KEY = "rw_admin_refresh_lock";
+
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
+
+const REFRESH_SKEW_MS = 30_000;
+
+export type RefreshOutcome = "ok" | "rejected" | "offline";
 const ROLES_KEY = "rw_admin_roles";
 const EMAIL_KEY = "rw_admin_email";
+const SESSION_EVENT = "rw-admin-session";
+const SERVER_ROLES: string[] = [];
+
+let roleCacheKey = "";
+let roleCache: string[] = SERVER_ROLES;
+
+function emitSession() {
+  if (!canUse()) return;
+  roleCacheKey = "\0";
+  window.dispatchEvent(new Event(SESSION_EVENT));
+}
+
+function subscribeAdminSession(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  window.addEventListener(SESSION_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(SESSION_EVENT, onChange);
+  };
+}
+
+function rolesSnapshot(): string[] {
+  const next = getRoles();
+  const key = next.join("|");
+  if (key === roleCacheKey) return roleCache;
+  roleCacheKey = key;
+  roleCache = next;
+  return roleCache;
+}
+
+/** Roles for render. The server snapshot is empty so hydration matches. */
+export function useAdminRoles(): string[] {
+  return useSyncExternalStore(
+    subscribeAdminSession,
+    rolesSnapshot,
+    () => SERVER_ROLES,
+  );
+}
+
+/** Email for render. The server snapshot is null so hydration matches. */
+export function useAdminEmail(): string | null {
+  return useSyncExternalStore(subscribeAdminSession, getEmail, () => null);
+}
 
 export type AdminSession = {
   accessToken: string;
@@ -21,6 +74,11 @@ function canUse(): boolean {
 export function getAccessToken(): string | null {
   if (!canUse()) return null;
   return localStorage.getItem(ACCESS_KEY);
+}
+
+export function getRefreshToken(): string | null {
+  if (!canUse()) return null;
+  return localStorage.getItem(REFRESH_KEY);
 }
 
 export function getRoles(): string[] {
@@ -44,6 +102,7 @@ export function setSession(session: AdminSession): void {
   localStorage.setItem(REFRESH_KEY, session.refreshToken);
   localStorage.setItem(ROLES_KEY, JSON.stringify(session.roles));
   localStorage.setItem(EMAIL_KEY, session.email);
+  emitSession();
 }
 
 export function clearSession(): void {
@@ -52,10 +111,134 @@ export function clearSession(): void {
   localStorage.removeItem(REFRESH_KEY);
   localStorage.removeItem(ROLES_KEY);
   localStorage.removeItem(EMAIL_KEY);
+  emitSession();
 }
 
+function accessExpiryMs(token: string): number | "none" | "bad" {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return "bad";
+    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(json) as { exp?: number };
+    if (typeof payload.exp !== "number") return "none";
+    return payload.exp * 1000;
+  } catch {
+    return "bad";
+  }
+}
+
+/** True when JWT `exp` is in the past (or token is unreadable). */
+export function isAccessTokenExpired(token: string): boolean {
+  const exp = accessExpiryMs(token);
+  if (exp === "none") return false;
+  if (exp === "bad") return true;
+  return exp <= Date.now();
+}
+
+export function accessTokenNeedsRefresh(token: string): boolean {
+  const exp = accessExpiryMs(token);
+  if (exp === "none") return false;
+  if (exp === "bad") return true;
+  return exp <= Date.now() + REFRESH_SKEW_MS;
+}
+
+/** Signed in while the access token is valid, or a refresh token can renew it. */
 export function isAuthed(): boolean {
-  return Boolean(getAccessToken());
+  const token = getAccessToken();
+  if (token && !isAccessTokenExpired(token)) return true;
+  return Boolean(getRefreshToken());
+}
+
+let refreshInFlight: { force: boolean; promise: Promise<RefreshOutcome> } | null =
+  null;
+
+/** One renewal at a time. Reusing a rotated refresh token revokes the family. */
+export function refreshSession(force = false): Promise<RefreshOutcome> {
+  if (refreshInFlight) {
+    if (refreshInFlight.force || !force) return refreshInFlight.promise;
+    return refreshInFlight.promise.then((outcome) =>
+      outcome === "ok" ? refreshSession(true) : outcome,
+    );
+  }
+  const promise = performRefresh(force).finally(() => {
+    refreshInFlight = null;
+  });
+  refreshInFlight = { force, promise };
+  return promise;
+}
+
+async function performRefresh(force: boolean): Promise<RefreshOutcome> {
+  if (!force) {
+    const current = getAccessToken();
+    if (current && !accessTokenNeedsRefresh(current)) return "ok";
+  }
+  if (await anotherTabIsRefreshing()) {
+    const latest = getAccessToken();
+    if (latest && !accessTokenNeedsRefresh(latest)) return "ok";
+  }
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return "rejected";
+  const email = getEmail() ?? "";
+  localStorage.setItem(REFRESH_LOCK_KEY, String(Date.now()));
+  try {
+    const res = await fetch(`${API_URL}/auth/refresh`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      return "rejected";
+    }
+    if (!res.ok) return "offline";
+    const data = (await res.json()) as {
+      accessToken?: string;
+      refreshToken?: string;
+    };
+    if (!data.accessToken || !data.refreshToken) {
+      clearSession();
+      return "rejected";
+    }
+    const roles = rolesFromAccessToken(data.accessToken);
+    setSession({
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      roles: roles.length ? roles : getRoles(),
+      email,
+    });
+    return "ok";
+  } catch {
+    return "offline";
+  } finally {
+    localStorage.removeItem(REFRESH_LOCK_KEY);
+  }
+}
+
+async function anotherTabIsRefreshing(): Promise<boolean> {
+  const started = Number(localStorage.getItem(REFRESH_LOCK_KEY) || 0);
+  if (!started || Date.now() - started > 8_000) return false;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const access = getAccessToken();
+    if (access && !accessTokenNeedsRefresh(access)) return true;
+    const lock = Number(localStorage.getItem(REFRESH_LOCK_KEY) || 0);
+    if (!lock || Date.now() - lock > 8_000) return false;
+  }
+  return false;
+}
+
+/**
+ * Clear local session and hard-navigate to login so the UI refreshes
+ * immediately (logout, expired session, or unauthenticated).
+ */
+export function forceLoginRedirect(): void {
+  clearSession();
+  if (!canUse()) return;
+  if (window.location.pathname === "/login") return;
+  window.location.replace("/login");
 }
 
 /** Decode JWT payload (roles live on access token). */

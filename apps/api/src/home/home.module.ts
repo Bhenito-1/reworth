@@ -21,6 +21,6 @@ import { HomeService } from './home.service';
   ],
   controllers: [HomeController],
   providers: [HomeService, HomeCache, DiscoveryAnalyticsService],
-  exports: [HomeService],
+  exports: [HomeService, HomeCache],
 })
 export class HomeModule {}

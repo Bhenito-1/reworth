@@ -248,7 +248,12 @@ export class ReviewsService {
         trustScore: true,
       },
     });
-    if (!user || user.deletedAt || user.status === 'DELETED') {
+    if (
+      !user ||
+      user.deletedAt ||
+      user.status === 'DELETED' ||
+      user.status === 'SUSPENDED'
+    ) {
       throw new NotFoundException('User not found');
     }
 

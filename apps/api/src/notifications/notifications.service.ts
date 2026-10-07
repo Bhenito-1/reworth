@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   NotificationChannel,
   Prisma,
@@ -8,6 +9,10 @@ import {
   EMAIL_PROVIDER,
   type EmailProvider,
 } from '../providers/email.provider';
+import {
+  renderNotificationEmail,
+  resolvePublicAppUrl,
+} from '../providers/email-templates';
 import {
   PUSH_PROVIDER,
   type PushProvider,
@@ -26,6 +31,8 @@ export type NotifyInput = {
   meta?: Record<string, unknown>;
   /** Override channels; default IN_APP + PUSH + EMAIL */
   channels?: NotificationChannel[];
+  /** Send even when the user turned the category off or is in quiet hours. */
+  forceDelivery?: boolean;
 };
 
 type CapBucket = { count: number; hourKey: string };
@@ -42,6 +49,7 @@ export class NotificationsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
     @Inject(PUSH_PROVIDER) private readonly push: PushProvider,
     @Inject(EMAIL_PROVIDER) private readonly email: EmailProvider,
   ) {}
@@ -91,7 +99,7 @@ export class NotificationsService {
       const critical = isCriticalCategory(input.category);
 
       if (channel === NotificationChannel.IN_APP) {
-        if (userDisabled && !critical) {
+        if (!input.forceDelivery && userDisabled && !critical) {
           skipped.push({ channel, reason: 'preference_disabled' });
           continue;
         }
@@ -100,13 +108,13 @@ export class NotificationsService {
         continue;
       }
 
-      if (userDisabled) {
+      if (!input.forceDelivery && userDisabled) {
         skipped.push({ channel, reason: 'preference_disabled' });
         continue;
       }
 
       if (channel === NotificationChannel.PUSH) {
-        if (inQuietHours) {
+        if (!input.forceDelivery && inQuietHours) {
           skipped.push({ channel, reason: 'quiet_hours' });
           continue;
         }
@@ -153,7 +161,7 @@ export class NotificationsService {
       }
 
       if (channel === NotificationChannel.EMAIL) {
-        if (inQuietHours) {
+        if (!input.forceDelivery && inQuietHours) {
           skipped.push({ channel, reason: 'quiet_hours' });
           continue;
         }
@@ -164,11 +172,30 @@ export class NotificationsService {
         }
         const row = await this.persist(input, channel);
         created.push({ id: row.id, channel });
+        const appUrl = resolvePublicAppUrl(
+          this.config.get<string>('EMAIL_APP_URL'),
+          this.config.get<string>('APP_URL'),
+          this.config.get<string>('WEB_ORIGIN'),
+        );
+        const drafted = renderNotificationEmail({
+          title: input.title,
+          body: input.body,
+          deepLink: input.deepLink,
+          appUrl,
+        });
         await this.email.send({
           to,
           subject: input.title,
-          text: `${input.body}${input.deepLink ? `\n\n${input.deepLink}` : ''}`,
-          meta: input.meta,
+          text: drafted.text,
+          html: drafted.html,
+          meta: {
+            ...input.meta,
+            emailCategory: 'notification',
+            entityRefId:
+              typeof input.meta?.entityRefId === 'string'
+                ? input.meta.entityRefId
+                : `notify-${row.id}`,
+          },
         });
       }
     }
@@ -176,11 +203,21 @@ export class NotificationsService {
     return { created, skipped };
   }
 
+  async unreadCount(userId: string) {
+    const count = await this.prisma.notification.count({
+      where: { userId, channel: 'IN_APP', readAt: null },
+    });
+    return { count };
+  }
+
   async list(
     userId: string,
     opts: { category?: string; unread?: boolean } = {},
   ) {
-    const where: Prisma.NotificationWhereInput = { userId };
+    const where: Prisma.NotificationWhereInput = {
+      userId,
+      channel: 'IN_APP',
+    };
     if (opts.category) where.category = opts.category;
     if (opts.unread === true) where.readAt = null;
     if (opts.unread === false) where.readAt = { not: null };
@@ -212,6 +249,14 @@ export class NotificationsService {
       data: { readAt: new Date() },
     });
     return { updated: result.count };
+  }
+
+  /** Removes the in-app inbox. Push and email copies stay in their own channels. */
+  async clearInbox(userId: string) {
+    const result = await this.prisma.notification.deleteMany({
+      where: { userId, channel: NotificationChannel.IN_APP },
+    });
+    return { deleted: result.count };
   }
 
   async getPreferences(userId: string) {

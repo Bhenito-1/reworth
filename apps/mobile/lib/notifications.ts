@@ -68,7 +68,7 @@ export function categoryLabel(category: string): string {
 /** Parse reworth:// or path deep links for in-app routing. */
 export function parseDeepLink(
   deepLink: string | null | undefined,
-): { kind: "order" | "dispute" | "chat" | "listing" | "other"; id?: string } | null {
+): { kind: "order" | "dispute" | "chat" | "listing" | "selling" | "other"; id?: string } | null {
   if (!deepLink) return null;
   let path = deepLink.trim();
   if (path.startsWith("reworth://")) {
@@ -79,12 +79,24 @@ export function parseDeepLink(
     path.match(/^\/disputes\/([\w-]+)/i) ||
     path.match(/^\/chats\/([\w-]+)/i) ||
     path.match(/^\/listings\/([\w-]+)/i);
+  if (/^\/selling\/?$/i.test(path)) return { kind: "selling" };
+  const selling = path.match(/^\/selling\/([\w-]+)/i);
+  if (selling) return { kind: "selling", id: selling[1] };
   if (!m) return { kind: "other" };
   if (/orders/i.test(path)) return { kind: "order", id: m[1] };
   if (/disputes/i.test(path)) return { kind: "dispute", id: m[1] };
   if (/chats/i.test(path)) return { kind: "chat", id: m[1] };
   if (/listings/i.test(path)) return { kind: "listing", id: m[1] };
   return { kind: "other" };
+}
+
+export function unreadNotificationCount(
+  token: string,
+): Promise<{ count: number }> {
+  return apiFetch("/notifications/unread-count", {
+    token,
+    cache: "no-store",
+  });
 }
 
 export function listNotifications(
@@ -96,7 +108,10 @@ export function listNotifications(
   if (opts?.unread === true) q.set("unread", "true");
   if (opts?.unread === false) q.set("unread", "false");
   const qs = q.toString();
-  return apiFetch(`/notifications${qs ? `?${qs}` : ""}`, { token });
+  return apiFetch(`/notifications${qs ? `?${qs}` : ""}`, {
+    token,
+    cache: "no-store",
+  });
 }
 
 export function markNotificationRead(
@@ -106,10 +121,24 @@ export function markNotificationRead(
   return apiFetch(`/notifications/${id}/read`, { method: "POST", token });
 }
 
+export function clearNotifications(
+  token: string,
+): Promise<{ deleted: number }> {
+  return apiFetch(`/notifications`, {
+    method: "DELETE",
+    token,
+    cache: "no-store",
+  });
+}
+
 export function markAllNotificationsRead(
   token: string,
 ): Promise<{ updated: number }> {
-  return apiFetch(`/notifications/read-all`, { method: "POST", token });
+  return apiFetch(`/notifications/read-all`, {
+    method: "POST",
+    token,
+    cache: "no-store",
+  });
 }
 
 export function getNotificationPreferences(

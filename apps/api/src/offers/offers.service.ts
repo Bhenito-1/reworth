@@ -359,11 +359,11 @@ export class OffersService {
     if (parent.status !== 'PENDING') {
       throw new ConflictException(`Offer is ${parent.status}`);
     }
-    if (actorId !== parent.sellerId && actorId !== parent.buyerId) {
-      throw new ForbiddenException('Not an offer participant');
+    if (actorId !== parent.sellerId) {
+      throw new ForbiddenException('Only the seller can counter an offer');
     }
 
-    // Counter flips perspective: seller counters → still buyer is original buyer
+    // The original buyer and seller stay on the new offer.
     const expiresAt = new Date(
       Date.now() + this.expiryHours() * 60 * 60 * 1000,
     );

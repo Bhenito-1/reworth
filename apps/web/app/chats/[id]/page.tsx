@@ -36,6 +36,11 @@ import {
   type ConversationListItem,
   type OfferDto,
 } from "../../../lib/chat";
+import {
+  joinConversation,
+  mergeMessages,
+  subscribeChat,
+} from "../../../lib/chat-socket";
 import type { MeResponse } from "../../../lib/types";
 
 type ThreadItem =
@@ -70,6 +75,9 @@ export default function ChatThreadPage() {
   } | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const liveRef = useRef(false);
+  const [reloadAt, setReloadAt] = useState(0);
   const markedRead = useRef<string | null>(null);
   const meIdRef = useRef<string | null>(null);
 
@@ -83,7 +91,7 @@ export default function ChatThreadPage() {
     ]);
     const found = convos.find((c) => c.id === conversationId) ?? null;
     setMeta(found);
-    setMessages(msgs);
+    setMessages((prev) => mergeMessages(prev, msgs));
 
     if (found?.listingId) {
       try {
@@ -119,7 +127,7 @@ export default function ChatThreadPage() {
     (async () => {
       const token = getAccessToken();
       if (!token) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setLoading(true);
@@ -133,10 +141,16 @@ export default function ChatThreadPage() {
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
-          router.replace("/onboarding");
+          router.replace("/");
           return;
         }
-        setError(err instanceof ApiError ? err.message : "Could not open chat");
+        setError(
+          err instanceof ApiError && err.status === 429
+            ? "This chat is busy for a moment. Trying again…"
+            : err instanceof ApiError
+              ? err.message
+              : "Could not open chat",
+        );
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -148,13 +162,95 @@ export default function ChatThreadPage() {
   }, [conversationId, router]);
 
   useEffect(() => {
+    if (!error || !conversationId) return;
+    const id = window.setTimeout(() => setReloadAt((n) => n + 1), 8000);
+    return () => window.clearTimeout(id);
+  }, [error, conversationId, reloadAt]);
+
+  useEffect(() => {
+    if (!reloadAt || !error) return;
+    let cancelled = false;
+    void refresh()
+      .then(() => {
+        if (!cancelled) setError(null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadAt, error, refresh]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
     const token = getAccessToken();
-    if (!token || !conversationId || loading) return;
+    if (!token || !conversationId || loading || error) return;
+
+    const gapFill = () => {
+      const last = [...messagesRef.current]
+        .reverse()
+        .find((item) => !item.id.startsWith("temp-"));
+      if (!last) return;
+      void listMessages(token, conversationId, { after: last.id, limit: 100 })
+        .then((rows) => setMessages((prev) => mergeMessages(prev, rows)))
+        .catch(() => undefined);
+    };
+
+    const stop = subscribeChat(token, {
+      onConnect: () => {
+        void joinConversation(conversationId).then((ok) => {
+          liveRef.current = ok;
+          if (ok) gapFill();
+        });
+      },
+      onDisconnect: () => {
+        liveRef.current = false;
+      },
+      onMessage: (message) => {
+        if (message.conversationId !== conversationId) return;
+        setMessages((prev) => mergeMessages(prev, [message]));
+        const uid = meIdRef.current;
+        if (uid && message.senderId !== uid) {
+          void markConversationRead(token, conversationId, [message.id]).catch(
+            () => undefined,
+          );
+        }
+      },
+      onRead: (update) => {
+        if (update.conversationId !== conversationId) return;
+        setMessages((prev) =>
+          prev.map((item) =>
+            item.senderId !== update.readerId && !item.readAt
+              ? { ...item, readAt: update.readAt }
+              : item,
+          ),
+        );
+      },
+      onOffer: (offer) => {
+        if (offer.conversationId !== conversationId) return;
+        setOffers((prev) => {
+          const index = prev.findIndex((item) => item.id === offer.id);
+          if (index < 0) return [...prev, offer];
+          const next = [...prev];
+          next[index] = offer;
+          return next;
+        });
+      },
+    });
+
     const id = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 3000);
-    return () => window.clearInterval(id);
-  }, [conversationId, loading, refresh]);
+      if (liveRef.current || document.visibilityState === "hidden") return;
+      gapFill();
+    }, 30000);
+
+    return () => {
+      liveRef.current = false;
+      stop();
+      window.clearInterval(id);
+    };
+  }, [conversationId, loading, error]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -568,33 +664,34 @@ export default function ChatThreadPage() {
       </div>
 
       <div className="sticky bottom-0 border-t border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-lg flex-col gap-2 px-4 py-3">
-          <div className="flex gap-2">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void sendText();
-                }
-              }}
-              placeholder="Message…"
-              aria-label="Message"
-              maxLength={4000}
-              className="min-w-0 flex-1 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-            />
-            <Button
-              variant="primary"
-              disabled={sending || !draft.trim()}
-              onClick={() => void sendText()}
-            >
-              Send
-            </Button>
-          </div>
+        <div className="mx-auto flex max-w-lg items-center gap-2 px-4 py-3">
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void sendText();
+              }
+            }}
+            placeholder="Message…"
+            aria-label="Message"
+            maxLength={4000}
+            className="min-w-0 flex-1 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+          />
+          <Button
+            variant="primary"
+            size="sm"
+            className="shrink-0"
+            disabled={sending || !draft.trim()}
+            onClick={() => void sendText()}
+          >
+            Send
+          </Button>
           <Button
             variant="secondary"
             size="sm"
+            className="shrink-0"
             onClick={() => setOfferOpen(true)}
             disabled={!meta}
           >

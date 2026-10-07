@@ -12,7 +12,11 @@ import {
 } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { FailLegDto } from '../swap/dto/swap.dto';
-import { CreateOrderDto } from './dto/orders.dto';
+import {
+  ConfirmOrderDto,
+  CreateOrderDto,
+  RejectOrderDto,
+} from './dto/orders.dto';
 import { OrdersService } from './orders.service';
 
 @Controller('orders')
@@ -48,6 +52,24 @@ export class OrdersController {
   @Post(':id/cancel')
   cancel(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.orders.cancel(id, user.id);
+  }
+
+  @Post(':id/confirm')
+  confirm(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ConfirmOrderDto,
+  ) {
+    return this.orders.confirm(id, user.id, dto);
+  }
+
+  @Post(':id/reject')
+  reject(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: RejectOrderDto,
+  ) {
+    return this.orders.reject(id, user.id, dto);
   }
 
   @Post(':id/legs/:leg/handed-over')

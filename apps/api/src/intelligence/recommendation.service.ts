@@ -142,6 +142,7 @@ export class RecommendationService {
     const rows = await this.prisma.listing.findMany({
       where: {
         status: 'LIVE',
+        seller: { status: 'ACTIVE' },
         city: input.city,
         ...(input.listingId ? { id: { not: input.listingId } } : {}),
       },

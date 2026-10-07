@@ -7,7 +7,7 @@ import { Button, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 
-type ConsentChannel = "SMS" | "MARKETING" | "EMAIL";
+type ConsentChannel = "MARKETING" | "EMAIL";
 
 type ConsentRow = {
   channel: ConsentChannel;
@@ -16,7 +16,6 @@ type ConsentRow = {
 };
 
 const CHANNEL_LABEL: Record<ConsentChannel, string> = {
-  SMS: "SMS alerts",
   MARKETING: "Marketing messages",
   EMAIL: "Email updates",
 };
@@ -36,7 +35,7 @@ export default function PrivacySettingsPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -48,7 +47,7 @@ export default function PrivacySettingsPage() {
       setConsents(res.consents);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not load");
@@ -119,7 +118,7 @@ export default function PrivacySettingsPage() {
     try {
       await apiFetch("/me/delete-request", { method: "POST", token });
       setToast({ message: "Account deleted", tone: "success" });
-      router.replace("/onboarding");
+      router.replace("/");
     } catch (err) {
       setToast({
         message: err instanceof ApiError ? err.message : "Delete failed",

@@ -24,9 +24,8 @@ GET /api/v1/healthz
 
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
-| POST | `/auth/otp/request` | no | Rate-limited |
-| POST | `/auth/otp/verify` | no | Issues tokens |
-| POST | `/auth/login` | no | Email/password (admin/demo) |
+| POST | `/auth/register` | no | Email/password |
+| POST | `/auth/login` | no | Email/password |
 | POST | `/auth/refresh` | no | Rotation + reuse detection |
 | POST | `/auth/logout` | no | |
 | POST | `/auth/oauth/:provider/callback` | no | Google/Apple mock/live |
@@ -37,7 +36,7 @@ GET /api/v1/healthz
 | --- | --- | --- | --- |
 | GET/PATCH | `/me` | user | Profile |
 | GET | `/me/export` | user | DSAR JSON |
-| GET/PUT | `/me/consents` | user | SMS/MARKETING/EMAIL |
+| GET/PUT | `/me/consents` | user | MARKETING/EMAIL |
 | GET | `/me/devices` | user | |
 | DELETE | `/me/devices/:id` | user | |
 | POST | `/me/logout-all` | user | |

@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import {
   Button,
@@ -25,18 +25,25 @@ import {
 import { fetchRecommendations } from "../../../lib/intelligence";
 import {
   cancelOrder,
+  confirmOrder,
   confirmReceipt,
   DISPUTE_REASONS,
   disputeIdFromEvents,
   fulfilmentLabel,
   getOrder,
+  initiatePayment,
+  isMockPsp,
   markHandedOver,
+  newIdempotencyKey,
   openDispute,
   orderStatusLabel,
   paymentStatusFromOrder,
   refundStatusFromOrder,
+  rejectOrder,
+  simulateMockPspCharge,
   type DisputeReason,
   type OrderDetail,
+  type PaymentDto,
 } from "../../../lib/orders";
 import type { MeResponse, PublicListing } from "../../../lib/types";
 import {
@@ -47,16 +54,29 @@ import {
   type OrderReviewUiState,
 } from "../../../lib/trust";
 
+function ordersListHref(from: string | null): string {
+  if (from === "buying" || from === "cancelled" || from === "selling") {
+    return `/orders?tab=${from}`;
+  }
+  return "/orders";
+}
+
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const orderId = params?.id;
   const router = useRouter();
+  const ordersHref = ordersListHref(searchParams.get("from"));
 
   const [meId, setMeId] = useState<string | null>(null);
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [sellerNote, setSellerNote] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [payment, setPayment] = useState<PaymentDto | null>(null);
   const [disputeOpen, setDisputeOpen] = useState(false);
   const [disputeReason, setDisputeReason] =
     useState<DisputeReason>("NEVER_RECEIVED");
@@ -78,7 +98,7 @@ export default function OrderDetailPage() {
     if (!orderId) return;
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -129,7 +149,7 @@ export default function OrderDetailPage() {
       }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(err instanceof ApiError ? err.message : "Order not found");
@@ -142,6 +162,86 @@ export default function OrderDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function confirmSale() {
+    const token = getAccessToken();
+    if (!token || !orderId || !deliveryDate) return;
+    setBusy(true);
+    try {
+      await confirmOrder(token, orderId, {
+        deliveryDate: new Date(deliveryDate).toISOString(),
+        sellerNote: sellerNote.trim() || undefined,
+      });
+      setToast({ message: "Buyer notified", tone: "success" });
+      await load();
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not confirm",
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rejectSale() {
+    const token = getAccessToken();
+    if (!token || !orderId || rejectReason.trim().length < 3) return;
+    setBusy(true);
+    try {
+      await rejectOrder(token, orderId, rejectReason.trim());
+      setToast({ message: "Order rejected", tone: "success" });
+      await load();
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not reject",
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function payNow() {
+    const token = getAccessToken();
+    if (!token || !orderId) return;
+    setBusy(true);
+    try {
+      const pay = await initiatePayment(token, {
+        orderId,
+        idempotencyKey: newIdempotencyKey(),
+      });
+      setPayment(pay);
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not start payment",
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function simulatePay() {
+    if (!payment || !orderId) return;
+    setBusy(true);
+    try {
+      await simulateMockPspCharge({
+        reference: payment.reference,
+        event: "charge.success",
+      });
+      setPayment(null);
+      setToast({ message: "Payment confirmed", tone: "success" });
+      await load();
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Payment failed",
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function runAction(
     action: "handed-over" | "confirm" | "cancel",
@@ -242,7 +342,7 @@ export default function OrderDetailPage() {
           title="Order unavailable"
           description={error ?? "Not found"}
           action={
-            <Link href="/orders">
+            <Link href={ordersHref}>
               <Button variant="primary">All orders</Button>
             </Link>
           }
@@ -257,11 +357,25 @@ export default function OrderDetailPage() {
   const canCancel =
     isBuyer &&
     (order.status === "CREATED" || order.status === "PAYMENT_PENDING");
-  const canHandOver = isSeller && order.status === "FUNDED";
-  const canConfirm = isBuyer && order.status === "HANDED_OVER";
+  const awaitingSeller =
+    isSeller &&
+    order.confirmationStatus === "PENDING" &&
+    order.status === "CREATED";
+  const canPay =
+    isBuyer &&
+    order.status === "PAYMENT_PENDING" &&
+    order.confirmationStatus !== "PENDING";
+  const canHandOver =
+    isSeller &&
+    (order.status === "FUNDED" || order.status === "IN_AUTHENTICATION");
+  const canConfirm = isBuyer && ["HANDED_OVER", "DELIVERED", "SHIPPED"].includes(order.status);
   const canDispute =
     isBuyer &&
-    (order.status === "RECEIVED" || order.status === "COMPLETED") &&
+    (order.status === "RECEIVED" ||
+      order.status === "COMPLETED" ||
+      order.status === "DELIVERED" ||
+      order.status === "SHIPPED" ||
+      order.status === "HANDED_OVER") &&
     !disputeId;
 
   return (
@@ -278,7 +392,7 @@ export default function OrderDetailPage() {
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-8">
         <header className="mb-6 flex items-center justify-between gap-4">
           <Link
-            href="/orders"
+            href={ordersHref}
             className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
           >
             ← Orders
@@ -289,8 +403,11 @@ export default function OrderDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">
-              {formatNgn({ amountKobo: order.totalKobo })}
+              {order.listingTitle?.trim() || "Order"}
             </h1>
+            <p className="mt-1 text-lg font-semibold">
+              {formatNgn({ amountKobo: order.totalKobo })}
+            </p>
             <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
               {isBuyer ? "Buying" : isSeller ? "Selling" : "Order"} ·{" "}
               {fulfilmentLabel(String(order.fulfilmentMethod))}
@@ -305,7 +422,8 @@ export default function OrderDetailPage() {
           <div>
             <dt className="text-[var(--rw-ink-muted)]">Item</dt>
             <dd className="font-medium">
-              {formatNgn({ amountKobo: order.amountKobo })}
+              {order.listingTitle?.trim() || "Listing"}
+              {order.quantity && order.quantity > 1 ? ` · ${order.quantity} units` : ""}
             </dd>
           </div>
           <div>
@@ -323,6 +441,100 @@ export default function OrderDetailPage() {
             <dd className="font-medium">{refundStatusFromOrder(order)}</dd>
           </div>
         </dl>
+
+        {order.confirmationStatus === "PENDING" && order.status === "CREATED" ? (
+          <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
+            {isBuyer
+              ? "Waiting for the seller to confirm this order. Your units are reserved. You can cancel before paying."
+              : "Confirm the delivery date so the buyer can pay. The units stay reserved until you confirm, reject, or they cancel."}
+          </p>
+        ) : null}
+        {order.deliveryDate ? (
+          <p className="mt-2 text-sm">
+            Delivery date{" "}
+            {new Date(order.deliveryDate).toLocaleDateString("en-NG", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            })}
+            {order.sellerNote ? ` · ${order.sellerNote}` : ""}
+          </p>
+        ) : null}
+        {order.rejectionReason ? (
+          <p className="mt-2 text-sm text-red-700">
+            Rejected: {order.rejectionReason}
+          </p>
+        ) : null}
+
+        {awaitingSeller ? (
+          <form
+            className="mt-4 space-y-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] p-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void confirmSale();
+            }}
+          >
+            <label className="block text-sm font-medium">
+              Delivery date
+              <input
+                type="date"
+                required
+                value={deliveryDate}
+                onChange={(e) => setDeliveryDate(e.target.value)}
+                className="mt-1 w-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-transparent px-3 py-2"
+              />
+            </label>
+            <label className="block text-sm font-medium">
+              Note for the buyer
+              <textarea
+                value={sellerNote}
+                onChange={(e) => setSellerNote(e.target.value)}
+                maxLength={500}
+                className="mt-1 w-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-transparent px-3 py-2"
+                rows={3}
+              />
+            </label>
+            <Button type="submit" variant="primary" disabled={busy || !deliveryDate}>
+              Accept order
+            </Button>
+            <label className="block text-sm font-medium">
+              Rejection reason
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                maxLength={500}
+                className="mt-1 w-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-transparent px-3 py-2"
+                rows={2}
+              />
+            </label>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={busy || rejectReason.trim().length < 3}
+              onClick={() => void rejectSale()}
+            >
+              Reject order
+            </Button>
+          </form>
+        ) : null}
+
+        {canPay ? (
+          <div className="mt-4 space-y-2">
+            {!payment ? (
+              <Button variant="primary" disabled={busy} onClick={() => void payNow()}>
+                Complete payment
+              </Button>
+            ) : isMockPsp(payment) ? (
+              <Button variant="primary" disabled={busy} onClick={() => void simulatePay()}>
+                Simulate payment
+              </Button>
+            ) : payment.checkoutUrl ? (
+              <a href={payment.checkoutUrl} className="text-sm font-medium text-[var(--rw-accent)]">
+                Continue to payment
+              </a>
+            ) : null}
+          </div>
+        ) : null}
 
         {order.buyerProtection ? (
           <aside className="mt-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-accent)]/30 bg-[var(--rw-accent-muted)]/40 px-4 py-3 text-sm">
@@ -364,7 +576,11 @@ export default function OrderDetailPage() {
 
         {isSeller &&
         order.fulfilmentMethod === "PICKUP" &&
-        (order.status === "FUNDED" || order.status === "HANDED_OVER") ? (
+        (order.status === "FUNDED" ||
+          order.status === "IN_AUTHENTICATION" ||
+          order.status === "SHIPPED" ||
+          order.status === "HANDED_OVER" ||
+          order.status === "DELIVERED") ? (
           <section
             className="mt-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
             aria-labelledby="disclose-heading"
@@ -489,11 +705,6 @@ export default function OrderDetailPage() {
             >
               Open dispute
             </Button>
-          ) : null}
-          {order.status === "PAYMENT_PENDING" && isBuyer ? (
-            <Link href={`/checkout?listingId=${order.listingId}`}>
-              <Button variant="secondary">Resume payment</Button>
-            </Link>
           ) : null}
         </div>
 

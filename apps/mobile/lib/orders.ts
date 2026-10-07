@@ -10,7 +10,10 @@ export type OrderStatus =
   | "CREATED"
   | "PAYMENT_PENDING"
   | "FUNDED"
+  | "IN_AUTHENTICATION"
+  | "SHIPPED"
   | "HANDED_OVER"
+  | "DELIVERED"
   | "RECEIVED"
   | "COMPLETED"
   | "CANCELLED"
@@ -28,6 +31,7 @@ export type DisputeReason =
 export type OrderDto = {
   id: string;
   listingId: string;
+  listingTitle?: string | null;
   buyerId: string;
   sellerId: string;
   offerId: string | null;
@@ -36,8 +40,14 @@ export type OrderDto = {
   protectionFeeKobo: number;
   deliveryFeeKobo: number;
   totalKobo: number;
+  quantity?: number;
+  unitPriceKobo?: number;
   fulfilmentMethod: FulfilmentMethod | string;
   status: OrderStatus | string;
+  confirmationStatus?: "PENDING" | "CONFIRMED" | "REJECTED" | string;
+  rejectionReason?: string | null;
+  sellerNote?: string | null;
+  deliveryDate?: string | null;
   buyerProtection: boolean;
   coverageEndsAt: string | null;
   autoReleaseAt: string | null;
@@ -121,20 +131,65 @@ export function newIdempotencyKey(): string {
   return `idem-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+const DELIVERED_STATUSES = new Set(["DELIVERED", "RECEIVED", "COMPLETED"]);
+
+export function isCancelledOrder(order: {
+  status: string;
+  confirmationStatus?: string | null;
+}): boolean {
+  return order.status === "CANCELLED" || order.confirmationStatus === "REJECTED";
+}
+
+export function isDeliveredOrder(order: { status: string }): boolean {
+  return DELIVERED_STATUSES.has(order.status);
+}
+
+function orderTime(value: string | null | undefined): number {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+/** Ongoing orders first, then delivered orders with the newest date first. */
+export function sortMyOrders<
+  T extends {
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt?: string | null;
+  },
+>(orders: T[]): T[] {
+  const ongoing = orders.filter((order) => !isDeliveredOrder(order));
+  const delivered = orders.filter((order) => isDeliveredOrder(order));
+  ongoing.sort((a, b) => orderTime(b.createdAt) - orderTime(a.createdAt));
+  delivered.sort(
+    (a, b) =>
+      orderTime(b.completedAt || b.updatedAt || b.createdAt) -
+      orderTime(a.completedAt || a.updatedAt || a.createdAt),
+  );
+  return [...ongoing, ...delivered];
+}
+
 export function orderStatusLabel(status: string): string {
   switch (status) {
     case "CREATED":
-      return "Created";
+      return "Order placed";
     case "PAYMENT_PENDING":
-      return "Awaiting payment";
+      return "Order in progress";
     case "FUNDED":
-      return "Paid — protected";
+      return "Payment confirmed (in escrow)";
+    case "IN_AUTHENTICATION":
+      return "In authentication";
+    case "SHIPPED":
+      return "Shipped / out for delivery";
     case "HANDED_OVER":
       return "Handed over";
+    case "DELIVERED":
+      return "Delivered — confirm receipt";
     case "RECEIVED":
-      return "Received";
+      return "Buyer confirmed receipt";
     case "COMPLETED":
-      return "Completed";
+      return "Completed — funds released";
     case "CANCELLED":
       return "Cancelled";
     case "DISPUTE_HOLD":
@@ -241,6 +296,7 @@ export function createOrder(
     offerId?: string;
     orderIntentId?: string;
     buyNow?: boolean;
+    quantity?: number;
   },
 ): Promise<OrderDto> {
   return apiFetch<OrderDto>("/orders", { method: "POST", token, body });
@@ -278,6 +334,30 @@ export function cancelOrder(token: string, orderId: string): Promise<OrderDto> {
   return apiFetch<OrderDto>(`/orders/${orderId}/cancel`, {
     method: "POST",
     token,
+  });
+}
+
+export function confirmSellerOrder(
+  token: string,
+  orderId: string,
+  body: { deliveryDate: string; sellerNote?: string },
+): Promise<OrderDto> {
+  return apiFetch<OrderDto>(`/orders/${orderId}/confirm`, {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export function rejectSellerOrder(
+  token: string,
+  orderId: string,
+  reason: string,
+): Promise<OrderDto> {
+  return apiFetch<OrderDto>(`/orders/${orderId}/reject`, {
+    method: "POST",
+    token,
+    body: { reason },
   });
 }
 

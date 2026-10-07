@@ -15,7 +15,6 @@ const REQUIRED_TOP = [
   'geocoding',
   'logistics',
   'priceBands',
-  'sms',
   'psp',
 ];
 
@@ -79,9 +78,6 @@ function validateFile(filePath, name) {
   }
   if (!raw.priceBands || typeof raw.priceBands !== 'object') {
     fail(`${name}: priceBands must be an object`);
-  }
-  if (!raw.sms || typeof raw.sms.enabled !== 'boolean') {
-    fail(`${name}: sms.enabled boolean required`);
   }
   if (!raw.psp || typeof raw.psp.enabled !== 'boolean') {
     fail(`${name}: psp.enabled boolean required`);

@@ -81,6 +81,9 @@ export type PublicListingDto = {
   featured?: boolean;
   boostedUntil?: Date | null;
   featuredUntil?: Date | null;
+  /** Units still available to buy. Price is per unit. */
+  quantityAvailable?: number;
+  quantityTotal?: number;
   /** Present for seller after moderation REJECTED (owner publish path). */
   moderationReasons?: string[];
   riskFlags?: string[];
@@ -112,6 +115,8 @@ type ListingWithRelations = {
   authRequired?: boolean;
   authenticationStatus?: string | null;
   instantBuyEligible?: boolean;
+  quantityAvailable?: number;
+  quantityTotal?: number;
   category?: { id: string; slug: string; name: string } | null;
   estateCommunity?: {
     id: string;
@@ -313,6 +318,8 @@ export function toPublicListing(
         : null,
     instantBuyEligible: listing.instantBuyEligible ?? false,
     instantBuyBadge: listing.instantBuyEligible ? 'Instant Buy' : null,
+    quantityAvailable: listing.quantityAvailable ?? 1,
+    quantityTotal: listing.quantityTotal ?? 1,
     boosted: opts?.boosted ?? false,
     featured: opts?.featured ?? false,
     boostedUntil: opts?.boostedUntil ?? null,

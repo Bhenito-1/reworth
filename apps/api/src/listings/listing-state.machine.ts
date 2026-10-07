@@ -8,8 +8,8 @@ const TRANSITIONS: Record<ListingStatus, ListingStatus[]> = {
   RESERVED: ['LIVE', 'SOLD', 'REMOVED'],
   SOLD: [],
   EXPIRED: ['DRAFT', 'REMOVED'],
-  REMOVED: [],
-  REJECTED: ['DRAFT', 'REMOVED', 'UNDER_REVIEW'],
+  REMOVED: ['LIVE', 'REJECTED'],
+  REJECTED: ['DRAFT', 'REMOVED', 'UNDER_REVIEW', 'LIVE'],
 };
 
 export class ListingStateMachine {

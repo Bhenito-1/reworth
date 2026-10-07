@@ -118,7 +118,7 @@ export default function SellerAnalyticsPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -128,7 +128,7 @@ export default function SellerAnalyticsPage() {
       setData(res);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(

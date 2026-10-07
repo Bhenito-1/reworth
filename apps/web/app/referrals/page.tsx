@@ -11,7 +11,6 @@ import {
   listMyReferrals,
   referralShareUrl,
   referralStatusLabel,
-  smsShareHref,
   whatsappShareHref,
   type MyReferralRow,
 } from "../../lib/referrals";
@@ -31,7 +30,7 @@ export default function ReferralsPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -136,22 +135,14 @@ export default function ReferralsPage() {
                   Copy link
                 </Button>
                 {code ? (
-                  <>
-                    <a
-                      href={whatsappShareHref(code, shareUrl)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center rounded-[var(--rw-radius)] border border-[var(--rw-border)] px-3 py-2 text-sm font-medium hover:bg-[var(--rw-accent-muted)]"
-                    >
-                      WhatsApp
-                    </a>
-                    <a
-                      href={smsShareHref(code, shareUrl)}
-                      className="inline-flex items-center rounded-[var(--rw-radius)] border border-[var(--rw-border)] px-3 py-2 text-sm font-medium hover:bg-[var(--rw-accent-muted)]"
-                    >
-                      SMS
-                    </a>
-                  </>
+                  <a
+                    href={whatsappShareHref(code, shareUrl)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded-[var(--rw-radius)] border border-[var(--rw-border)] px-3 py-2 text-sm font-medium hover:bg-[var(--rw-accent-muted)]"
+                  >
+                    WhatsApp
+                  </a>
                 ) : null}
               </div>
             </section>

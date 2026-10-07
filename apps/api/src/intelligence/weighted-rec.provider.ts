@@ -91,6 +91,7 @@ export class WeightedRecProvider implements RecProvider {
     const rows = await this.prisma.listing.findMany({
       where: {
         status: 'LIVE',
+        seller: { status: 'ACTIVE' },
         city, // HARD city filter
         ...(ctx.listingId ? { id: { not: ctx.listingId } } : {}),
       },

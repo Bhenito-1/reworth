@@ -40,18 +40,6 @@ export type DeviceRow = {
   createdAt: string;
 };
 
-export type OtpRequestResponse = {
-  ok: boolean;
-  expiresInSeconds: number;
-  debugCode?: string;
-};
-
-export type AuthTokenResponse = {
-  accessToken: string;
-  refreshToken: string;
-  userId: string;
-};
-
 /** Matches API PublicListingDto (dates as ISO strings over JSON). */
 export type PublicListingImage = {
   id: string;
@@ -125,6 +113,9 @@ export type PublicListing = {
   model: string | null;
   condition: string;
   priceKobo: number;
+  /** Units still available to order. Price is per unit. */
+  quantityAvailable?: number;
+  quantityTotal?: number;
   negotiable: boolean;
   sellingMode: SellingModeValue | string;
   status: string;
@@ -162,6 +153,8 @@ export type PublicListing = {
   donateIfUnsoldDays?: number | null;
   /** Owner publish path — moderation rejection reasons. */
   moderationReasons?: string[];
+  /** Owner view of an admin rejection note. */
+  rejectionReason?: string | null;
 };
 
 export type CategoryNode = {
@@ -284,6 +277,8 @@ export type CreateListingBody = {
   ageText?: string;
   originalPriceKobo?: number;
   priceKobo?: number;
+  /** Units for sale. Price is per unit. */
+  quantity?: number;
   negotiable?: boolean;
   sellingMode?: SellingModeValue | string;
   community?: string;

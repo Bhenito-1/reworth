@@ -2,8 +2,8 @@
 
 | §50 item | Status | Evidence |
 | --- | --- | --- |
-| User registration | **Shipped** | Auth OTP/OAuth; UAT U01; `apps/api/src/auth` |
-| Phone verification | **Shipped** | OTP verify L1; UAT U02 |
+| User registration | **Shipped** | Email/password + OAuth; UAT U01; `apps/api/src/auth` |
+| Phone verification | **Deferred** | SMS OTP removed (ADR-010); L1 phone verify later |
 | Profiles | **Shipped** | `GET/PATCH /me`; web account |
 | Basic identity verification | **Shipped** | L3 + mock provider; admin verification queue |
 | Create listing | **Shipped** | Listings API + sell UI; UAT U03; e2e G01 |
@@ -32,7 +32,7 @@
 1. **Staging load not proven** — local k6 cannot certify p95 &lt; 500ms at 500 VUs (`docs/PERF.md`).  
 2. **Push is mock** — buyers may miss time-critical alerts without FCM/APNs.  
 3. **PSP go-live** — webhook/HMAC misconfig blocks escrow.  
-4. **SMS provider balance / deliverability** — OTP is the auth spine.  
+4. **Email deliverability** — register welcome mail + transactional alerts.  
 5. **External pen-test + NDPR counsel unfinished** — legal/security gate.
 
 ## External sign-offs still required

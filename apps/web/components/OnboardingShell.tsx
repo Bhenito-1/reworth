@@ -23,7 +23,23 @@ export function OnboardingShell({
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 70% 50% at 80% 0%, rgba(14,159,110,0.14), transparent 55%), radial-gradient(ellipse 40% 35% at 10% 90%, rgba(201,162,39,0.1), transparent 50%), linear-gradient(165deg, #FAF9F7 0%, #F3F0EA 50%, #E8F5EF 100%)",
+            "linear-gradient(165deg, #FAF9F7 0%, #F5F2EC 45%, #E8F5EF 100%)",
+        }}
+      />
+      <div
+        aria-hidden
+        className="rw-hero-glow pointer-events-none absolute -right-16 top-0 h-72 w-72 rounded-full"
+        style={{
+          background:
+            "radial-gradient(circle, rgba(14,159,110,0.18) 0%, transparent 70%)",
+        }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -left-20 bottom-10 h-56 w-56 rounded-full"
+        style={{
+          background:
+            "radial-gradient(circle, rgba(201,162,39,0.1) 0%, transparent 70%)",
         }}
       />
 
@@ -31,13 +47,17 @@ export function OnboardingShell({
         <header className="mb-10 flex items-center justify-between gap-4">
           <Link
             href="/"
-            className="font-[family-name:var(--font-geist-sans)] text-xl font-semibold tracking-tight text-[var(--rw-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+            className="group flex items-center gap-2 text-xl font-semibold tracking-tight text-[var(--rw-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
           >
+            <span
+              className="inline-flex h-2 w-2 rounded-full bg-[var(--rw-accent)] transition-transform group-hover:scale-125"
+              aria-hidden
+            />
             ReWorth
           </Link>
           {step !== undefined ? (
             <p
-              className="text-sm text-[var(--rw-ink-muted)]"
+              className="text-sm tabular-nums text-[var(--rw-ink-muted)]"
               aria-label={`Step ${step} of ${totalSteps}`}
             >
               {step} / {totalSteps}
@@ -58,7 +78,7 @@ export function OnboardingShell({
               <span
                 key={i}
                 className={[
-                  "h-1 flex-1 rounded-full transition-colors",
+                  "h-1 flex-1 rounded-full transition-colors duration-300",
                   i < step ? "bg-[var(--rw-accent)]" : "bg-[var(--rw-border)]",
                 ].join(" ")}
               />
@@ -71,7 +91,7 @@ export function OnboardingShell({
             {title}
           </h1>
           {subtitle ? (
-            <p className="mt-3 text-base leading-relaxed text-[var(--rw-ink-muted)]">
+            <p className="mt-3 max-w-md text-base leading-relaxed text-[var(--rw-ink-muted)]">
               {subtitle}
             </p>
           ) : null}

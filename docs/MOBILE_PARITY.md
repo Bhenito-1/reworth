@@ -21,15 +21,17 @@ Companion column notes web’s intended role when mobile is primary.
 
 | Flow | Mobile | Web | Notes |
 | --- | --- | --- | --- |
-| Onboarding (phone OTP + profile) | **full** | **full** | Mobile: in-app steps. Web: `/onboarding/*` |
+| Onboarding (email register + profile) | **full** | **full** | Mobile: in-app steps. Web: `/onboarding/*` |
 | Home / discovery rails | **full** | **full** | `DiscoveryHome` vs `/` |
 | Search | **full** | **full** | `SearchPanel` vs `/search` |
-| Favourites / saved | **full** | **full** | Profile → Saved vs account/saved patterns |
+| Favourites / wishlist | **full** | **full** | Heart saves for later. Profile → Wishlist and web `/wishlist` can add those items to the cart |
 | Listing detail (PDP) | **full** | **full** | Modal vs `/listings/[id]` — companion OK |
 | Sell / publish | **full** | **full** | `SellFlow` vs `/sell` (modes SELL/SWAP/GIVE_AWAY) |
 | Chat / messaging | **full** | **full** | `ChatScreens` vs `/chats` |
 | Checkout (mock Paystack) | **full** | **full** | `CheckoutModal` vs `/checkout` |
-| Orders list + detail | **full** | **full** | Profile orders vs `/orders` |
+| Orders list + detail | **full** | **full** | Profile orders vs `/orders`. Seller confirm/reject and pay-after-confirm on both |
+| Cart | **full** | **full** | Profile → Cart vs `/cart`. Cart is not an order |
+| Seller inventory | **full** | **full** | Profile → Stock vs `/inventory`. Includes sold listings. Remove when nothing is in progress; sold-out stays |
 | Disputes | **full** | **full** | `DisputeModal` vs `/disputes/[id]` |
 | Public seller profile | **full** | **full** | `UserProfileModal` vs `/users/[id]` · `/u/[handle]` |
 | Privacy / account delete | **full** | **full** | `PrivacySettings` vs `/settings/privacy` |

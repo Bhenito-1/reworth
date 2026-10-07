@@ -12,23 +12,62 @@
     "OTHER_ABUJA"
   ],
   "geocoding": {
-    "MAITAMA": { "lat": 9.0882, "lng": 7.4914, "label": "Maitama" },
-    "ASOKORO": { "lat": 9.0435, "lng": 7.526, "label": "Asokoro" },
-    "WUSE": { "lat": 9.064, "lng": 7.483, "label": "Wuse" },
-    "GARKI": { "lat": 9.033, "lng": 7.487, "label": "Garki" },
-    "JABI": { "lat": 9.069, "lng": 7.423, "label": "Jabi" },
-    "GUZAPE": { "lat": 9.05, "lng": 7.52, "label": "Guzape" },
-    "OTHER_ABUJA": { "lat": 9.0765, "lng": 7.3986, "label": "Abuja" }
+    "MAITAMA": {
+      "lat": 9.0882,
+      "lng": 7.4914,
+      "label": "Maitama"
+    },
+    "ASOKORO": {
+      "lat": 9.0435,
+      "lng": 7.526,
+      "label": "Asokoro"
+    },
+    "WUSE": {
+      "lat": 9.064,
+      "lng": 7.483,
+      "label": "Wuse"
+    },
+    "GARKI": {
+      "lat": 9.033,
+      "lng": 7.487,
+      "label": "Garki"
+    },
+    "JABI": {
+      "lat": 9.069,
+      "lng": 7.423,
+      "label": "Jabi"
+    },
+    "GUZAPE": {
+      "lat": 9.05,
+      "lng": 7.52,
+      "label": "Guzape"
+    },
+    "OTHER_ABUJA": {
+      "lat": 9.0765,
+      "lng": 7.3986,
+      "label": "Abuja"
+    }
   },
   "logistics": {
     "baseFeeKobo": 140000,
     "perKmKobo": 14000
   },
   "priceBands": {
-    "budget": { "minKobo": 0, "maxKobo": 5000000 },
-    "mid": { "minKobo": 5000000, "maxKobo": 45000000 },
-    "premium": { "minKobo": 45000000, "maxKobo": null }
+    "budget": {
+      "minKobo": 0,
+      "maxKobo": 5000000
+    },
+    "mid": {
+      "minKobo": 5000000,
+      "maxKobo": 45000000
+    },
+    "premium": {
+      "minKobo": 45000000,
+      "maxKobo": null
+    }
   },
-  "sms": { "enabled": true, "provider": "termii" },
-  "psp": { "enabled": true, "provider": "paystack" }
+  "psp": {
+    "enabled": true,
+    "provider": "paystack"
+  }
 }

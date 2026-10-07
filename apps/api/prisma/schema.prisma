@@ -124,6 +124,12 @@ enum ReportStatus {
   DISMISSED
 }
 
+enum ReportAction {
+  WARN
+  REMOVE_LISTING
+  SUSPEND_USER
+}
+
 enum MessageType {
   TEXT
   IMAGE
@@ -184,6 +190,13 @@ enum OrderIntentStatus {
   EXPIRED
 }
 
+/// Seller must confirm a cash order before the buyer can pay.
+enum OrderConfirmationStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
 enum ChatScanKind {
   OFF_PLATFORM_PAYMENT
   EXTERNAL_LINK
@@ -196,8 +209,15 @@ enum OrderStatus {
   PAYMENT_PENDING
   FUNDED
   IN_AUTHENTICATION
+  /// Courier/seller has dispatched the item (delivery) or equivalent in transit.
+  SHIPPED
+  /// Meet/pickup handover completed (item with buyer physically).
   HANDED_OVER
+  /// Courier marked delivered — awaiting buyer confirmation (escrow still held).
+  DELIVERED
+  /// Buyer confirmed receipt — escrow release triggered.
   RECEIVED
+  /// Escrow released to seller; order finished.
   COMPLETED
   CANCELLED
   DISPUTE_HOLD
@@ -415,7 +435,6 @@ enum AppealStatus {
 }
 
 enum ConsentChannel {
-  SMS
   MARKETING
   EMAIL
 }
@@ -459,7 +478,9 @@ model User {
   riskEvents           RiskEvent[]
   reports              Report[]             @relation("ReportReporter")
   reportsAgainst       Report[]             @relation("ReportReportedUser")
+  reportsResolved      Report[]             @relation("ReportResolver")
   favourites           Favourite[]
+  cartItems            CartItem[]
   savedSearches        SavedSearch[]
   following            SellerFollow[]       @relation("SellerFollowers")
   followers            SellerFollow[]       @relation("SellerFollowing")
@@ -481,6 +502,7 @@ model User {
   disputesOpened       Dispute[]            @relation("DisputeOpener")
   disputeEvidence      DisputeEvidence[]
   notifications        Notification[]
+  adminAlerts          AdminAlert[]
   notificationPrefs    NotificationPreference[]
   devicePushTokens     DevicePushToken[]
   supportTickets       SupportTicket[]
@@ -534,8 +556,29 @@ model User {
   relocationProjectsOwned RelocationProject[] @relation("RelocationOwner")
   estatePartners       EstatePartner[]
   circularHandoffsAsSeller CircularHandoff[] @relation("CircularHandoffSeller")
+  sellerPayoutAccount  SellerPayoutAccount?
 
   @@map("users")
+}
+
+/// Verified seller payout account. Account number stays server-side; clients see a mask.
+model SellerPayoutAccount {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @unique @db.Uuid
+  bankCode         String
+  bankName         String
+  accountNumber    String
+  firstName        String
+  middleName       String   @default("")
+  lastName         String
+  nibssAccountName String
+  verifiedAt       DateTime
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("seller_payout_accounts")
 }
 
 model Profile {
@@ -641,19 +684,6 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
-model OtpChallenge {
-  id         String    @id @default(uuid()) @db.Uuid
-  phone      String
-  codeHash   String
-  attempts   Int       @default(0)
-  expiresAt  DateTime
-  consumedAt DateTime?
-  createdAt  DateTime  @default(now())
-
-  @@index([phone, createdAt])
-  @@map("otp_challenges")
-}
-
 model AuditLog {
   id          String   @id @default(uuid()) @db.Uuid
   actorUserId String?  @db.Uuid
@@ -751,6 +781,14 @@ model Listing {
   instantBuyEligible Boolean       @default(false)
   /// If set, schedule circular hand-off when unsold for N days.
   donateIfUnsoldDays Int?
+  /// Units the seller listed. Price (`priceKobo`) is per unit.
+  quantityTotal      Int           @default(1)
+  /// Units buyers can still order. Hidden from the marketplace at 0.
+  quantityAvailable  Int           @default(1)
+  /// Units held by unpaid orders awaiting confirmation or payment.
+  quantityReserved   Int           @default(0)
+  /// Units paid for.
+  quantitySold       Int           @default(0)
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
@@ -764,6 +802,7 @@ model Listing {
   riskEvents   RiskEvent[]
   reports      Report[]
   favourites   Favourite[]
+  cartItems    CartItem[]
   conversations Conversation[]
   offers       Offer[]
   orderIntents OrderIntent[]
@@ -771,6 +810,7 @@ model Listing {
   listingCards Message[]      @relation("MessageListingCard")
   promotions           Promotion[]
   moderationDecisions  ModerationDecision[]
+  listingModerations   ListingModeration[]
   moderationAppeals    ModerationAppeal[]
   riskAssessments      RiskAssessment[]
   swapProposalsAsTarget SwapProposal[] @relation("SwapTargetListing")
@@ -793,9 +833,11 @@ model Listing {
   @@index([movingSaleId])
   @@index([city])
   @@index([publishedAt])
+  @@index([createdAt])
   @@index([expiresAt])
   @@index([authenticationStatus])
   @@index([instantBuyEligible])
+  @@index([status, quantityAvailable])
   @@map("listings")
 }
 
@@ -835,6 +877,7 @@ model ListingEvent {
 
   @@index([listingId, createdAt])
   @@index([type])
+  @@index([createdAt])
   @@map("listing_events")
 }
 
@@ -857,28 +900,36 @@ model RiskEvent {
   @@index([userId])
   @@index([kind])
   @@index([reviewedAt])
+  @@index([createdAt])
   @@map("risk_events")
 }
 
 model Report {
-  id             String       @id @default(uuid()) @db.Uuid
-  listingId      String?      @db.Uuid
-  reportedUserId String?      @db.Uuid
-  reporterId     String       @db.Uuid
+  id             String        @id @default(uuid()) @db.Uuid
+  listingId      String?       @db.Uuid
+  reportedUserId String?       @db.Uuid
+  reporterId     String        @db.Uuid
   reason         String
   detail         String?
-  conversationId String?      @db.Uuid
-  status         ReportStatus @default(OPEN)
-  createdAt      DateTime     @default(now())
+  conversationId String?       @db.Uuid
+  status         ReportStatus  @default(OPEN)
+  /// Set when an admin resolves the report.
+  action         ReportAction?
+  resolvedById   String?       @db.Uuid
+  resolvedAt     DateTime?
+  createdAt      DateTime      @default(now())
 
   listing      Listing?      @relation(fields: [listingId], references: [id], onDelete: Cascade)
   reportedUser User?         @relation("ReportReportedUser", fields: [reportedUserId], references: [id], onDelete: SetNull)
   reporter     User          @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  resolvedBy   User?         @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  warnings     UserWarning[]
 
   @@index([listingId])
   @@index([reportedUserId])
   @@index([reporterId])
+  @@index([resolvedById])
   @@index([status])
   @@map("reports")
 }
@@ -896,6 +947,23 @@ model Favourite {
   @@index([userId])
   @@index([listingId])
   @@map("favourites")
+}
+
+/// Saved items the buyer may order later. Does not reserve stock or create an order.
+model CartItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  listingId String   @db.Uuid
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@index([userId])
+  @@map("cart_items")
 }
 
 model SellerFollow {
@@ -1086,6 +1154,7 @@ model Message {
   @@unique([conversationId, clientMsgId])
   @@index([conversationId, createdAt])
   @@index([senderId])
+  @@index([createdAt])
   @@map("messages")
 }
 
@@ -1166,11 +1235,21 @@ model Order {
   offerId           String?          @db.Uuid
   orderIntentId     String?          @unique @db.Uuid
   amountKobo        Int
+  /// Units in this order. `amountKobo` is unit price × quantity.
+  quantity          Int              @default(1)
+  unitPriceKobo     Int              @default(0)
   protectionFeeKobo Int
   deliveryFeeKobo   Int              @default(0)
   totalKobo         Int
   fulfilmentMethod  FulfilmentMethod
   status            OrderStatus      @default(CREATED)
+  /// Existing rows stay CONFIRMED so in-flight checkouts can still be paid.
+  confirmationStatus OrderConfirmationStatus @default(CONFIRMED)
+  rejectionReason   String?
+  sellerNote        String?
+  deliveryDate      DateTime?
+  /// True once reserved units have been moved to sold (or a non-cash order was settled).
+  inventoryCommitted Boolean         @default(false)
   buyerProtection   Boolean          @default(true)
   coverageEndsAt    DateTime?
   autoReleaseAt     DateTime?
@@ -1213,6 +1292,8 @@ model Order {
 
   @@index([buyerId, createdAt])
   @@index([sellerId, createdAt])
+  @@index([createdAt])
+  @@index([status, completedAt])
   @@index([listingId])
   @@index([status, autoReleaseAt])
   @@index([meetPointId])
@@ -1491,6 +1572,26 @@ model AddressDisclosure {
 
   @@index([disclosedById])
   @@map("address_disclosures")
+}
+
+/// Ops inbox. One row per admin recipient, separate from buyer/seller notifications.
+model AdminAlert {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  kind       String
+  title      String
+  body       String
+  href       String
+  entityType String
+  entityId   String
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([kind, entityId])
+  @@map("admin_alerts")
 }
 
 model Notification {
@@ -1791,14 +1892,17 @@ model WhitelistEntry {
 model UserWarning {
   id          String   @id @default(uuid()) @db.Uuid
   userId      String   @db.Uuid
+  reportId    String?  @db.Uuid
   message     String
   createdById String   @db.Uuid
   createdAt   DateTime @default(now())
 
-  user      User @relation("WarnedUser", fields: [userId], references: [id], onDelete: Cascade)
-  createdBy User @relation("WarningCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  user      User    @relation("WarnedUser", fields: [userId], references: [id], onDelete: Cascade)
+  report    Report? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  createdBy User    @relation("WarningCreator", fields: [createdById], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([reportId])
   @@map("user_warnings")
 }
 
@@ -1960,6 +2064,35 @@ model ModerationDecision {
   @@index([outcome])
   @@index([createdAt])
   @@map("moderation_decisions")
+}
+
+/// Canonical publish-time moderation + risk snapshot (one row per assessment).
+model ListingModeration {
+  id                String            @id @default(uuid()) @db.Uuid
+  listingId         String            @db.Uuid
+  /// 0–100; higher = safer / more appropriate imagery.
+  imageScore        Int               @default(0)
+  /// Aggregate fraud/risk score from the risk engine (higher = riskier).
+  riskScore         Int               @default(0)
+  riskLevel         RiskLevel         @default(LOW)
+  /// Structured signals that drove the decision (rules, image fit, keywords…).
+  signals           Json              @default("[]")
+  decision          ModerationOutcome
+  policyViolations  String[]          @default([])
+  rejectionReason   String?
+  /// How well images appear to match title/description (0–100).
+  imageFitScore     Int               @default(0)
+  readyImageCount   Int               @default(0)
+  detail            Json?
+  assessedAt        DateTime          @default(now())
+  createdAt         DateTime          @default(now())
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, assessedAt])
+  @@index([decision])
+  @@index([assessedAt])
+  @@map("listing_moderations")
 }
 
 model ModerationAppeal {

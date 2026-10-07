@@ -29,6 +29,7 @@ import {
   computeOrderTotalKobo,
   computeProtectionFeeKobo,
   confirmReceipt,
+  confirmSellerOrder,
   createOrder,
   DISPUTE_REASONS,
   disputeIdFromEvents,
@@ -41,9 +42,13 @@ import {
   isMockPsp,
   listOrders,
   markHandedOver,
+  isCancelledOrder,
+  isDeliveredOrder,
   newIdempotencyKey,
   openDispute,
   orderStatusLabel,
+  sortMyOrders,
+  rejectSellerOrder,
   paymentStatusFromOrder,
   refundStatusFromOrder,
   sellerRespondDispute,
@@ -73,6 +78,7 @@ type CheckoutParams = {
   listingId: string;
   offerId?: string;
   orderIntentId?: string;
+  quantity?: number;
 };
 
 type Props = {
@@ -80,8 +86,89 @@ type Props = {
   onOpenOrder?: (orderId: string) => void;
 };
 
+type OrderListTab = "selling" | "buying" | "cancelled";
+
+function ordersForTab(
+  orders: OrderDto[],
+  tab: OrderListTab,
+  meId: string | null,
+): OrderDto[] {
+  if (!meId) return [];
+  if (tab === "cancelled") {
+    return orders
+      .filter(
+        (order) =>
+          (order.buyerId === meId || order.sellerId === meId) &&
+          isCancelledOrder(order),
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      );
+  }
+  if (tab === "selling") {
+    return orders.filter(
+      (order) => order.sellerId === meId && !isCancelledOrder(order),
+    );
+  }
+  return sortMyOrders(
+    orders.filter((order) => order.buyerId === meId && !isCancelledOrder(order)),
+  );
+}
+
+function emptyTitle(tab: OrderListTab): string {
+  if (tab === "selling") return "No customer orders";
+  if (tab === "cancelled") return "No cancelled orders";
+  return "No orders yet";
+}
+
+function emptyBody(tab: OrderListTab): string {
+  if (tab === "selling") {
+    return "When someone orders one of your listings, it shows up here.";
+  }
+  if (tab === "cancelled") {
+    return "Orders you cancel, or that a seller rejects, show up here.";
+  }
+  return "Ongoing orders are listed first. Delivered orders follow, newest first.";
+}
+
+function OrderRoleTabs({
+  tab,
+  onChange,
+}: {
+  tab: OrderListTab;
+  onChange: (tab: OrderListTab) => void;
+}) {
+  const items: { id: OrderListTab; label: string }[] = [
+    { id: "selling", label: "Customer orders" },
+    { id: "buying", label: "My orders" },
+    { id: "cancelled", label: "Cancelled" },
+  ];
+  return (
+    <View style={styles.roleTabs}>
+      {items.map((item) => {
+        const selected = tab === item.id;
+        return (
+          <Pressable
+            key={item.id}
+            style={[styles.roleTab, selected && styles.roleTabOn]}
+            onPress={() => onChange(item.id)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+          >
+            <Text style={[styles.roleTabText, selected && styles.roleTabTextOn]}>
+              {item.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export function OrdersPanel({ meId, onOpenOrder }: Props) {
   const [orders, setOrders] = useState<OrderDto[]>([]);
+  const [tab, setTab] = useState<OrderListTab>("selling");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,21 +213,47 @@ export function OrdersPanel({ meId, onOpenOrder }: Props) {
     );
   }
 
-  if (!orders.length) {
+  if (!orders.length && !loading) {
     return (
       <View style={styles.pad}>
-        <Text style={styles.emptyTitle}>No orders yet</Text>
-        <Text style={styles.muted}>
-          Buys and sales with buyer protection appear here.
-        </Text>
+        <Text style={styles.brand}>Orders</Text>
+        <OrderRoleTabs tab={tab} onChange={setTab} />
+        <Text style={styles.emptyTitle}>{emptyTitle(tab)}</Text>
+        <Text style={styles.muted}>{emptyBody(tab)}</Text>
       </View>
     );
   }
 
+  const visible = ordersForTab(orders, tab, meId);
+  const sections =
+    tab === "buying"
+      ? [
+          {
+            id: "ongoing",
+            title: "Ongoing",
+            items: visible.filter((order) => !isDeliveredOrder(order)),
+          },
+          {
+            id: "delivered",
+            title: "Delivered",
+            items: visible.filter((order) => isDeliveredOrder(order)),
+          },
+        ].filter((section) => section.items.length > 0)
+      : [{ id: "all", title: null as string | null, items: visible }];
+
   return (
     <ScrollView contentContainerStyle={styles.pad}>
       <Text style={styles.brand}>Orders</Text>
-      {orders.map((o) => {
+      <OrderRoleTabs tab={tab} onChange={setTab} />
+      {visible.length === 0 ? (
+        <Text style={styles.muted}>{emptyBody(tab)}</Text>
+      ) : null}
+      {sections.map((section) => (
+        <View key={section.id} style={styles.sectionBlock}>
+          {section.title ? (
+            <Text style={styles.sectionLabel}>{section.title}</Text>
+          ) : null}
+          {section.items.map((o) => {
         const role =
           meId === o.buyerId
             ? "Buying"
@@ -153,7 +266,11 @@ export function OrdersPanel({ meId, onOpenOrder }: Props) {
             style={styles.card}
             onPress={() => onOpenOrder?.(o.id)}
           >
-            <Text style={styles.cardTitle}>
+            <Text style={styles.cardTitle} numberOfLines={2}>
+              {o.listingTitle?.trim() || "Listing"}
+            </Text>
+            <Text style={styles.muted}>
+              {o.quantity && o.quantity > 1 ? `${o.quantity} × ` : ""}
               {formatNgnFromKobo(o.totalKobo)}
             </Text>
             <Text style={styles.muted}>
@@ -164,7 +281,9 @@ export function OrdersPanel({ meId, onOpenOrder }: Props) {
             </Text>
           </Pressable>
         );
-      })}
+          })}
+        </View>
+      ))}
     </ScrollView>
   );
 }
@@ -250,7 +369,10 @@ export function CheckoutModal({
     };
   }, [listingId]);
 
-  const amountKobo = listing?.priceKobo ?? 0;
+  const quantity = Math.max(1, params?.quantity ?? 1);
+  const unitKobo = listing?.priceKobo ?? 0;
+  const amountKobo =
+    params?.offerId || params?.orderIntentId ? unitKobo : unitKobo * quantity;
   const fee = useMemo(() => computeProtectionFeeKobo(amountKobo), [amountKobo]);
   const total = useMemo(
     () =>
@@ -271,6 +393,7 @@ export function CheckoutModal({
       const order = await createOrder(token, {
         listingId,
         fulfilmentMethod: fulfilment,
+        ...(quantity > 1 ? { quantity } : {}),
         ...(params?.orderIntentId
           ? { orderIntentId: params.orderIntentId }
           : params?.offerId
@@ -278,6 +401,11 @@ export function CheckoutModal({
             : { buyNow: true }),
       });
       setOrderId(order.id);
+
+      if (order.confirmationStatus === "PENDING" || order.status === "CREATED") {
+        onPaid(order.id);
+        return;
+      }
 
       if (fulfilment === "MEET_POINT" && meetPointId) {
         await setOrderMeetPoint(token, order.id, meetPointId);
@@ -479,7 +607,7 @@ export function CheckoutModal({
                     onPress={() => void placeAndPay()}
                   >
                     <Text style={styles.primaryBtnText}>
-                      {busy ? "Creating…" : "Pay with ReWorth"}
+                      {busy ? "Creating…" : "Place order"}
                     </Text>
                   </Pressable>
                 ) : (
@@ -532,6 +660,9 @@ export function OrderDetailModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [sellerNote, setSellerNote] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
   const [disputeReason, setDisputeReason] =
     useState<DisputeReason>("NEVER_RECEIVED");
   const [disputeDetail, setDisputeDetail] = useState("");
@@ -689,6 +820,9 @@ export function OrderDetailModal({
             {error ? <Text style={styles.error}>{error}</Text> : null}
             {order ? (
               <>
+                <Text style={styles.cardTitle} numberOfLines={2}>
+                  {order.listingTitle?.trim() || "Listing"}
+                </Text>
                 <Text style={styles.price}>
                   {formatNgnFromKobo(order.totalKobo)}
                 </Text>
@@ -735,7 +869,7 @@ export function OrderDetailModal({
 
                 {isSeller &&
                 order.fulfilmentMethod === "PICKUP" &&
-                ["FUNDED", "HANDED_OVER"].includes(String(order.status)) ? (
+                ["FUNDED", "IN_AUTHENTICATION", "SHIPPED", "HANDED_OVER", "DELIVERED"].includes(String(order.status)) ? (
                   <View style={styles.protect}>
                     <Text style={styles.protectTitle}>Pickup address</Text>
                     <Text style={styles.muted}>
@@ -801,18 +935,137 @@ export function OrderDetailModal({
                 ))}
 
                 <View style={styles.actionsCol}>
-                  {isSeller && order.status === "FUNDED" ? (
+                  {isSeller &&
+                  order.confirmationStatus === "PENDING" &&
+                  order.status === "CREATED" ? (
+                    <View style={{ gap: 8 }}>
+                      <Text style={styles.section}>Confirm this order</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Delivery date (YYYY-MM-DD)"
+                        value={deliveryDate}
+                        onChangeText={setDeliveryDate}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Note for the buyer"
+                        value={sellerNote}
+                        onChangeText={setSellerNote}
+                      />
+                      <ActionBtn
+                        label="Accept order"
+                        disabled={busy || deliveryDate.trim().length < 8}
+                        onPress={() => {
+                          void (async () => {
+                            const token = await getAccessToken();
+                            if (!token || !orderId) return;
+                            setBusy(true);
+                            try {
+                              await confirmSellerOrder(token, orderId, {
+                                deliveryDate: new Date(deliveryDate).toISOString(),
+                                sellerNote: sellerNote.trim() || undefined,
+                              });
+                              await load();
+                            } catch (err) {
+                              setError(
+                                err instanceof ApiError
+                                  ? err.message
+                                  : "Could not confirm",
+                              );
+                            } finally {
+                              setBusy(false);
+                            }
+                          })();
+                        }}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Reason if you reject"
+                        value={rejectReason}
+                        onChangeText={setRejectReason}
+                      />
+                      <ActionBtn
+                        label="Reject order"
+                        disabled={busy || rejectReason.trim().length < 3}
+                        onPress={() => {
+                          void (async () => {
+                            const token = await getAccessToken();
+                            if (!token || !orderId) return;
+                            setBusy(true);
+                            try {
+                              await rejectSellerOrder(
+                                token,
+                                orderId,
+                                rejectReason.trim(),
+                              );
+                              await load();
+                            } catch (err) {
+                              setError(
+                                err instanceof ApiError
+                                  ? err.message
+                                  : "Could not reject",
+                              );
+                            } finally {
+                              setBusy(false);
+                            }
+                          })();
+                        }}
+                      />
+                    </View>
+                  ) : null}
+                  {order.rejectionReason ? (
+                    <Text style={styles.muted}>Rejected: {order.rejectionReason}</Text>
+                  ) : null}
+                  {isSeller &&
+                  ["FUNDED", "IN_AUTHENTICATION"].includes(String(order.status)) ? (
                     <ActionBtn
                       label="Mark handed over"
                       disabled={busy}
                       onPress={() => void run("handed-over")}
                     />
                   ) : null}
-                  {isBuyer && order.status === "HANDED_OVER" ? (
+                  {isBuyer &&
+                  ["HANDED_OVER", "DELIVERED", "SHIPPED"].includes(
+                    String(order.status),
+                  ) ? (
                     <ActionBtn
                       label="Confirm receipt"
                       disabled={busy}
                       onPress={() => void run("confirm")}
+                    />
+                  ) : null}
+                  {isBuyer && order.status === "PAYMENT_PENDING" ? (
+                    <ActionBtn
+                      label={busy ? "Starting payment…" : "Complete payment"}
+                      disabled={busy}
+                      onPress={() => {
+                        void (async () => {
+                          const token = await getAccessToken();
+                          if (!token || !orderId) return;
+                          setBusy(true);
+                          try {
+                            const pay = await initiatePayment(token, {
+                              orderId,
+                              idempotencyKey: newIdempotencyKey(),
+                            });
+                            if (isMockPsp(pay)) {
+                              await simulateMockPspCharge({
+                                reference: pay.reference,
+                                event: "charge.success",
+                              });
+                              await load();
+                            }
+                          } catch (err) {
+                            setError(
+                              err instanceof ApiError
+                                ? err.message
+                                : "Could not start payment",
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        })();
+                      }}
                     />
                   ) : null}
                   {isBuyer &&
@@ -1245,6 +1498,33 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E2DC",
   },
   brand: { fontSize: 18, fontWeight: "700", color: "#1A1A1A" },
+  roleTabs: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  sectionBlock: { gap: 16 },
+  sectionLabel: {
+    marginTop: 8,
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#6B7280",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  roleTab: {
+    borderWidth: 1,
+    borderColor: "#E5E2DC",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: "#fff",
+  },
+  roleTabOn: { backgroundColor: "#0E9F6E", borderColor: "#0E9F6E" },
+  roleTabText: { fontSize: 13, fontWeight: "700", color: "#111315" },
+  roleTabTextOn: { color: "#fff" },
   link: { color: "#0E9F6E", fontWeight: "600", fontSize: 15 },
   pad: { padding: 16, paddingBottom: 40, gap: 10 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },

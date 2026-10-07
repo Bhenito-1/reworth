@@ -10,11 +10,16 @@ export type RegionCity = {
   timezone?: string;
   communities?: string[];
   enabled?: boolean;
-  smsEnabled?: boolean;
   pspEnabled?: boolean;
 };
 
+export type RegionArea = {
+  key: string;
+  label: string;
+};
+
 export type RegionDetail = RegionCity & {
+  areas?: RegionArea[];
   logistics?: {
     baseFeeKobo?: number;
     perKmKobo?: number;
@@ -23,14 +28,30 @@ export type RegionDetail = RegionCity & {
   geocoding?: Record<string, { lat: number; lng: number }>;
 };
 
+type RegionRow = RegionCity & { city?: string };
+
+/** API list payload uses `city`; the web select uses `key`. */
+function normalizeCity(row: RegionRow): RegionCity | null {
+  const key = (row.key || row.city || "").trim();
+  if (!key) return null;
+  return { ...row, key, displayName: row.displayName || key };
+}
+
 function asCities(
-  res: RegionCity[] | { items?: RegionCity[]; cities?: RegionCity[] } | null,
+  res: RegionRow[] | { items?: RegionRow[]; cities?: RegionRow[] } | null,
 ): RegionCity[] {
-  if (!res) return [];
-  if (Array.isArray(res)) return res;
-  if (Array.isArray(res.items)) return res.items;
-  if (Array.isArray(res.cities)) return res.cities;
-  return [];
+  const rows = !res
+    ? []
+    : Array.isArray(res)
+      ? res
+      : Array.isArray(res.items)
+        ? res.items
+        : Array.isArray(res.cities)
+          ? res.cities
+          : [];
+  return rows
+    .map((row) => normalizeCity(row))
+    .filter((row): row is RegionCity => row !== null);
 }
 
 /** List enabled cities. Returns [] if endpoint missing (404). */

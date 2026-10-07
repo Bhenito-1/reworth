@@ -26,7 +26,6 @@ const IBADAN: RegionConfig = {
     mid: { minKobo: 3_000_000, maxKobo: 25_000_000 },
     premium: { minKobo: 25_000_000, maxKobo: null },
   },
-  sms: { enabled: true, provider: 'termii' },
   psp: { enabled: true, provider: 'paystack' },
 };
 
@@ -61,7 +60,6 @@ describe('RegionConfigService — config-only city expansion', () => {
     // search / analytics / notifications helpers
     expect(svc.resolveSearchCity('ibadan')).toBe('Ibadan');
     expect(svc.resolveAnalyticsCity('ibadan')).toBe('ibadan');
-    expect(svc.smsEnabled('ibadan')).toBe(true);
     expect(svc.pspEnabled('ibadan')).toBe(true);
 
     rmSync(dir, { recursive: true, force: true });
@@ -83,7 +81,6 @@ describe('RegionConfigService — config-only city expansion', () => {
       },
       logistics: { baseFeeKobo: 150_000, perKmKobo: 15_000 },
       priceBands: { budget: { minKobo: 0, maxKobo: 1 } },
-      sms: { enabled: true },
       psp: { enabled: true },
     });
 
@@ -92,5 +89,9 @@ describe('RegionConfigService — config-only city expansion', () => {
     expect(svc.getCommunityGeo('unknown-city', 'LEKKI_PH1')?.label).toMatch(
       /Lekki/i,
     );
+    expect(svc.listAreas('lagos')).toEqual([
+      { key: 'LEKKI_PH1', label: 'Lekki Phase 1' },
+    ]);
+    expect(svc.listAreas('missing')).toEqual([]);
   });
 });

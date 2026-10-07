@@ -85,24 +85,14 @@ export function OfferCard({
             </>
           ) : null}
           {isBuyer ? (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={onCounter}
-              >
-                Counter
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={busy}
-                onClick={onWithdraw}
-              >
-                Withdraw
-              </Button>
-            </>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={busy}
+              onClick={onWithdraw}
+            >
+              Withdraw
+            </Button>
           ) : null}
         </div>
       ) : null}

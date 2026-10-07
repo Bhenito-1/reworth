@@ -1,4 +1,4 @@
-import { LOCALE_NG } from "./locale";
+import { LOCALE_NG } from "./locale.js";
 
 /**
  * Format an amount as Nigerian Naira.

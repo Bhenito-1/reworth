@@ -1,14 +1,21 @@
 import { Module, Logger } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
+import { resolve } from 'path';
 import { MediaController } from './media.controller';
+import { MediaPublicController } from './media-public.controller';
 import { MediaService, MEDIA_IMAGE_QUEUE } from './media.service';
 import { ImagePipelineProcessor } from './image-pipeline.processor';
+import { StorageBootstrapService } from './storage-bootstrap.service';
 import {
   STORAGE_PROVIDER,
   MockStorageAdapter,
 } from '../providers/storage.provider';
-import { MinioStorageAdapter } from '../providers/minio-storage.adapter';
+import { S3StorageAdapter } from '../providers/s3-storage.adapter';
+import {
+  LocalFsStorageAdapter,
+  defaultMediaRoot,
+} from '../providers/local-fs-storage.adapter';
 import {
   MALWARE_SCAN_PROVIDER,
   MockMalwareScanProvider,
@@ -53,28 +60,23 @@ function redisConnection(url: string | undefined) {
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         connection: redisConnection(config.get<string>('REDIS_URL')),
-        // Lazy connect — avoid crashing boot when Redis is down / inline mode
         defaultJobOptions: { removeOnComplete: true },
       }),
     }),
     BullModule.registerQueue({ name: MEDIA_IMAGE_QUEUE }),
   ],
-  controllers: [MediaController],
+  controllers: [MediaController, MediaPublicController],
   providers: [
     MediaService,
     ImagePipelineProcessor,
+    StorageBootstrapService,
     {
       provide: STORAGE_PROVIDER,
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
         const logger = new Logger('StorageProvider');
-        const endpoint = config.get<string>('S3_ENDPOINT');
-        const useMock =
-          process.env.NODE_ENV === 'test' ||
-          config.get<string>('MEDIA_PIPELINE') === 'mock' ||
-          !endpoint;
-        if (useMock) {
-          logger.log('Using MockStorageAdapter');
+        if (process.env.NODE_ENV === 'test') {
+          logger.log('Using MockStorageAdapter (test)');
           return new MockStorageAdapter({
             bucket: config.get<string>('S3_BUCKET') ?? 'reworth-media',
             publicBase:
@@ -82,15 +84,62 @@ function redisConnection(url: string | undefined) {
               'http://localhost:9000/reworth-media',
           });
         }
-        return new MinioStorageAdapter({
-          endpoint: endpoint!,
+
+        const driver = (
+          config.get<string>('STORAGE_DRIVER') ?? 's3'
+        ).toLowerCase();
+        const bucket = config.get<string>('S3_BUCKET') ?? 'reworth-media';
+        const apiUrl = (
+          config.get<string>('API_URL') ?? 'http://localhost:3001'
+        ).replace(/\/$/, '');
+        const apiBase = `${apiUrl}/api/v1`;
+        const endpoint =
+          config.get<string>('S3_ENDPOINT') ?? 'http://localhost:9000';
+        const publicBase =
+          config.get<string>('S3_PUBLIC_URL') ?? `${endpoint.replace(/\/$/, '')}/${bucket}`;
+
+        if (driver === 'mock') {
+          logger.log('Using MockStorageAdapter');
+          return new MockStorageAdapter({ bucket, publicBase });
+        }
+
+        if (driver === 'local' || driver === 'fs') {
+          const rootDir =
+            config.get<string>('MEDIA_LOCAL_DIR') ?? defaultMediaRoot();
+          logger.log(`Using LocalFsStorageAdapter (${resolve(rootDir)})`);
+          return new LocalFsStorageAdapter({
+            rootDir,
+            bucket,
+            publicBase:
+              config.get<string>('S3_PUBLIC_URL') ?? `${apiBase}/media/files`,
+            apiBase,
+            signingSecret:
+              config.get<string>('S3_SECRET_ACCESS_KEY') ??
+              config.get<string>('JWT_ACCESS_SECRET') ??
+              'dev-media-signing-secret',
+          });
+        }
+
+        // STORAGE_DRIVER=s3 (legacy alias: minio) → adobe/s3mock locally, AWS S3 in prod
+        if (driver === 'minio') {
+          logger.warn(
+            'STORAGE_DRIVER=minio is deprecated; using the S3 client against S3_ENDPOINT (adobe/s3mock locally)',
+          );
+        }
+        if (!endpoint) {
+          throw new Error('STORAGE_DRIVER=s3 requires S3_ENDPOINT');
+        }
+        logger.log(`Using S3StorageAdapter (${endpoint}, bucket=${bucket})`);
+        return new S3StorageAdapter({
+          endpoint,
           region: config.get<string>('S3_REGION') ?? 'us-east-1',
-          accessKeyId: config.get<string>('S3_ACCESS_KEY_ID') ?? 'minioadmin',
+          accessKeyId: config.get<string>('S3_ACCESS_KEY_ID') ?? 'reworth',
           secretAccessKey:
-            config.get<string>('S3_SECRET_ACCESS_KEY') ?? 'minioadmin',
-          bucket: config.get<string>('S3_BUCKET') ?? 'reworth-media',
-          forcePathStyle: config.get<string>('S3_FORCE_PATH_STYLE') !== 'false',
-          publicUrl: config.get<string>('S3_PUBLIC_URL'),
+            config.get<string>('S3_SECRET_ACCESS_KEY') ?? 'reworthsecret',
+          bucket,
+          forcePathStyle:
+            config.get<string>('S3_FORCE_PATH_STYLE') !== 'false',
+          publicUrl: publicBase,
         });
       },
     },

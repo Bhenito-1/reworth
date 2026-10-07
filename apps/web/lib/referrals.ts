@@ -82,11 +82,6 @@ export function whatsappShareHref(code: string, shareUrl: string): string {
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
-export function smsShareHref(code: string, shareUrl: string): string {
-  const text = `Join ReWorth with my code ${code}: ${shareUrl}`;
-  return `sms:?&body=${encodeURIComponent(text)}`;
-}
-
 export function referralStatusLabel(status: string): string {
   switch (status) {
     case "REGISTERED":

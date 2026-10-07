@@ -224,7 +224,7 @@ export class UsersService {
       where: { userId },
     });
     const byChannel = new Map(rows.map((r) => [r.channel, r]));
-    const channels: ConsentChannel[] = ['SMS', 'MARKETING', 'EMAIL'];
+    const channels: ConsentChannel[] = ['MARKETING', 'EMAIL'];
     return {
       consents: channels.map((channel) => {
         const row = byChannel.get(channel);
@@ -241,11 +241,11 @@ export class UsersService {
     for (const item of dto.consents) {
       await this.prisma.consentRecord.upsert({
         where: {
-          userId_channel: { userId, channel: item.channel },
+          userId_channel: { userId, channel: item.channel as ConsentChannel },
         },
         create: {
           userId,
-          channel: item.channel,
+          channel: item.channel as ConsentChannel,
           granted: item.granted,
         },
         update: { granted: item.granted },

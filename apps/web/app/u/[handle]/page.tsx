@@ -78,21 +78,6 @@ export default function StorefrontPage() {
   return (
     <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div className="relative z-10 mx-auto max-w-3xl px-4 pb-20 pt-6 sm:px-8">
-        <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
-          <Link
-            href="/search"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            Browse
-          </Link>
-        </header>
-
         <section className="rw-fade-up">
           <p className="text-sm font-medium text-[var(--rw-ink-muted)]">
             @{storefront.handle || handle}

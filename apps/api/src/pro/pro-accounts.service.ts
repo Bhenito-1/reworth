@@ -303,7 +303,9 @@ export class ProAccountsService implements OnModuleInit, OnModuleDestroy {
         },
       },
     });
-    if (!profile?.user) throw new NotFoundException('Storefront not found');
+    if (!profile?.user || profile.user.status === 'SUSPENDED') {
+      throw new NotFoundException('Storefront not found');
+    }
     const pro = profile.user.proAccount;
     const proBadge =
       pro && ['ACTIVE', 'GRACE'].includes(pro.status) ? 'Pro Seller' : null;

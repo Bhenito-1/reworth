@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Image,
   Modal,
@@ -36,6 +37,12 @@ import {
   type ConversationListItem,
   type OfferDto,
 } from "./lib/chat";
+import {
+  joinConversation,
+  mergeMessages,
+  subscribeChat,
+  type InboxUpdate,
+} from "./lib/chat-socket";
 import { formatNgnFromKobo } from "./lib/types";
 
 type Props = {
@@ -83,18 +90,59 @@ export function ChatsPanel({
   }, [load]);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      void (async () => {
-        const token = await getAccessToken();
-        if (!token) return;
-        try {
-          setItems(await listConversations(token));
-        } catch {
-          /* ignore poll errors */
-        }
-      })();
-    }, 8000);
-    return () => clearInterval(id);
+    let stop = () => undefined;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+    let live = false;
+    void (async () => {
+      const token = await getAccessToken();
+      if (!token || cancelled) return;
+      stop = subscribeChat(token, {
+        onConnect: () => {
+          live = true;
+        },
+        onDisconnect: () => {
+          live = false;
+        },
+        onInbox: (update: InboxUpdate) => {
+          setItems((prev) => {
+            const index = prev.findIndex((row) => row.id === update.conversationId);
+            if (index < 0) {
+              void listConversations(token)
+                .then(setItems)
+                .catch(() => undefined);
+              return prev;
+            }
+            const row = prev[index];
+            const incoming = update.senderId === row.counterpart.id;
+            const next = [...prev];
+            next[index] = {
+              ...row,
+              lastMessageAt: update.lastMessageAt,
+              lastMessagePreview: update.preview,
+              unreadCount: incoming ? row.unreadCount + 1 : row.unreadCount,
+            };
+            next.sort(
+              (a, b) =>
+                new Date(b.lastMessageAt ?? 0).getTime() -
+                new Date(a.lastMessageAt ?? 0).getTime(),
+            );
+            return next;
+          });
+        },
+      });
+      timer = setInterval(() => {
+        if (live || AppState.currentState !== "active") return;
+        void listConversations(token)
+          .then(setItems)
+          .catch(() => undefined);
+      }, 30000);
+    })();
+    return () => {
+      cancelled = true;
+      stop();
+      if (timer) clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -235,6 +283,7 @@ function ChatThread({
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const marked = useRef(false);
+  const messagesRef = useRef<ChatMessage[]>([]);
 
   const refresh = useCallback(async () => {
     const token = await getAccessToken();
@@ -245,7 +294,7 @@ function ChatThread({
     ]);
     const found = convos.find((c) => c.id === conversationId) ?? null;
     setMeta(found);
-    setMessages(msgs);
+    setMessages((prev) => mergeMessages(prev, msgs));
     if (found?.listingId) {
       try {
         const ofs = await listOffers(token, found.listingId);
@@ -294,11 +343,77 @@ function ChatThread({
   }, [refresh]);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 3000);
-    return () => clearInterval(id);
-  }, [refresh]);
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    const liveRef = { current: false };
+    let stop = () => undefined;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+    void (async () => {
+      const token = await getAccessToken();
+      if (!token || cancelled) return;
+      const gapFill = () => {
+        const last = [...messagesRef.current]
+          .reverse()
+          .find((item) => !item.id.startsWith("temp-"));
+        if (!last) return;
+        void listMessages(token, conversationId, { after: last.id, limit: 100 })
+          .then((rows) => setMessages((prev) => mergeMessages(prev, rows)))
+          .catch(() => undefined);
+      };
+      stop = subscribeChat(token, {
+        onConnect: () => {
+          void joinConversation(conversationId).then((ok) => {
+            liveRef.current = ok;
+            if (ok) gapFill();
+          });
+        },
+        onDisconnect: () => {
+          liveRef.current = false;
+        },
+        onMessage: (message) => {
+          if (message.conversationId !== conversationId) return;
+          setMessages((prev) => mergeMessages(prev, [message]));
+          if (message.senderId !== meId) {
+            void markConversationRead(token, conversationId, [message.id]).catch(
+              () => undefined,
+            );
+          }
+        },
+        onRead: (update) => {
+          if (update.conversationId !== conversationId) return;
+          setMessages((prev) =>
+            prev.map((item) =>
+              item.senderId !== update.readerId && !item.readAt
+                ? { ...item, readAt: update.readAt }
+                : item,
+            ),
+          );
+        },
+        onOffer: (offer) => {
+          if (offer.conversationId !== conversationId) return;
+          setOffers((prev) => {
+            const index = prev.findIndex((item) => item.id === offer.id);
+            if (index < 0) return [...prev, offer];
+            const next = [...prev];
+            next[index] = offer;
+            return next;
+          });
+        },
+      });
+      timer = setInterval(() => {
+        if (liveRef.current || AppState.currentState !== "active") return;
+        gapFill();
+      }, 30000);
+    })();
+    return () => {
+      cancelled = true;
+      stop();
+      if (timer) clearInterval(timer);
+    };
+  }, [conversationId]);
 
   const thread = useMemo(() => {
     const inMsg = new Set(
@@ -569,22 +684,12 @@ function ChatThread({
               </>
             ) : null}
             {isBuyer ? (
-              <>
-                <MiniBtn
-                  label="Counter"
-                  disabled={busy}
-                  onPress={() => {
-                    setCounterFor(offer);
-                    setCounterNaira(String(Math.round(offer.amountKobo / 100)));
-                  }}
-                />
-                <MiniBtn
-                  label="Withdraw"
-                  danger
-                  disabled={busy}
-                  onPress={() => void runOfferAction("withdraw", offer)}
-                />
-              </>
+              <MiniBtn
+                label="Withdraw"
+                danger
+                disabled={busy}
+                onPress={() => void runOfferAction("withdraw", offer)}
+              />
             ) : null}
           </View>
         ) : null}
@@ -722,14 +827,14 @@ function ChatThread({
         >
           <Text style={styles.sendText}>{sending ? "…" : "Send"}</Text>
         </Pressable>
+        <Pressable
+          style={[styles.offerBtn, !meta && styles.disabled]}
+          onPress={() => setOfferOpen(true)}
+          disabled={!meta}
+        >
+          <Text style={styles.offerBtnText}>Make offer</Text>
+        </Pressable>
       </View>
-      <Pressable
-        style={styles.offerBtn}
-        onPress={() => setOfferOpen(true)}
-        disabled={!meta}
-      >
-        <Text style={styles.offerBtnText}>Make offer</Text>
-      </Pressable>
 
       <Modal visible={offerOpen} animationType="slide" transparent>
         <View style={styles.sheetBackdrop}>
@@ -1030,12 +1135,11 @@ const styles = StyleSheet.create({
   },
   sendText: { color: "#FFF", fontWeight: "700" },
   offerBtn: {
-    marginTop: 8,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#E5E2DC",
     paddingVertical: 12,
-    alignItems: "center",
+    paddingHorizontal: 12,
     backgroundColor: "#FFFFFF",
   },
   offerBtnText: { fontWeight: "700", color: "#111315" },

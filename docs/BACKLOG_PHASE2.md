@@ -9,7 +9,7 @@
 | **Swap marketplace** | Two-sided swap + optional cash-top-up; listing `sellingMode` SWAP/SWAP_CASH already stubbed — add match UX, swap offers, and escrow-free completion with mutual confirm. |
 | **Moving Sales** | Time-boxed bulk-sale events for relocating households; estate targeting, countdown, and discounted rails on home. |
 | **Estate communities** | Closed or verified estate groups (e.g. Chevron) with member-only listings and meet points. |
-| **Saved-search alerts** | Push/SMS when new LIVE listings match a saved search (engine exists — add notifier job). |
+| **Saved-search alerts** | Push when new LIVE listings match a saved search (engine exists — add notifier job). |
 | **Advanced recommendations** | Improve home “for you” beyond heuristic rails using interaction graph + community affinity. |
 | **AI price intelligence v2** | Replace brand heuristics with comps model + confidence; surface on sell + PDP. |
 | **Vehicle inspection** | Partner inspection booking + badge on vehicle listings before HIGH-value escrow. |

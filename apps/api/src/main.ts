@@ -2,9 +2,13 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, raw } from 'express';
+import express from 'express';
 import helmet from 'helmet';
+import { existsSync, mkdirSync } from 'fs';
+import { join, resolve } from 'path';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import { defaultMediaRoot } from './providers/local-fs-storage.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -28,7 +32,7 @@ async function bootstrap() {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
           connectSrc: ["'self'", webOrigin, adminOrigin],
           frameAncestors: ["'none'"],
           objectSrc: ["'none'"],
@@ -36,6 +40,7 @@ async function bootstrap() {
         },
       },
       crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
       referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     }),
   );
@@ -84,7 +89,31 @@ async function bootstrap() {
       next();
     },
   );
+  // Local media uploads (STORAGE_DRIVER=local) — binary PUT body
+  app.use('/api/v1/media/upload', raw({ type: '*/*', limit: '12mb' }));
+
   app.use(json({ limit: '2mb' }));
+
+  // Local disk media (replaces adobe/s3mock when STORAGE_DRIVER=local)
+  const storageDriver = (process.env.STORAGE_DRIVER ?? 'local').toLowerCase();
+  if (storageDriver === 'local' || storageDriver === 'fs') {
+    const bucket = process.env.S3_BUCKET ?? 'reworth-media';
+    const root = process.env.MEDIA_LOCAL_DIR
+      ? resolve(process.env.MEDIA_LOCAL_DIR)
+      : defaultMediaRoot();
+    const serveRoot = join(root, bucket);
+    if (!existsSync(serveRoot)) mkdirSync(serveRoot, { recursive: true });
+    app.use(
+      '/api/v1/media/files',
+      express.static(serveRoot, {
+        fallthrough: true,
+        setHeaders: (res) => {
+          res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+        },
+      }),
+    );
+  }
 
   // All routes under /api/v1 including healthz (PRD §43 / Phase 0 brief)
   app.setGlobalPrefix('api/v1');

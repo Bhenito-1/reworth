@@ -45,7 +45,7 @@ export default function DisputeDetailPage() {
     if (!disputeId) return;
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -59,7 +59,7 @@ export default function DisputeDetailPage() {
       setDispute(d);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(err instanceof ApiError ? err.message : "Dispute not found");

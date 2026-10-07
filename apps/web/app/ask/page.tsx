@@ -205,7 +205,7 @@ export default function AskReWorthPage() {
   const bootstrap = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -380,12 +380,6 @@ export default function AskReWorthPage() {
 
       <header className="relative z-10 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)]/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <Link
-            href="/"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Home
-          </Link>
           <h1 className="text-lg font-semibold tracking-tight">Ask ReWorth</h1>
           <Link
             href="/worth"

@@ -4,7 +4,11 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { MessageType } from '@prisma/client';
+import { MessageType, NotificationChannel } from '@prisma/client';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { REPORTS } from '../admin/admin-roles';
+import { NotificationCategory } from '../notifications/notification-categories';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from './chat.gateway';
 import { ChatScanProcessor } from './chat-scan.processor';
@@ -41,7 +45,19 @@ export class MessagesService {
     private readonly scanProcessor: ChatScanProcessor,
     private readonly notifications: NotificationStub,
     @Optional() private readonly gateway?: ChatGateway,
+    @Optional() private readonly alerts?: AdminAlertsService,
+    @Optional() private readonly inbox?: NotificationsService,
   ) {}
+
+  private async assertNotSuspended(userIds: string[]): Promise<void> {
+    const suspended = await this.prisma.user.findFirst({
+      where: { id: { in: userIds }, status: 'SUSPENDED' },
+      select: { id: true },
+    });
+    if (suspended) {
+      throw new ForbiddenException('Cannot message this user');
+    }
+  }
 
   async isBlockedEitherWay(a: string, b: string): Promise<boolean> {
     const block = await this.prisma.userBlock.findFirst({
@@ -106,6 +122,10 @@ export class MessagesService {
 
     const result: ConversationListItem[] = [];
     for (const c of rows) {
+      if (c.buyer.status === 'SUSPENDED' || c.seller.status === 'SUSPENDED') {
+        continue;
+      }
+
       const counterpart =
         c.buyerId === userId
           ? {
@@ -164,6 +184,9 @@ export class MessagesService {
       where: { id: listingId },
     });
     if (!listing) throw new NotFoundException('Listing not found');
+    if (listing.status !== 'LIVE' && listing.status !== 'RESERVED') {
+      throw new NotFoundException('Listing not found');
+    }
     if (listing.sellerId === userId) {
       throw new ForbiddenException('Cannot start a conversation with yourself');
     }
@@ -171,6 +194,7 @@ export class MessagesService {
     if (await this.isBlockedEitherWay(userId, listing.sellerId)) {
       throw new ForbiddenException('Cannot message this user');
     }
+    await this.assertNotSuspended([listing.sellerId]);
 
     const existing = await this.prisma.conversation.findUnique({
       where: {
@@ -208,7 +232,11 @@ export class MessagesService {
     userId: string,
     opts: { after?: string; limit?: number },
   ): Promise<MessageDto[]> {
-    await this.requireParticipant(conversationId, userId);
+    const conversation = await this.requireParticipant(conversationId, userId);
+    await this.assertNotSuspended([
+      conversation.buyerId,
+      conversation.sellerId,
+    ]);
     const limit = Math.min(opts.limit ?? 50, 100);
 
     let afterCreatedAt: Date | undefined;
@@ -251,6 +279,7 @@ export class MessagesService {
     if (await this.isBlockedEitherWay(userId, counterpartId)) {
       throw new ForbiddenException('Cannot message this user');
     }
+    await this.assertNotSuspended([userId, counterpartId]);
 
     if (dto.clientMsgId) {
       const existing = await this.prisma.message.findUnique({
@@ -312,7 +341,19 @@ export class MessagesService {
         recipientId: counterpartId,
         senderId: userId,
       });
+      await this.alertNewMessage(counterpartId, mapped).catch(() => undefined);
     }
+
+    this.gateway?.emitToUsers(
+      [conversation.buyerId, conversation.sellerId],
+      'inbox.updated',
+      {
+        conversationId,
+        lastMessageAt: created.createdAt.toISOString(),
+        preview: mapped.body?.slice(0, 140) ?? null,
+        senderId: userId,
+      },
+    );
 
     if (userId === conversation.sellerId) {
       void this.trackSellerFirstReply(conversation, userId, created.createdAt);
@@ -380,6 +421,18 @@ export class MessagesService {
       },
       data: { readAt: now },
     });
+    if (this.inbox) {
+      await this.prisma.notification.updateMany({
+        where: {
+          userId,
+          category: NotificationCategory.NEW_MESSAGE,
+          channel: NotificationChannel.IN_APP,
+          readAt: null,
+          deepLink: `reworth://chats/${conversationId}`,
+        },
+        data: { readAt: now },
+      });
+    }
     this.gateway?.emitToConversation(conversationId, 'message.read', {
       conversationId,
       readerId: userId,
@@ -452,7 +505,7 @@ export class MessagesService {
     });
     if (!user) throw new NotFoundException('User not found');
 
-    return this.prisma.report.create({
+    const report = await this.prisma.report.create({
       data: {
         reporterId,
         reportedUserId,
@@ -462,6 +515,16 @@ export class MessagesService {
         status: 'OPEN',
       },
     });
+    await this.alerts?.notify({
+      roles: REPORTS,
+      kind: 'REPORT',
+      title: 'User reported',
+      body: `A user was reported: ${dto.reason}`,
+      href: '/reports',
+      entityType: 'Report',
+      entityId: report.id,
+    });
+    return report;
   }
 
   async muteConversation(
@@ -492,4 +555,52 @@ export class MessagesService {
     });
     return { ok: true };
   }
+
+  /**
+   * One unread in-app alert per conversation. A later message refreshes
+   * that row until the recipient opens the chat.
+   */
+  private async alertNewMessage(
+    recipientId: string,
+    message: MessageDto,
+  ): Promise<void> {
+    if (!this.inbox) return;
+    const deepLink = `reworth://chats/${message.conversationId}`;
+    const senderName = message.sender?.displayName?.trim() || 'Someone';
+    const title = `New message from ${senderName}`;
+    const body = chatPreview(message);
+    const existing = await this.prisma.notification.findFirst({
+      where: {
+        userId: recipientId,
+        category: NotificationCategory.NEW_MESSAGE,
+        channel: NotificationChannel.IN_APP,
+        readAt: null,
+        deepLink,
+      },
+    });
+    if (existing) {
+      await this.prisma.notification.update({
+        where: { id: existing.id },
+        data: { title, body, createdAt: new Date() },
+      });
+      return;
+    }
+    await this.inbox.notify({
+      userId: recipientId,
+      category: NotificationCategory.NEW_MESSAGE,
+      title,
+      body,
+      deepLink,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+      meta: { conversationId: message.conversationId, messageId: message.id },
+    });
+  }
+}
+
+function chatPreview(message: MessageDto): string {
+  const text = message.body?.trim();
+  if (text) return text.slice(0, 140);
+  if (message.imageKey) return 'Sent a photo';
+  if (message.listingCardId) return 'Sent a listing';
+  return 'Sent a message';
 }

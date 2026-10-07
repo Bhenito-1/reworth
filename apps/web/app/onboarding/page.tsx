@@ -19,27 +19,33 @@ const STEPS = [
   },
 ];
 
+/** New-user registration intro — email only. */
 export default function OnboardingWelcomePage() {
   return (
     <OnboardingShell
       step={1}
-      title="Welcome to ReWorth"
+      totalSteps={3}
+      title="Create your ReWorth"
       subtitle="Lagos, your unused things are worth something."
     >
-      <ol className="flex flex-col gap-6">
+      <ol className="flex flex-col gap-5">
         {STEPS.map((item, index) => (
-          <li key={item.title} className="flex gap-4">
+          <li
+            key={item.title}
+            className="rw-fade-up flex gap-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)]/70 bg-[var(--rw-bg-elevated)]/70 px-4 py-4 backdrop-blur-sm"
+            style={{ animationDelay: `${0.08 * (index + 1)}s` }}
+          >
             <span
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--rw-accent-muted)] text-sm font-semibold text-[var(--rw-accent)]"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--rw-accent-muted)] text-sm font-semibold text-[var(--rw-accent-hover)]"
               aria-hidden
             >
               {index + 1}
             </span>
             <div>
-              <h2 className="text-lg font-semibold text-[var(--rw-ink)]">
+              <h2 className="text-base font-semibold text-[var(--rw-ink)] sm:text-lg">
                 {item.title}
               </h2>
-              <p className="mt-1 text-[var(--rw-ink-muted)] leading-relaxed">
+              <p className="mt-1 text-sm leading-relaxed text-[var(--rw-ink-muted)]">
                 {item.body}
               </p>
             </div>
@@ -47,22 +53,28 @@ export default function OnboardingWelcomePage() {
         ))}
       </ol>
 
-      <div className="mt-auto flex flex-col gap-3 pt-12">
-        <Link href="/onboarding/method" className="block">
+      <div className="mt-auto flex flex-col gap-3 pt-10">
+        <Link href="/onboarding/email" className="block">
           <Button
             variant="primary"
             size="lg"
-            className="w-full"
-            aria-label="Get started"
+            className="w-full shadow-[var(--rw-shadow-sell)]"
+            aria-label="Continue with email"
           >
-            Get started
+            Continue with email
           </Button>
         </Link>
+        <p className="text-center text-sm text-[var(--rw-ink-muted)]">
+          Already have an account?{" "}
+          <Link href="/login" className="font-medium text-[var(--rw-accent)]">
+            Log in
+          </Link>
+        </p>
         <Link
-          href="/onboarding/method"
-          className="text-center text-sm font-medium text-[var(--rw-accent)]"
+          href="/"
+          className="text-center text-sm font-medium text-[var(--rw-ink-muted)] transition-colors hover:text-[var(--rw-ink)]"
         >
-          Skip intro
+          Back
         </Link>
       </div>
     </OnboardingShell>

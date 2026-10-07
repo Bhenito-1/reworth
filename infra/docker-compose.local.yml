@@ -33,19 +33,15 @@ services:
       timeout: 3s
       retries: 10
 
-  minio:
-    image: minio/minio:latest
-    container_name: reworth-minio
+  s3mock:
+    # adobe/s3mock — S3 API for local media.
+    image: adobe/s3mock:3.12.0
+    container_name: reworth-s3mock
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: reworth
-      MINIO_ROOT_PASSWORD: reworthsecret
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: reworth-media
     ports:
-      - "9020:9000"
-      - "9021:9001"
-    volumes:
-      - minio_data:/data
+      - "9020:9090"
 
   mailhog:
     image: mailhog/mailhog:latest
@@ -58,4 +54,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  minio_data:

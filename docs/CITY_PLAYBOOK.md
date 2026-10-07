@@ -18,7 +18,7 @@
 | `geocoding` | Lat/lng fixtures per community |
 | `logistics.baseFeeKobo` / `perKmKobo` | Delivery quote inputs |
 | `priceBands` | Valuation / comps bands |
-| `sms` / `psp` | `{ enabled, provider }` feature flags |
+| `psp` | `{ enabled, provider }` feature flags |
 
 Validate: `pnpm validate:cities`
 
@@ -37,7 +37,7 @@ Validate: `pnpm validate:cities`
 2. Seed communities + circular partners for the city (`Community.city` = region key).
 3. Fraud watchlist seed + verification partner coverage note.
 4. Support rota owner for the city (Slack/on-call).
-5. Smoke: `pnpm validate:cities`, search, delivery quote, SMS OTP, Paystack mock, `k6 run scripts/k6/smoke.js`.
+5. Smoke: `pnpm validate:cities`, search, delivery quote, email auth, Paystack mock, `k6 run scripts/k6/smoke.js`.
 6. Announce in CHANGELOG.
 
 ## Surfaces

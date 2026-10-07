@@ -313,6 +313,18 @@ describe('audit — suspend user', () => {
         }),
         update: jest.fn().mockResolvedValue({ id: 'u1', status: 'SUSPENDED' }),
       },
+      order: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        updateMany: jest.fn(),
+      },
+      orderEvent: { createMany: jest.fn() },
+      listing: { findMany: jest.fn().mockResolvedValue([]) },
+      cartItem: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      $executeRaw: jest.fn().mockResolvedValue(0),
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<void>) =>
+        fn(prisma),
+      ),
     };
 
     const { AdminPortalService } = await import('./admin-portal.service');
@@ -332,6 +344,12 @@ describe('audit — suspend user', () => {
       '127.0.0.1',
     );
 
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Account suspended',
+        body: expect.stringContaining('Reason for suspension: fraud'),
+      }),
+    );
     expect(revoke).toHaveBeenCalledWith('u1');
     expect(auditLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -376,29 +394,27 @@ describe('AdminDashboardService KPI shape', () => {
     );
   });
 
-  it('kpis() returns full shape via mocked prisma', async () => {
+  it('kpis() aggregates distinct actors without loading every row', async () => {
     const prisma = {
       listingEvent: {
-        findMany: jest.fn().mockResolvedValue([{ actorUserId: 'a' }]),
+        groupBy: jest.fn().mockResolvedValue([{ actorUserId: 'a' }]),
       },
       order: {
-        findMany: jest
-          .fn()
-          .mockResolvedValueOnce([
-            { buyerId: 'b', sellerId: 's' },
-          ])
-          .mockResolvedValueOnce([
-            {
-              amountKobo: 1000,
-              totalKobo: 1100,
-              createdAt: new Date('2026-01-01'),
-              completedAt: new Date('2026-01-03'),
-              listing: { community: 'Lekki' },
-            },
-          ]),
+        groupBy: jest.fn().mockImplementation(({ by }: { by: string[] }) => {
+          if (by[0] === 'buyerId') return [{ buyerId: 'b' }];
+          return [{ sellerId: 's' }];
+        }),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            totalKobo: 1100,
+            createdAt: new Date('2026-01-01T00:00:00.000Z'),
+            completedAt: new Date('2026-01-03T00:00:00.000Z'),
+            listing: { community: 'Lekki' },
+          },
+        ]),
       },
       message: {
-        findMany: jest.fn().mockResolvedValue([{ senderId: 'm' }]),
+        groupBy: jest.fn().mockResolvedValue([{ senderId: 'm' }]),
       },
       listing: {
         count: jest
@@ -406,8 +422,7 @@ describe('AdminDashboardService KPI shape', () => {
           .mockResolvedValueOnce(5)
           .mockResolvedValueOnce(40)
           .mockResolvedValueOnce(8)
-          .mockResolvedValueOnce(2)
-          .mockResolvedValueOnce(5),
+          .mockResolvedValueOnce(2),
         groupBy: jest
           .fn()
           .mockResolvedValue([{ community: 'Lekki', _count: { _all: 5 } }]),
@@ -418,16 +433,24 @@ describe('AdminDashboardService KPI shape', () => {
 
     const { AdminDashboardService } = await import('./admin-dashboard.service');
     const service = new AdminDashboardService(prisma as never);
-    const result = await service.kpis(30);
+    const first = service.kpis(30);
+    const second = service.kpis(30);
+    const [result, again] = await Promise.all([first, second]);
 
-    expect(result.days).toBe(30);
-    expect(result.mau).toBeGreaterThanOrEqual(1);
-    expect(result).toHaveProperty('gmvKobo');
-    expect(result).toHaveProperty('sellThroughRate');
-    expect(result).toHaveProperty('medianTimeToSaleHours');
-    expect(result).toHaveProperty('fraudRate');
-    expect(result).toHaveProperty('openDisputes');
-    expect(result).toHaveProperty('byCommunity');
-    expect(Array.isArray(result.byCommunity)).toBe(true);
+    expect(again).toBe(result);
+    expect(prisma.listing.count).toHaveBeenCalledTimes(4);
+    expect(result).toEqual({
+      days: 30,
+      mau: 4,
+      newListings: 5,
+      activeListings: 40,
+      transactionsCompleted: 1,
+      gmvKobo: 1100,
+      sellThroughRate: 0.25,
+      medianTimeToSaleHours: 48,
+      fraudRate: 0.2,
+      openDisputes: 1,
+      byCommunity: [{ community: 'Lekki', listings: 5, gmvKobo: 1100 }],
+    });
   });
 });

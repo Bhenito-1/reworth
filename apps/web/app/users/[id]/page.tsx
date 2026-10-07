@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   Button,
   EmptyState,
@@ -28,6 +28,9 @@ export default function PublicProfilePage() {
   const params = useParams<{ id: string }>();
   const userId = params?.id;
   const router = useRouter();
+  const from = useSearchParams().get("from");
+  const backHref =
+    from && /^\/listings\/[\w-]+$/.test(from) ? from : null;
 
   const [meId, setMeId] = useState<string | null>(null);
   const [profile, setProfile] = useState<PublicProfile | null>(null);
@@ -82,7 +85,7 @@ export default function PublicProfilePage() {
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to follow sellers", tone: "warn" });
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     if (meId === profile.id) return;
@@ -184,18 +187,24 @@ export default function PublicProfilePage() {
 
       <div className="relative z-10 mx-auto max-w-3xl px-4 pb-24 pt-6 sm:px-8">
         <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
-          <Link
-            href="/"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            Browse
-          </Link>
+          <div className="flex items-center gap-3">
+            {backHref ? (
+              <Link
+                href={backHref}
+                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
+              >
+                ← Back
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => router.back()}
+                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
+              >
+                ← Back
+              </button>
+            )}
+          </div>
         </header>
 
         <section className="rw-fade-up" aria-labelledby="profile-name">
@@ -273,7 +282,10 @@ export default function PublicProfilePage() {
             <ul className="mt-4 grid gap-4 sm:grid-cols-2">
               {profile.activeListings.map((listing) => (
                 <li key={listing.id}>
-                  <DiscoveryListingCard listing={listing} />
+                  <DiscoveryListingCard
+                    listing={listing}
+                    href={`/listings/${listing.id}?from=/users/${userId}`}
+                  />
                 </li>
               ))}
             </ul>

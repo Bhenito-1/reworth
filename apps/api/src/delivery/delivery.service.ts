@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   DeliveryShipmentStatus,
@@ -13,8 +14,11 @@ import {
   OrderStatus,
   Prisma,
 } from '@prisma/client';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { SUPPORT } from '../admin/admin-roles';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
+import { OrderStateMachine } from '../orders/order-state.machine';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   DELIVERY_PROVIDER,
@@ -44,6 +48,7 @@ export class DeliveryService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     @Inject(DELIVERY_PROVIDER) private readonly provider: DeliveryProvider,
+    @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
   async listMeetPoints(community?: string) {
@@ -412,7 +417,7 @@ export class DeliveryService {
     await this.fanOutDeliveryUpdate(order.buyerId, order.sellerId, opts.orderId, opts.status);
 
     if (opts.status === 'FAILED') {
-      await this.prisma.supportTicket.create({
+      const ticket = await this.prisma.supportTicket.create({
         data: {
           orderId: opts.orderId,
           userId: order.buyerId,
@@ -420,20 +425,84 @@ export class DeliveryService {
           status: 'OPEN',
         },
       });
-    }
-
-    if (opts.status === 'DELIVERED' && order.status === OrderStatus.FUNDED) {
-      // Soft signal — seller can still mark handed-over; buyer can confirm
-      await this.prisma.orderEvent.create({
-        data: {
-          orderId: opts.orderId,
-          type: 'DELIVERY_DELIVERED',
-          payload: { shipmentId: shipment.id },
-        },
+      await this.alerts?.notify({
+        roles: SUPPORT,
+        kind: 'SUPPORT',
+        title: 'Delivery failed',
+        body: ticket.subject,
+        href: '/support',
+        entityType: 'SupportTicket',
+        entityId: ticket.id,
       });
     }
 
+    // Sync escrow order lifecycle with courier progress
+    await this.syncOrderFromDelivery(order, opts.status, shipment.id);
+
     return updated;
+  }
+
+  /**
+   * Advance OrderStatus when delivery progresses (escrow still held until buyer confirms).
+   */
+  private async syncOrderFromDelivery(
+    order: { id: string; status: OrderStatus },
+    deliveryStatus: DeliveryShipmentStatus,
+    shipmentId: string,
+  ) {
+    const shipSignal = ['PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY'].includes(
+      deliveryStatus,
+    );
+    if (
+      shipSignal &&
+      (order.status === OrderStatus.FUNDED ||
+        order.status === OrderStatus.IN_AUTHENTICATION)
+    ) {
+      if (OrderStateMachine.canTransition(order.status, 'SHIPPED')) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: 'SHIPPED' },
+          });
+          await tx.orderEvent.create({
+            data: {
+              orderId: order.id,
+              type: 'SHIPPED',
+              payload: { deliveryStatus, shipmentId },
+            },
+          });
+        });
+      }
+      return;
+    }
+
+    if (deliveryStatus === 'DELIVERED') {
+      const from = order.status;
+      // Re-read — may already be SHIPPED from earlier transition in same call chain
+      const fresh = await this.prisma.order.findUniqueOrThrow({
+        where: { id: order.id },
+      });
+      if (
+        ['FUNDED', 'IN_AUTHENTICATION', 'SHIPPED', 'HANDED_OVER'].includes(
+          fresh.status,
+        ) &&
+        OrderStateMachine.canTransition(fresh.status, 'DELIVERED')
+      ) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: 'DELIVERED' },
+          });
+          await tx.orderEvent.create({
+            data: {
+              orderId: order.id,
+              type: 'DELIVERED',
+              payload: { shipmentId, previousStatus: from },
+            },
+          });
+        });
+      }
+    }
   }
 
   private async fanOutDeliveryUpdate(

@@ -133,6 +133,7 @@ export default function AdminLoginPage() {
           onSubmit={onSubmit}
           className="flex flex-col gap-5 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6 shadow-sm"
           noValidate
+          suppressHydrationWarning
         >
           {!challengeToken ? (
             <>
@@ -185,7 +186,7 @@ export default function AdminLoginPage() {
             size="lg"
             className="w-full"
             disabled={loading}
-            aria-busy={loading}
+            aria-busy={loading ? true : undefined}
           >
             {loading
               ? "Please wait…"

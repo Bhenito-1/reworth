@@ -11,13 +11,12 @@
 | Runbook: test→live switch + rollback to mock | Ops | ☐ see RUNBOOK #1 |
 | Escrow release / refund dry-run on staging | Payments Eng | ☐ |
 
-## B. SMS
+## B. Email
 
 | Item | Owner | Status |
 | --- | --- | --- |
-| Termii/Twilio live credentials | DevOps | ☐ |
-| Wallet balance alert threshold | Ops | ☐ |
-| OTP templates approved | Product | ☐ |
+| Email provider live credentials (or mock for staging) | DevOps | ☐ |
+| Transactional templates approved | Product | ☐ |
 
 ## C. Push (FCM / APNs)
 
@@ -32,7 +31,7 @@
 | Item | Owner | Status |
 | --- | --- | --- |
 | Domain + TLS certs (web, admin, API, CDN) | DevOps | ☐ |
-| MinIO/S3 CDN public URL | DevOps | ☐ |
+| S3 CDN public URL (adobe/s3mock locally) | DevOps | ☐ |
 | CORS allowlist = production origins only | Backend | ☐ |
 
 ## E. Traffic & flags

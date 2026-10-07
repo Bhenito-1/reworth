@@ -223,6 +223,8 @@ export class PostgresFullTextSearchProvider implements SearchProvider {
 
     const where: Record<string, unknown> = {
       status: 'LIVE',
+      quantityAvailable: { gt: 0 },
+      seller: { status: 'ACTIVE' },
     };
 
     if (filters.visibilityWhere) {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
+  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -11,7 +12,8 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { parseDeepLink } from "./lib/notifications";
+import { subscribeChat } from "./lib/chat-socket";
+import { parseDeepLink, unreadNotificationCount } from "./lib/notifications";
 import { ChatsPanel } from "./ChatScreens";
 import { ListingDetailModal } from "./ListingDetailModal";
 import {
@@ -26,46 +28,80 @@ import {
   FavouritesPanel,
   SearchPanel,
 } from "./DiscoveryScreens";
+import { CartPanel, InventoryPanel } from "./CartScreens";
 import { UserProfileModal } from "./UserProfileModal";
 import { PrivacySettings } from "./PrivacySettings";
 import { NotificationsModal } from "./NotificationsScreens";
+import { SellerListingsPanel, ListingFixModal } from "./SellerListings";
 import {
   PlatformToolsModal,
   type PlatformTool,
 } from "./PlatformTools";
 import { OnboardingFlow } from "./OnboardingFlow";
+import { LandingScreen } from "./LandingScreen";
 import { apiFetch, ApiError } from "./lib/api";
 import {
   clearTokens,
   getAccessToken,
   getRefreshToken,
+  setUnauthorizedHandler,
 } from "./lib/auth";
 import { registerDevicePushToken } from "./lib/push";
-import { listRegions } from "./lib/region";
 import {
-  COMMUNITIES,
-  type Community,
-  type MeResponse,
-} from "./lib/types";
+  areaChoices,
+  FALLBACK_AREAS,
+  FALLBACK_STATES,
+  type AreaChoice,
+} from "./lib/areas";
+import { getRegion, listRegions, type RegionCity } from "./lib/region";
+import { type MeResponse } from "./lib/types";
 import { colors } from "./theme/tokens";
 
-type Tab = "home" | "discover" | "sell" | "chats" | "profile";
+type Tab = "home" | "discover" | "sell" | "listings" | "chats" | "profile";
+type ProfileSubtab =
+  | "account"
+  | "saved"
+  | "orders"
+  | "cart"
+  | "inventory"
+  | "updates";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "home", label: "Home" },
-  { id: "discover", label: "Discover" },
-  { id: "sell", label: "SELL" },
-  { id: "chats", label: "Chats" },
-  { id: "profile", label: "Profile" },
+const SIDE_NAV: {
+  id: string;
+  label: string;
+  tab: Tab;
+  sub?: ProfileSubtab;
+}[] = [
+  { id: "home", label: "Home", tab: "home" },
+  { id: "discover", label: "Discover", tab: "discover" },
+  { id: "sell", label: "Sell", tab: "sell" },
+  { id: "listings", label: "My listings", tab: "listings" },
+  { id: "chats", label: "Chats", tab: "chats" },
+  { id: "saved", label: "Wishlist", tab: "profile", sub: "saved" },
+  { id: "cart", label: "Cart", tab: "profile", sub: "cart" },
+  { id: "orders", label: "Orders", tab: "profile", sub: "orders" },
+  { id: "inventory", label: "Stock", tab: "profile", sub: "inventory" },
+  { id: "account", label: "Account", tab: "profile", sub: "account" },
 ];
 
 export default function App() {
   const [booting, setBooting] = useState(true);
   const [authed, setAuthed] = useState(false);
+  /** Guest entry: landing first; onboarding only for register. */
+  const [guestMode, setGuestMode] = useState<"landing" | "login" | "register">(
+    "landing",
+  );
   const [active, setActive] = useState<Tab>("home");
+  const [navOpen, setNavOpen] = useState(false);
+  const [unreadNotes, setUnreadNotes] = useState(0);
 
   const [displayName, setDisplayName] = useState("");
-  const [community, setCommunity] = useState<Community | "">("");
+  const [community, setCommunity] = useState("");
+  const [profileRegions, setProfileRegions] = useState<RegionCity[]>([
+    ...FALLBACK_STATES,
+  ]);
+  const [profileStateKey, setProfileStateKey] = useState("");
+  const [profileAreas, setProfileAreas] = useState<AreaChoice[]>([]);
   const [bio, setBio] = useState("");
   const [me, setMe] = useState<MeResponse | null>(null);
 
@@ -75,19 +111,24 @@ export default function App() {
   const [homeSearchOpen, setHomeSearchOpen] = useState(false);
   const [platformTool, setPlatformTool] = useState<PlatformTool>(null);
   const [cityLabel, setCityLabel] = useState("Lagos");
-  const [profileSubtab, setProfileSubtab] = useState<
-    "account" | "saved" | "orders"
-  >("account");
-  const [openChatId, setOpenChatId] = useState<string | null>(null);
+  const [profileSubtab, setProfileSubtab] = useState<ProfileSubtab>("account");
   const [checkoutParams, setCheckoutParams] = useState<{
     listingId: string;
     offerId?: string;
     orderIntentId?: string;
+    quantity?: number;
   } | null>(null);
+  const [openChatId, setOpenChatId] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [disputeId, setDisputeId] = useState<string | null>(null);
+  const [fixListingId, setFixListingId] = useState<string | null>(null);
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [sellerReturnListingId, setSellerReturnListingId] = useState<
+    string | null
+  >(null);
+  const [listingReturnSellerId, setListingReturnSellerId] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     function handleUrl(url: string | null) {
@@ -99,6 +140,10 @@ export default function App() {
         setOpenChatId(parsed.id);
         setActive("chats");
       } else if (parsed?.kind === "listing" && parsed.id) setDetailId(parsed.id);
+      else if (parsed?.kind === "selling") {
+        setActive("listings");
+        if (parsed.id) setFixListingId(parsed.id);
+      }
     }
     void Linking.getInitialURL().then(handleUrl);
     const sub = Linking.addEventListener("url", (e) => handleUrl(e.url));
@@ -110,6 +155,7 @@ export default function App() {
     if (!token) {
       setAuthed(false);
       setMe(null);
+      setGuestMode("landing");
       return;
     }
     try {
@@ -120,15 +166,24 @@ export default function App() {
         setDisplayName(profile.profile.displayName);
       }
       if (profile.profile?.bio) setBio(profile.profile.bio);
-      const pref = profile.profile?.preferredCommunity;
-      if (pref && (COMMUNITIES as readonly string[]).includes(pref)) {
-        setCommunity(pref as Community);
-      }
+      const pref = profile.profile?.preferredCommunity?.trim() ?? "";
+      if (pref) setCommunity(pref);
     } catch {
       await clearTokens();
       setAuthed(false);
       setMe(null);
+      setGuestMode("landing");
     }
+  }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setAuthed(false);
+      setMe(null);
+      setGuestMode("landing");
+      setError(null);
+    });
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   useEffect(() => {
@@ -136,6 +191,8 @@ export default function App() {
       const token = await getAccessToken();
       if (token) {
         await refreshMe();
+      } else {
+        setGuestMode("landing");
       }
       setBooting(false);
     })();
@@ -144,12 +201,41 @@ export default function App() {
   useEffect(() => {
     void listRegions()
       .then((items) => {
-        const lagos = items.find((c) => c.city === "lagos");
+        const list = items.length > 0 ? items : [...FALLBACK_STATES];
+        setProfileRegions(list);
+        const lagos = list.find((c) => c.city === "lagos");
         if (lagos) setCityLabel(lagos.displayName);
-        else if (items[0]) setCityLabel(items[0].displayName);
+        else if (list[0]) setCityLabel(list[0].displayName);
       })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!profileStateKey) {
+      setProfileAreas([]);
+      return;
+    }
+    let cancelled = false;
+    void getRegion(profileStateKey)
+      .then((detail) => {
+        if (cancelled) return;
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[profileStateKey] ?? []);
+        setProfileAreas(areaChoices(profileStateKey, source));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProfileAreas(
+            areaChoices(profileStateKey, FALLBACK_AREAS[profileStateKey] ?? []),
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileStateKey]);
 
   useEffect(() => {
     if (!authed) return;
@@ -168,11 +254,60 @@ export default function App() {
     if (active !== "home") setHomeSearchOpen(false);
   }, [active]);
 
+  useEffect(() => {
+    if (!authed) {
+      setUnreadNotes(0);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      void (async () => {
+        const token = await getAccessToken();
+        if (!token || cancelled) return;
+        try {
+          const res = await unreadNotificationCount(token);
+          if (!cancelled) setUnreadNotes(res.count);
+        } catch {
+          /* badge is optional */
+        }
+      })();
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    let stop = () => {};
+    void (async () => {
+      const token = await getAccessToken();
+      if (!token || cancelled) return;
+      const release = subscribeChat(token, {
+        onInbox: () => load(),
+        onRead: () => load(),
+      });
+      if (cancelled) {
+        release();
+        return;
+      }
+      stop = release;
+    })();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      stop();
+    };
+  }, [authed, active, profileSubtab]);
+
   async function saveProfile() {
     setError(null);
     const name = displayName.trim();
-    if (!name || !community) {
-      setError("Name and community are required");
+    if (!name) {
+      setError("Display name is required");
+      return;
+    }
+    if (!profileStateKey) {
+      setError("Select your state");
+      return;
+    }
+    if (!community || !profileAreas.some((area) => area.value === community)) {
+      setError("Select a preferred area in that state");
       return;
     }
     const token = await getAccessToken();
@@ -210,6 +345,7 @@ export default function App() {
     setAuthed(false);
     setMe(null);
     setError(null);
+    setGuestMode("landing");
   }
 
   if (booting) {
@@ -229,21 +365,29 @@ export default function App() {
     return (
       <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
         <StatusBar style="dark" />
-        <OnboardingFlow
-          onComplete={(profile) => {
-            setMe(profile);
-            if (profile.profile?.displayName) {
-              setDisplayName(profile.profile.displayName);
-            }
-            if (profile.profile?.bio) setBio(profile.profile.bio);
-            const pref = profile.profile?.preferredCommunity;
-            if (pref && (COMMUNITIES as readonly string[]).includes(pref)) {
-              setCommunity(pref as Community);
-            }
-            setAuthed(true);
-            setActive("home");
-          }}
-        />
+        {guestMode === "landing" ? (
+          <LandingScreen
+            onLogin={() => setGuestMode("login")}
+            onRegister={() => setGuestMode("register")}
+          />
+        ) : (
+          <OnboardingFlow
+            intent={guestMode === "login" ? "login" : "register"}
+            onBack={() => setGuestMode("landing")}
+            onComplete={(profile) => {
+              setMe(profile);
+              if (profile.profile?.displayName) {
+                setDisplayName(profile.profile.displayName);
+              }
+              if (profile.profile?.bio) setBio(profile.profile.bio);
+              const pref = profile.profile?.preferredCommunity?.trim();
+              if (pref) setCommunity(pref);
+              setAuthed(true);
+              setActive("home");
+              setGuestMode("landing");
+            }}
+          />
+        )}
       </SafeAreaView>
     );
   }
@@ -252,64 +396,76 @@ export default function App() {
     <SafeAreaView style={styles.safe}>
       <StatusBar style="dark" />
       <View style={styles.screen} accessibilityRole="summary">
+        <View style={styles.topBar}>
+          <Pressable
+            onPress={() => setNavOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Open menu"
+            style={styles.menuBtn}
+          >
+            <View style={styles.menuBar} />
+            <View style={styles.menuBar} />
+            <View style={styles.menuBar} />
+          </Pressable>
+          {active === "home" ? (
+            <Pressable
+              onPress={() => {
+                setActive("profile");
+                setProfileSubtab("updates");
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={
+                unreadNotes > 0
+                  ? `Notifications, ${unreadNotes} unread`
+                  : "Notifications"
+              }
+              style={styles.bellBtn}
+            >
+              <Text style={styles.bellGlyph}>{"\u{1F514}"}</Text>
+              {unreadNotes > 0 ? (
+                <View style={styles.bellBadge}>
+                  <Text style={styles.bellBadgeText}>
+                    {unreadNotes > 99 ? "99+" : unreadNotes}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+          ) : null}
+        </View>
         {active === "profile" ? (
           <>
-            <View style={styles.subtabs}>
-              <Pressable
-                onPress={() => setProfileSubtab("account")}
-                style={[
-                  styles.subtab,
-                  profileSubtab === "account" && styles.subtabActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.subtabText,
-                    profileSubtab === "account" && styles.subtabTextActive,
-                  ]}
-                >
-                  Account
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setProfileSubtab("saved")}
-                style={[
-                  styles.subtab,
-                  profileSubtab === "saved" && styles.subtabActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.subtabText,
-                    profileSubtab === "saved" && styles.subtabTextActive,
-                  ]}
-                >
-                  Saved
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setProfileSubtab("orders")}
-                style={[
-                  styles.subtab,
-                  profileSubtab === "orders" && styles.subtabActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.subtabText,
-                    profileSubtab === "orders" && styles.subtabTextActive,
-                  ]}
-                >
-                  Orders
-                </Text>
-              </Pressable>
-            </View>
             {profileSubtab === "saved" ? (
               <FavouritesPanel onOpenListing={(id) => setDetailId(id)} />
             ) : profileSubtab === "orders" ? (
               <OrdersPanel
                 meId={me?.id ?? null}
                 onOpenOrder={(id) => setOrderId(id)}
+              />
+            ) : profileSubtab === "cart" ? (
+              <CartPanel
+                onOpenListing={(id) => setDetailId(id)}
+                onCheckedOut={() => {
+                  setProfileSubtab("orders");
+                }}
+              />
+            ) : profileSubtab === "inventory" ? (
+              <InventoryPanel onOpenListing={(id) => setDetailId(id)} />
+            ) : profileSubtab === "updates" ? (
+              <NotificationsModal
+                embedded
+                visible
+                onClose={() => setProfileSubtab("account")}
+                onOpenOrder={(id) => setOrderId(id)}
+                onOpenDispute={(id) => setDisputeId(id)}
+                onOpenChat={(id) => {
+                  setOpenChatId(id);
+                  setActive("chats");
+                }}
+                onOpenListing={(id) => setDetailId(id)}
+                onOpenSelling={(listingId) => {
+                  setActive("listings");
+                  if (listingId) setFixListingId(listingId);
+                }}
               />
             ) : (
               <ScrollView contentContainerStyle={styles.profilePad}>
@@ -338,30 +494,63 @@ export default function App() {
                   multiline
                   accessibilityLabel="Bio"
                 />
-                <Text style={styles.label}>Preferred community</Text>
+                <Text style={styles.label}>State</Text>
                 <View style={styles.chips}>
-                  {COMMUNITIES.map((c) => (
+                  {profileRegions.map((item) => (
                     <Pressable
-                      key={c}
-                      onPress={() => setCommunity(c)}
+                      key={item.city}
+                      onPress={() => {
+                        setProfileStateKey(item.city);
+                        setCommunity("");
+                      }}
                       style={[
                         styles.chip,
-                        community === c && styles.chipSelected,
+                        profileStateKey === item.city && styles.chipSelected,
                       ]}
                       accessibilityRole="button"
-                      accessibilityState={{ selected: community === c }}
+                      accessibilityState={{ selected: profileStateKey === item.city }}
                     >
                       <Text
                         style={[
                           styles.chipText,
-                          community === c && styles.chipTextSelected,
+                          profileStateKey === item.city && styles.chipTextSelected,
                         ]}
                       >
-                        {c}
+                        {item.displayName}
                       </Text>
                     </Pressable>
                   ))}
                 </View>
+                {profileStateKey ? (
+                  <>
+                    <Text style={styles.label}>Preferred area</Text>
+                    <View style={styles.chips}>
+                      {profileAreas.map((area) => (
+                        <Pressable
+                          key={area.value}
+                          onPress={() => setCommunity(area.value)}
+                          style={[
+                            styles.chip,
+                            community === area.value && styles.chipSelected,
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: community === area.value }}
+                        >
+                          <Text
+                            style={[
+                              styles.chipText,
+                              community === area.value && styles.chipTextSelected,
+                            ]}
+                          >
+                            {area.label}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </>
+                ) : (
+                  <Text style={styles.copy}>Select a state to see its areas.</Text>
+                )}
                 {error ? (
                   <Text style={styles.error} accessibilityRole="alert">
                     {error}
@@ -376,15 +565,6 @@ export default function App() {
                   <Text style={styles.primaryBtnText}>
                     {loading ? "Saving…" : "Save profile"}
                   </Text>
-                </Pressable>
-
-                <Pressable
-                  style={styles.secondaryBtn}
-                  onPress={() => setNotificationsOpen(true)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open notifications"
-                >
-                  <Text style={styles.secondaryBtnText}>Notifications</Text>
                 </Pressable>
 
                 <Text style={styles.sectionLabel}>Verification</Text>
@@ -427,7 +607,7 @@ export default function App() {
         ) : active === "sell" ? (
           <SellFlow
             onOpenListing={(id) => setDetailId(id)}
-            onPublished={() => setActive("home")}
+            onPublished={() => setActive("listings")}
           />
         ) : active === "home" ? (
           homeSearchOpen ? (
@@ -456,68 +636,112 @@ export default function App() {
             onCheckout={(params) => setCheckoutParams(params)}
           />
         ) : (
-          <>
-            <Text style={styles.brand} accessibilityRole="header">
-              ReWorth
-            </Text>
-            <Text style={styles.copy}>
-              {`${TABS.find((t) => t.id === active)?.label} — coming soon.`}
-            </Text>
-          </>
+          <SellerListingsPanel onFixRejected={(id) => setFixListingId(id)} />
         )}
       </View>
 
-      <View
-        style={styles.nav}
-        accessibilityRole="tablist"
-        accessibilityLabel="Primary"
+      <Modal
+        visible={navOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setNavOpen(false)}
       >
-        {TABS.map((tab) => {
-          const isSell = tab.id === "sell";
-          const isActive = active === tab.id;
-          return (
-            <Pressable
-              key={tab.id}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: isActive }}
-              accessibilityLabel={tab.label}
-              onPress={() => setActive(tab.id)}
-              style={[
-                styles.tab,
-                isSell && styles.sellTab,
-                isActive && !isSell && styles.tabActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.tabLabel,
-                  isSell && styles.sellLabel,
-                  isActive && !isSell && styles.tabLabelActive,
-                ]}
+        <View style={styles.drawerRoot}>
+          <View style={styles.drawer} accessibilityRole="menu">
+            <View style={styles.drawerHead}>
+              <Text style={styles.drawerBrand}>ReWorth</Text>
+              <Pressable
+                onPress={() => setNavOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close menu"
+                style={styles.drawerClose}
               >
-                {isSell ? "+" : tab.label}
-              </Text>
-              {isSell ? <Text style={styles.sellCaption}>SELL</Text> : null}
+                <View style={[styles.drawerCloseBar, styles.drawerCloseBarA]} />
+                <View style={[styles.drawerCloseBar, styles.drawerCloseBarB]} />
+              </Pressable>
+            </View>
+            {SIDE_NAV.map((item) => {
+              const selected =
+                item.tab === "profile"
+                  ? active === "profile" && profileSubtab === item.sub
+                  : active === item.tab;
+              return (
+                <Pressable
+                  key={item.id}
+                  accessibilityRole="menuitem"
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    setActive(item.tab);
+                    if (item.sub) setProfileSubtab(item.sub);
+                    setNavOpen(false);
+                  }}
+                  style={[styles.drawerItem, selected && styles.drawerItemOn]}
+                >
+                  <Text
+                    style={[
+                      styles.drawerItemText,
+                      selected && styles.drawerItemTextOn,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+            <Pressable
+              onPress={() => {
+                setNavOpen(false);
+                void signOut();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Sign out"
+              style={styles.drawerItem}
+            >
+              <Text style={styles.drawerSignOut}>Sign out</Text>
             </Pressable>
-          );
-        })}
-      </View>
+          </View>
+          <Pressable
+            style={styles.drawerBackdrop}
+            onPress={() => setNavOpen(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close menu"
+          />
+        </View>
+      </Modal>
 
       <ListingDetailModal
         listingId={detailId}
-        onClose={() => setDetailId(null)}
+        dismissLabel={listingReturnSellerId ? "Back" : "Close"}
+        onClose={() => {
+          if (listingReturnSellerId) {
+            const sellerId = listingReturnSellerId;
+            setListingReturnSellerId(null);
+            setDetailId(sellerReturnListingId);
+            setProfileUserId(sellerId);
+            return;
+          }
+          setDetailId(null);
+          setSellerReturnListingId(null);
+        }}
         onOpenChat={(conversationId) => {
           setDetailId(null);
           setOpenChatId(conversationId);
           setActive("chats");
         }}
-        onBuyNow={(listingId) => {
+        onBuyNow={(listingId, quantity) => {
           setDetailId(null);
-          setCheckoutParams({ listingId });
+          setCheckoutParams({ listingId, quantity });
         }}
         onOpenSeller={(sellerId) => {
-          setDetailId(null);
+          if (detailId) setSellerReturnListingId(detailId);
           setProfileUserId(sellerId);
+        }}
+        onOpenCart={() => {
+          setDetailId(null);
+          setSellerReturnListingId(null);
+          setListingReturnSellerId(null);
+          setActive("profile");
+          setProfileSubtab("cart");
         }}
       />
 
@@ -531,35 +755,23 @@ export default function App() {
         }}
       />
 
+      <ListingFixModal
+        listingId={fixListingId}
+        onClose={() => setFixListingId(null)}
+      />
+
       <UserProfileModal
         userId={profileUserId}
         meId={me?.id ?? null}
-        onClose={() => setProfileUserId(null)}
+        dismissLabel={sellerReturnListingId ? "Back" : "Close"}
+        onClose={() => {
+          setProfileUserId(null);
+          setSellerReturnListingId(null);
+        }}
         onOpenListing={(listingId) => {
+          setListingReturnSellerId(profileUserId);
           setProfileUserId(null);
           setDetailId(listingId);
-        }}
-      />
-
-      <NotificationsModal
-        visible={notificationsOpen}
-        onClose={() => setNotificationsOpen(false)}
-        onOpenOrder={(id) => {
-          setNotificationsOpen(false);
-          setOrderId(id);
-        }}
-        onOpenDispute={(id) => {
-          setNotificationsOpen(false);
-          setDisputeId(id);
-        }}
-        onOpenChat={(id) => {
-          setNotificationsOpen(false);
-          setOpenChatId(id);
-          setActive("chats");
-        }}
-        onOpenListing={(id) => {
-          setNotificationsOpen(false);
-          setDetailId(id);
         }}
       />
 
@@ -622,7 +834,111 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 48,
+    paddingTop: 12,
+  },
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  menuBtn: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
+    gap: 5,
+  },
+  bellBtn: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bellGlyph: { fontSize: 20 },
+  bellBadge: {
+    position: "absolute",
+    top: 2,
+    right: 0,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#0E9F6E",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  bellBadgeText: { color: "#FFFFFF", fontSize: 10, fontWeight: "700" },
+  menuBar: {
+    height: 2,
+    width: 20,
+    backgroundColor: "#111315",
+    borderRadius: 1,
+  },
+  drawerRoot: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  drawerBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(17,19,21,0.4)",
+  },
+  drawer: {
+    width: 280,
+    maxWidth: "85%",
+    backgroundColor: "#FFFFFF",
+    paddingTop: 56,
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+  },
+  drawerHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 20,
+  },
+  drawerBrand: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: "#111315",
+  },
+  drawerClose: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  drawerCloseBar: {
+    position: "absolute",
+    width: 16,
+    height: 1.5,
+    borderRadius: 1,
+    backgroundColor: "#5C636A",
+  },
+  drawerCloseBarA: { transform: [{ rotate: "45deg" }] },
+  drawerCloseBarB: { transform: [{ rotate: "-45deg" }] },
+  drawerItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  drawerItemOn: {
+    backgroundColor: "#E7F6F0",
+  },
+  drawerItemText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#5C636A",
+  },
+  drawerItemTextOn: {
+    color: "#0E9F6E",
+  },
+  drawerSignOut: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#DC2626",
+    marginTop: 12,
   },
   profilePad: {
     paddingBottom: 24,
@@ -648,6 +964,7 @@ const styles = StyleSheet.create({
   },
   subtabs: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginBottom: 8,
   },
@@ -694,12 +1011,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#111315",
     backgroundColor: "#FFFFFF",
-  },
-  otpInput: {
-    letterSpacing: 8,
-    textAlign: "center",
-    fontSize: 22,
-    fontWeight: "600",
   },
   chips: {
     flexDirection: "row",

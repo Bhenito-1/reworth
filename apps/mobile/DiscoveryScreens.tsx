@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,7 +16,12 @@ import {
   loadCachedHome,
   type HomeRail,
 } from "./lib/discovery";
-import { formatNgnFromKobo, type PublicListing } from "./lib/types";
+import { getAccessToken } from "./lib/auth";
+import {
+  formatNgnFromKobo,
+  listingImageUrl,
+  type PublicListing,
+} from "./lib/types";
 
 type Props = {
   community?: string;
@@ -24,6 +30,10 @@ type Props = {
   onOpenListing: (id: string) => void;
   onOpenTool?: (tool: "ask" | "worth" | "scan" | "consign" | "pickup") => void;
 };
+
+function sellerCatalogue(rails: HomeRail[]): HomeRail[] {
+  return rails.filter((rail) => rail.id !== "my_listed_products");
+}
 
 export function DiscoveryHome({
   community,
@@ -43,12 +53,16 @@ export function DiscoveryHome({
       if (!opts?.soft) setLoading(true);
       setError(null);
       try {
-        const data = await fetchHome({
-          community: community || undefined,
-        });
-        setRails(data.rails ?? []);
+        const data = await fetchHome(
+          {
+            community: community || undefined,
+          },
+          await getAccessToken(),
+        );
+        const rails = sellerCatalogue(data.rails ?? []);
+        setRails(rails);
         setFromCache(false);
-        await cacheHome(data);
+        await cacheHome({ ...data, rails });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not load home");
       } finally {
@@ -64,7 +78,7 @@ export function DiscoveryHome({
     (async () => {
       const cached = await loadCachedHome();
       if (!cancelled && cached?.rails?.length) {
-        setRails(cached.rails);
+        setRails(sellerCatalogue(cached.rails));
         setFromCache(true);
         setLoading(false);
       }
@@ -187,6 +201,8 @@ function ListingTile({
         ? "Swap"
         : formatNgnFromKobo(listing.priceKobo);
 
+  const photo = listingCoverUrl(listing);
+
   return (
     <Pressable
       style={styles.tile}
@@ -194,16 +210,35 @@ function ListingTile({
       accessibilityRole="button"
       accessibilityLabel={listing.title || "Listing"}
     >
-      <Text style={styles.tileTitle} numberOfLines={2}>
-        {listing.title || "Untitled"}
-      </Text>
-      <Text style={styles.tilePrice}>{price}</Text>
-      <Text style={styles.tileMeta} numberOfLines={1}>
-        {listing.communityChip?.name || listing.community || "Lagos"}
-        {listing.movingSale ? ` · Moving sale` : ""}
-      </Text>
+      {photo ? (
+        <Image
+          source={{ uri: photo }}
+          style={styles.tileImage}
+          resizeMode="cover"
+          accessibilityLabel=""
+        />
+      ) : (
+        <View style={[styles.tileImage, styles.tileImageEmpty]} />
+      )}
+      <View style={styles.tileBody}>
+        <Text style={styles.tileTitle} numberOfLines={2}>
+          {listing.title || "Untitled"}
+        </Text>
+        <Text style={styles.tilePrice}>{price}</Text>
+        <Text style={styles.tileMeta} numberOfLines={1}>
+          {listing.communityChip?.name || listing.community || "Lagos"}
+          {listing.movingSale ? ` · Moving sale` : ""}
+        </Text>
+      </View>
     </Pressable>
   );
+}
+
+function listingCoverUrl(listing: PublicListing): string | null {
+  const images = [...(listing.images ?? [])].sort(
+    (a, b) => a.sortOrder - b.sortOrder,
+  );
+  return listingImageUrl(images[0]);
 }
 
 /** Lightweight search panel used from Discover tab */
@@ -311,24 +346,38 @@ export function SearchPanel({
         <Text style={styles.metaCount}>{total} results</Text>
       ) : null}
 
-      {items.map((item) => (
-        <Pressable
-          key={item.id}
-          style={styles.listingRow}
-          onPress={() => onOpenListing(item.id)}
-          accessibilityRole="button"
-        >
-          <Text style={styles.tileTitle} numberOfLines={2}>
-            {item.title || "Untitled"}
-          </Text>
-          <Text style={styles.tileMeta}>
-            {item.sellingMode === "GIVE_AWAY"
-              ? "Free"
-              : formatNgnFromKobo(item.priceKobo)}
-            {item.community ? ` · ${item.community}` : ""}
-          </Text>
-        </Pressable>
-      ))}
+      {items.map((item) => {
+        const photo = listingCoverUrl(item);
+        return (
+          <Pressable
+            key={item.id}
+            style={styles.listingRow}
+            onPress={() => onOpenListing(item.id)}
+            accessibilityRole="button"
+          >
+            {photo ? (
+              <Image
+                source={{ uri: photo }}
+                style={styles.rowThumb}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={[styles.rowThumb, styles.tileImageEmpty]} />
+            )}
+            <View style={styles.rowCopy}>
+              <Text style={styles.tileTitle} numberOfLines={2}>
+                {item.title || "Untitled"}
+              </Text>
+              <Text style={styles.tileMeta}>
+                {item.sellingMode === "GIVE_AWAY"
+                  ? "Free"
+                  : formatNgnFromKobo(item.priceKobo)}
+                {item.community ? ` · ${item.community}` : ""}
+              </Text>
+            </View>
+          </Pressable>
+        );
+      })}
 
       {cursor ? (
         <Pressable
@@ -353,6 +402,8 @@ export function FavouritesPanel({
   const [items, setItems] = useState<PublicListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -379,11 +430,41 @@ export function FavouritesPanel({
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 2800);
+    return () => clearTimeout(id);
+  }, [notice]);
+
+  async function addListingToCart(listingId: string) {
+    setBusyId(listingId);
+    setError(null);
+    try {
+      const { getAccessToken } = await import("./lib/auth");
+      const token = await getAccessToken();
+      if (!token) {
+        setError("Sign in to use the cart");
+        return;
+      }
+      const { addToCart } = await import("./lib/cart");
+      await addToCart(token, listingId);
+      setNotice("Added to cart");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add to cart");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.pad}>
       <Text style={styles.brand} accessibilityRole="header">
-        Saved items
+        Wishlist
       </Text>
+      <Text style={styles.empty}>
+        Items you want to look at later. Add one to the cart when you are ready to order.
+      </Text>
+      {notice ? <Text style={styles.toolsHint}>{notice}</Text> : null}
       {loading ? (
         <ActivityIndicator style={{ marginTop: 24 }} color="#0E9F6E" />
       ) : error ? (
@@ -393,19 +474,45 @@ export function FavouritesPanel({
           Heart a listing to keep it here.
         </Text>
       ) : (
-        items.map((item) => (
-          <Pressable
-            key={item.id}
-            style={styles.listingRow}
-            onPress={() => onOpenListing(item.id)}
-          >
-            <Text style={styles.tileTitle}>{item.title || "Untitled"}</Text>
-            <Text style={styles.tileMeta}>
-              {formatNgnFromKobo(item.priceKobo)}
-              {item.community ? ` · ${item.community}` : ""}
-            </Text>
-          </Pressable>
-        ))
+        items.map((item) => {
+          const photo = listingCoverUrl(item);
+          return (
+            <View key={item.id} style={styles.wishCard}>
+              <Pressable
+                style={styles.listingRow}
+                onPress={() => onOpenListing(item.id)}
+              >
+                {photo ? (
+                  <Image
+                    source={{ uri: photo }}
+                    style={styles.rowThumb}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={[styles.rowThumb, styles.tileImageEmpty]} />
+                )}
+                <View style={styles.rowCopy}>
+                  <Text style={styles.tileTitle}>{item.title || "Untitled"}</Text>
+                  <Text style={styles.tileMeta}>
+                    {formatNgnFromKobo(item.priceKobo)}
+                    {item.community ? ` · ${item.community}` : ""}
+                  </Text>
+                </View>
+              </Pressable>
+              <Pressable
+                style={styles.secondaryBtn}
+                disabled={busyId === item.id}
+                onPress={() => void addListingToCart(item.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`Add ${item.title || "listing"} to cart`}
+              >
+                <Text style={styles.secondaryBtnText}>
+                  {busyId === item.id ? "Adding…" : "Add to cart"}
+                </Text>
+              </Pressable>
+            </View>
+          );
+        })
       )}
     </ScrollView>
   );
@@ -474,15 +581,28 @@ const styles = StyleSheet.create({
   railTitle: { fontSize: 18, fontWeight: "700", color: "#111315" },
   railRow: { paddingTop: 12, gap: 10 },
   tile: {
-    width: 160,
-    padding: 12,
+    width: 168,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#E5E2DC",
     backgroundColor: "#FFFFFF",
     marginRight: 10,
+    overflow: "hidden",
   },
-  tileTitle: { fontSize: 15, fontWeight: "700", color: "#111315" },
+  tileImage: {
+    width: "100%",
+    height: 112,
+    backgroundColor: "#E5E2DC",
+  },
+  tileImageEmpty: { backgroundColor: "#E5E2DC" },
+  tileBody: { padding: 12 },
+  tileTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111315",
+    lineHeight: 20,
+    minHeight: 40,
+  },
   tilePrice: {
     marginTop: 6,
     fontSize: 15,
@@ -532,11 +652,22 @@ const styles = StyleSheet.create({
   secondaryBtnText: { color: "#111315", fontWeight: "600" },
   listingRow: {
     marginTop: 12,
-    padding: 14,
+    padding: 10,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#E5E2DC",
     backgroundColor: "#FFFFFF",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
+  rowThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: 10,
+    backgroundColor: "#E5E2DC",
+  },
+  rowCopy: { flex: 1 },
+  wishCard: { marginTop: 4 },
   metaCount: { marginTop: 16, fontSize: 13, color: "#5C636A" },
 });

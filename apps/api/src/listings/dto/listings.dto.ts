@@ -11,6 +11,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -121,6 +122,23 @@ export class CreateListingDto {
   @IsOptional()
   @IsBoolean()
   instantBuyEligible?: boolean;
+
+  /** Auto-donate after N days unsold; null clears. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  donateIfUnsoldDays?: number | null;
+
+  /** Units for sale. Price is per unit. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(999)
+  quantity?: number;
 }
 
 export class UpdateListingDto {
@@ -233,6 +251,23 @@ export class UpdateListingDto {
   @IsOptional()
   @IsBoolean()
   instantBuyEligible?: boolean;
+
+  /** Auto-donate after N days unsold; null clears. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  donateIfUnsoldDays?: number | null;
+
+  /** Units for sale. Price is per unit. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(999)
+  quantity?: number;
 }
 
 export class AssistListingDto {

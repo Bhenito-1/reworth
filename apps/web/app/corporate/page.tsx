@@ -51,7 +51,7 @@ export default function CorporatePage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);

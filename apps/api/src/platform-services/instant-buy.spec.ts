@@ -86,6 +86,7 @@ describe('Instant Buy (Phase 3.1)', () => {
       config as never,
       fulfilment as never,
       psp as never,
+      undefined,
     );
 
     const count = await svc.processSlaBreaches(new Date());

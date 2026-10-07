@@ -4,12 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
-import {
-  BottomNav,
-  Chip,
-  EmptyState,
-  Skeleton,
-} from "@reworth/ui-web";
+import { Chip, EmptyState, Skeleton } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
@@ -18,6 +13,7 @@ import {
   offerStatusLabel,
   type ConversationListItem,
 } from "../../lib/chat";
+import { subscribeChat, type InboxUpdate } from "../../lib/chat-socket";
 
 export default function ChatsPage() {
   const router = useRouter();
@@ -28,7 +24,7 @@ export default function ChatsPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -38,10 +34,16 @@ export default function ChatsPage() {
       setItems(rows);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
-      setError(err instanceof ApiError ? err.message : "Could not load chats");
+      setError(
+        err instanceof ApiError && err.status === 429
+          ? "Chats are busy for a moment. Trying again…"
+          : err instanceof ApiError
+            ? err.message
+            : "Could not load chats",
+      );
     } finally {
       setLoading(false);
     }
@@ -54,16 +56,68 @@ export default function ChatsPage() {
   useEffect(() => {
     const token = getAccessToken();
     if (!token) return;
+    let live = false;
+
+    const applyInbox = (update: InboxUpdate) => {
+      setItems((prev) => {
+        const index = prev.findIndex((row) => row.id === update.conversationId);
+        if (index < 0) {
+          void listConversations(token)
+            .then((rows) => {
+              setItems(rows);
+              setError(null);
+              setLoading(false);
+            })
+            .catch(() => undefined);
+          return prev;
+        }
+        const row = prev[index];
+        const incoming = update.senderId === row.counterpart.id;
+        const next = [...prev];
+        next[index] = {
+          ...row,
+          lastMessageAt: update.lastMessageAt,
+          lastMessagePreview: update.preview,
+          unreadCount: incoming ? row.unreadCount + 1 : row.unreadCount,
+        };
+        next.sort(
+          (a, b) =>
+            new Date(b.lastMessageAt ?? 0).getTime() -
+            new Date(a.lastMessageAt ?? 0).getTime(),
+        );
+        return next;
+      });
+    };
+
+    const stop = subscribeChat(token, {
+      onConnect: () => {
+        live = true;
+      },
+      onDisconnect: () => {
+        live = false;
+      },
+      onInbox: applyInbox,
+    });
+
     const id = window.setInterval(() => {
+      if (live || document.visibilityState === "hidden") return;
       void listConversations(token)
-        .then(setItems)
+        .then((rows) => {
+          setItems(rows);
+          setError(null);
+          setLoading(false);
+        })
         .catch(() => undefined);
-    }, 8000);
-    return () => window.clearInterval(id);
+    }, 30000);
+
+    return () => {
+      stop();
+      window.clearInterval(id);
+    };
   }, []);
 
   return (
-    <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] pb-28 text-[var(--rw-ink)]">
+    <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-40"
@@ -186,17 +240,6 @@ export default function ChatsPage() {
           </ul>
         )}
       </div>
-
-      <BottomNav
-        active="chats"
-        onNavigate={(tab) => {
-          if (tab === "chats") return;
-          if (tab === "home") router.push("/");
-          else if (tab === "discover") router.push("/search");
-          else if (tab === "sell") router.push("/sell");
-          else if (tab === "profile") router.push("/account");
-        }}
-      />
     </main>
   );
 }

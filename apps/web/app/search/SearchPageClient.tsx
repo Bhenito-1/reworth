@@ -18,8 +18,9 @@ import {
   Toast,
 } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListingCard";
-import { ApiError } from "../../lib/api";
+import { ApiError, apiFetch } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
+import { addToCart } from "../../lib/cart";
 import { COMMUNITIES } from "../../lib/communities";
 import {
   RADIUS_OPTIONS,
@@ -36,6 +37,7 @@ import {
 } from "../../lib/discovery";
 import { CONDITIONS, CONDITION_LABELS } from "../../lib/listings";
 import type {
+  MeResponse,
   PublicListing,
   RadiusKm,
   SearchFilters,
@@ -71,6 +73,23 @@ export default function SearchPageClient() {
     tone?: "info" | "success" | "warn" | "error";
   } | null>(null);
   const [savingSearch, setSavingSearch] = useState(false);
+  const [meId, setMeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) return;
+    let cancelled = false;
+    void apiFetch<MeResponse>("/me", { token })
+      .then((me) => {
+        if (!cancelled) setMeId(me.id);
+      })
+      .catch(() => {
+        if (!cancelled) setMeId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const priceMinNaira =
     draft.priceMinKobo != null ? String(draft.priceMinKobo / 100) : "";
@@ -167,7 +186,7 @@ export default function SearchPageClient() {
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to save listings", tone: "warn" });
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     const isFav = favourites.has(listing.id);
@@ -180,6 +199,10 @@ export default function SearchPageClient() {
     try {
       if (isFav) await unfavouriteListing(listing.id, token);
       else await favouriteListing(listing.id, token);
+      setToast({
+        message: isFav ? "Removed from wishlist" : "Added to wishlist",
+        tone: "success",
+      });
     } catch (err) {
       setFavourites((prev) => {
         const next = new Set(prev);
@@ -195,11 +218,29 @@ export default function SearchPageClient() {
     }
   }
 
+  async function addListingToCart(listing: PublicListing) {
+    const token = getAccessToken();
+    if (!token) {
+      setToast({ message: "Sign in to use the cart", tone: "warn" });
+      router.push("/");
+      return;
+    }
+    try {
+      await addToCart(token, listing.id, 1);
+      setToast({ message: "Added to cart", tone: "success" });
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not add to cart",
+        tone: "error",
+      });
+    }
+  }
+
   async function saveCurrentSearch() {
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to save searches", tone: "warn" });
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     const filters = compactFilters({ ...draft, q: query.trim() || undefined });
@@ -243,14 +284,8 @@ export default function SearchPageClient() {
 
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
-      <header className="sticky top-0 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)]/90 backdrop-blur-md">
+      <header className="sticky top-14 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)]/90 backdrop-blur-md lg:top-[var(--rw-nav-offset,0px)]">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
-          <Link
-            href="/"
-            className="shrink-0 text-lg font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
           <form
             onSubmit={onSubmit}
             className="flex min-w-0 flex-1 items-center gap-2"
@@ -276,11 +311,6 @@ export default function SearchPageClient() {
               Search
             </Button>
           </form>
-          <Link href="/sell">
-            <Button variant="sell" size="sm">
-              SELL
-            </Button>
-          </Link>
         </div>
       </header>
 
@@ -532,16 +562,24 @@ export default function SearchPageClient() {
                 {result.total} result{result.total === 1 ? "" : "s"}
                 {result.tookMs != null ? ` · ${result.tookMs}ms` : ""}
               </p>
-              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {result.items.map((item) => (
-                  <li key={item.id}>
-                    <DiscoveryListingCard
-                      listing={item}
-                      favourited={favourites.has(item.id)}
-                      onToggleFavourite={(l) => void toggleFavourite(l)}
-                    />
-                  </li>
-                ))}
+              <ul className="grid grid-cols-2 items-stretch gap-3 sm:grid-cols-3">
+                {result.items.map((item) => {
+                  const own = meId != null && item.seller.id === meId;
+                  return (
+                    <li key={item.id} className="h-full">
+                      <DiscoveryListingCard
+                        listing={item}
+                        favourited={favourites.has(item.id)}
+                        onToggleFavourite={
+                          own ? undefined : (l) => void toggleFavourite(l)
+                        }
+                        onAddToCart={
+                          own ? undefined : (l) => void addListingToCart(l)
+                        }
+                      />
+                    </li>
+                  );
+                })}
               </ul>
               {result.nextCursor ? (
                 <div className="mt-8 flex justify-center">

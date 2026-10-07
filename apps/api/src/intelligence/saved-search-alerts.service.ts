@@ -61,6 +61,7 @@ export class SavedSearchAlertsService {
       const candidates = await this.prisma.listing.findMany({
         where: {
           status: 'LIVE',
+          quantityAvailable: { gt: 0 },
           city,
           OR: [
             { publishedAt: { gte: since } },

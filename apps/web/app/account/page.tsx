@@ -3,15 +3,16 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button, Chip, EmptyState, Input, Skeleton } from "@reworth/ui-web";
+import { Button, EmptyState, Input, Skeleton } from "@reworth/ui-web";
 import { apiFetch, ApiError } from "../../lib/api";
 import {
   clearTokens,
+  forceLandingRedirect,
   getAccessToken,
   getRefreshToken,
 } from "../../lib/auth";
-import { COMMUNITIES, type Community } from "../../lib/communities";
-import { listRegions, type RegionCity } from "../../lib/region";
+import { areaChoices, FALLBACK_AREAS, type AreaChoice } from "../../lib/areas";
+import { getRegion, listRegions, type RegionCity } from "../../lib/region";
 import type { DeviceRow, MeResponse } from "../../lib/types";
 
 function VerificationBadges({
@@ -57,9 +58,10 @@ export default function AccountPage() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [devices, setDevices] = useState<DeviceRow[] | null>(null);
   const [displayName, setDisplayName] = useState("");
-  const [community, setCommunity] = useState<Community | "">("");
+  const [community, setCommunity] = useState("");
   const [cities, setCities] = useState<RegionCity[]>([]);
-  const [city, setCity] = useState("Lagos");
+  const [city, setCity] = useState("");
+  const [areas, setAreas] = useState<AreaChoice[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState(false);
@@ -70,7 +72,7 @@ export default function AccountPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding/phone");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -83,18 +85,23 @@ export default function AccountPage() {
       ]);
       setMe(profile);
       setDisplayName(profile.profile?.displayName ?? "");
-      const pref = profile.profile?.preferredCommunity ?? "";
-      setCommunity(
-        (COMMUNITIES as readonly string[]).includes(pref)
-          ? (pref as Community)
-          : "",
-      );
+      const pref = profile.profile?.preferredCommunity?.trim() ?? "";
+      setCommunity(pref);
       setDevices(deviceRes.devices);
       setCities(regions);
-      const profileCity =
-        (profile.profile as { preferredCity?: string } | null)?.preferredCity;
-      if (profileCity) setCity(profileCity);
-      else if (regions.length) setCity(regions[0].key);
+      let matched = "";
+      for (const region of regions) {
+        const detail = await getRegion(region.key).catch(() => null);
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[region.key] ?? []);
+        if (pref && areaChoices(region.key, source).some((area) => area.value === pref)) {
+          matched = region.key;
+          break;
+        }
+      }
+      setCity(matched || regions[0]?.key || "");
     } catch (err) {
       setLoadError(
         err instanceof ApiError ? err.message : "Could not load account.",
@@ -108,6 +115,29 @@ export default function AccountPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!city) {
+      setAreas([]);
+      return;
+    }
+    let cancelled = false;
+    void getRegion(city)
+      .then((detail) => {
+        if (cancelled) return;
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[city] ?? []);
+        setAreas(areaChoices(city, source));
+      })
+      .catch(() => {
+        if (!cancelled) setAreas(areaChoices(city, FALLBACK_AREAS[city] ?? []));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [city]);
+
   async function onSave(e: FormEvent) {
     e.preventDefault();
     setSaveError(null);
@@ -120,8 +150,12 @@ export default function AccountPage() {
       setSaveError("Display name is required");
       return;
     }
-    if (!community) {
-      setSaveError("Select a community");
+    if (!city) {
+      setSaveError("Select your state");
+      return;
+    }
+    if (!community || !areas.some((area) => area.value === community)) {
+      setSaveError("Select a preferred area in that state");
       return;
     }
 
@@ -133,7 +167,6 @@ export default function AccountPage() {
         body: {
           displayName: name,
           preferredCommunity: community,
-          ...(cities.length ? { preferredCity: city } : {}),
         },
       });
       setMe(updated);
@@ -150,16 +183,14 @@ export default function AccountPage() {
   async function signOut() {
     setBusyAction("logout");
     const refreshToken = getRefreshToken();
-    try {
-      await apiFetch("/auth/logout", {
-        method: "POST",
-        body: refreshToken ? { refreshToken } : {},
-      });
-    } catch {
-      /* clear local anyway */
-    }
+    const leaving = window.location.pathname !== "/";
     clearTokens();
-    router.push("/");
+    void apiFetch("/auth/logout", {
+      method: "POST",
+      keepalive: true,
+      body: refreshToken ? { refreshToken } : {},
+    }).catch(() => undefined);
+    if (leaving) window.location.replace("/");
   }
 
   async function requestDelete() {
@@ -175,8 +206,7 @@ export default function AccountPage() {
     setBusyAction("delete");
     try {
       await apiFetch("/me/delete-request", { method: "POST", token });
-      clearTokens();
-      router.push("/");
+      forceLandingRedirect();
     } catch (err) {
       setSaveError(
         err instanceof ApiError
@@ -199,14 +229,12 @@ export default function AccountPage() {
       />
 
       <div className="relative z-10 mx-auto w-full max-w-2xl px-6 py-10 sm:px-8">
-        <header className="mb-10 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+        <header className="mb-10">
+          <h1 className="text-3xl font-semibold tracking-tight">Account</h1>
+          <nav
+            aria-label="Account tools"
+            className="mt-4 flex flex-wrap gap-x-4 gap-y-2"
           >
-            ReWorth
-          </Link>
-          <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
             <Link
               href="/ask"
               className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
@@ -274,15 +302,12 @@ export default function AccountPage() {
               Referrals
             </Link>
             <Link
-              href="/orders"
+              href="/inventory"
               className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
             >
-              Orders
+              Inventory
             </Link>
-            <h1 className="text-sm font-medium text-[var(--rw-ink-muted)]">
-              Account
-            </h1>
-          </div>
+          </nav>
         </header>
 
         {loading ? (
@@ -336,40 +361,43 @@ export default function AccountPage() {
                   disabled={saving}
                   required
                 />
-                {cities.length > 0 ? (
-                  <label className="flex flex-col gap-1.5 text-sm font-medium">
-                    City
-                    <select
-                      className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      disabled={saving}
-                    >
-                      {cities.map((c) => (
-                        <option key={c.key} value={c.key}>
-                          {c.displayName || c.key}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-                <fieldset>
-                  <legend className="mb-3 text-sm font-medium">
-                    Preferred community
-                  </legend>
-                  <div className="flex flex-wrap gap-2">
-                    {COMMUNITIES.map((c) => (
-                      <Chip
-                        key={c}
-                        selected={community === c}
-                        onClick={() => setCommunity(c)}
-                        disabled={saving}
-                      >
-                        {c}
-                      </Chip>
+                <label className="flex flex-col gap-1.5 text-sm font-medium">
+                  State
+                  <select
+                    className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                    value={city}
+                    onChange={(e) => {
+                      setCity(e.target.value);
+                      setCommunity("");
+                    }}
+                    disabled={saving}
+                  >
+                    <option value="">Select a state</option>
+                    {cities.map((c) => (
+                      <option key={c.key} value={c.key}>
+                        {c.displayName || c.key}
+                      </option>
                     ))}
-                  </div>
-                </fieldset>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1.5 text-sm font-medium">
+                  Preferred area
+                  <select
+                    className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                    value={areas.some((area) => area.value === community) ? community : ""}
+                    onChange={(e) => setCommunity(e.target.value)}
+                    disabled={saving || !city}
+                  >
+                    <option value="">
+                      {city ? "Select an area" : "Select a state first"}
+                    </option>
+                    {areas.map((area) => (
+                      <option key={area.value} value={area.value}>
+                        {area.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 {saveError ? (
                   <p className="text-sm text-[var(--rw-error)]" role="alert">
                     {saveError}

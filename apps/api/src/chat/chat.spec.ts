@@ -92,6 +92,7 @@ describe('MessagesService block + clientMsgId', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'listing-1',
           sellerId: 'seller-1',
+          status: 'LIVE',
         }),
       },
       userBlock: {
@@ -170,6 +171,7 @@ describe('MessagesService block + clientMsgId', () => {
         update: jest.fn(),
       },
       userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
+      user: { findFirst: jest.fn().mockResolvedValue(null) },
       message: {
         findUnique: jest.fn().mockResolvedValue(existing),
         create: jest.fn(),
@@ -233,6 +235,7 @@ describe('MessagesService block + clientMsgId', () => {
         update: jest.fn(),
       },
       userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
+      user: { findFirst: jest.fn().mockResolvedValue(null) },
       userMute: { findFirst: jest.fn().mockResolvedValue(null) },
       message: {
         findUnique: jest.fn().mockImplementation(async ({ where }: any) => {
@@ -366,6 +369,7 @@ describe('MessagesService block + clientMsgId', () => {
         update: jest.fn(),
       },
       userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
+      user: { findFirst: jest.fn().mockResolvedValue(null) },
       userMute: {
         findFirst: jest.fn().mockResolvedValue({ id: 'mute-1' }),
       },

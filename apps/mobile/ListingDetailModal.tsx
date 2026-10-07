@@ -23,6 +23,7 @@ import {
   unfavouriteListing,
 } from "./lib/discovery";
 import { getListing } from "./lib/listings";
+import { addToCart } from "./lib/cart";
 import { fetchRecommendations } from "./lib/intelligence";
 import {
   BOOST_DURATIONS_HOURS,
@@ -50,22 +51,33 @@ import {
 type Props = {
   listingId: string | null;
   onClose: () => void;
+  dismissLabel?: string;
   onOpenChat?: (conversationId: string) => void;
-  onBuyNow?: (listingId: string) => void;
+  onBuyNow?: (listingId: string, quantity?: number) => void;
   onOpenSeller?: (sellerId: string) => void;
+  onOpenCart?: () => void;
 };
 
 export function ListingDetailModal({
   listingId,
   onClose,
+  dismissLabel = "Close",
   onOpenChat,
-  onBuyNow,
   onOpenSeller,
+  onOpenCart,
 }: Props) {
   const [listing, setListing] = useState<PublicListing | null>(null);
+  const [qty, setQty] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [cartReady, setCartReady] = useState(false);
+  const [cartFormOpen, setCartFormOpen] = useState(false);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 2800);
+    return () => clearTimeout(timer);
+  }, [toast]);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
@@ -198,7 +210,7 @@ export function ListingDetailModal({
     try {
       if (next) await favouriteListing(listingId, token);
       else await unfavouriteListing(listingId, token);
-      setToast(next ? "Saved" : "Removed");
+      setToast(next ? "Added to wishlist" : "Removed from wishlist");
     } catch (err) {
       setSaved(!next);
       setToast(err instanceof ApiError ? err.message : "Could not update");
@@ -389,8 +401,12 @@ export function ListingDetailModal({
       <View style={styles.safe}>
         <View style={styles.header}>
           <Text style={styles.brand}>ReWorth</Text>
-          <Pressable onPress={onClose} accessibilityRole="button">
-            <Text style={styles.close}>Close</Text>
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel={dismissLabel}
+          >
+            <Text style={styles.close}>{dismissLabel}</Text>
           </Pressable>
         </View>
 
@@ -501,6 +517,7 @@ export function ListingDetailModal({
               </Text>
             ) : null}
 
+            {isOwner ? null : (
             <Pressable
               style={styles.seller}
               onPress={() => onOpenSeller?.(listing.seller.id)}
@@ -524,11 +541,115 @@ export function ListingDetailModal({
               ) : null}
               <Text style={styles.profileLink}>View profile →</Text>
             </Pressable>
+            )}
 
             <Text style={styles.section}>Description</Text>
             <Text style={styles.copy}>
               {listing.description || "No description."}
             </Text>
+            {!isOwner && !isSwap && !isGiveAway ? (
+              <View style={styles.cartBlock}>
+                <View style={styles.cartCue}>
+                  <EmptyCartMark />
+                  <Pressable
+                    style={[
+                      styles.cartOpenBtn,
+                      (listing.quantityAvailable ?? 1) < 1 && styles.disabled,
+                    ]}
+                    disabled={(listing.quantityAvailable ?? 1) < 1}
+                    onPress={() => setCartFormOpen(true)}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.cartOpenBtnText}>Add to cart</Text>
+                  </Pressable>
+                </View>
+                {(listing.quantityAvailable ?? 1) < 1 ? (
+                  <Text style={styles.orderHint}>No units left</Text>
+                ) : null}
+                {cartFormOpen && (listing.quantityAvailable ?? 1) > 0 ? (
+                  <View style={styles.cartForm}>
+                    <Text style={styles.orderHint}>How many units?</Text>
+                    <View style={styles.qtyRow}>
+                      <Pressable
+                        style={styles.qtyBtn}
+                        onPress={() => setQty((n) => Math.max(1, n - 1))}
+                        accessibilityRole="button"
+                        accessibilityLabel="Decrease quantity"
+                      >
+                        <Text style={styles.qtyBtnText}>−</Text>
+                      </Pressable>
+                      <Text style={styles.qtyValue}>{qty}</Text>
+                      <Pressable
+                        style={[
+                          styles.qtyBtn,
+                          qty >= (listing.quantityAvailable ?? 1) &&
+                            styles.disabled,
+                        ]}
+                        disabled={qty >= (listing.quantityAvailable ?? 1)}
+                        onPress={() =>
+                          setQty((n) =>
+                            Math.min(listing.quantityAvailable ?? 1, n + 1),
+                          )
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel="Increase quantity"
+                      >
+                        <Text style={styles.qtyBtnText}>+</Text>
+                      </Pressable>
+                      <Text style={styles.orderHint}>
+                        {listing.quantityAvailable ?? 1} available
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={styles.orderBtn}
+                      onPress={() => {
+                        void (async () => {
+                          if (isOwner) {
+                            setToast("You can't add your own listing to the cart");
+                            return;
+                          }
+                          const token = await getAccessToken();
+                          if (!token || !listingId) {
+                            setToast("Sign in to use the cart");
+                            return;
+                          }
+                          const units = Math.min(
+                            qty,
+                            listing.quantityAvailable ?? 1,
+                          );
+                          try {
+                            await addToCart(token, listingId, units);
+                            setCartReady(true);
+                            setToast(
+                              units === 1
+                                ? "Added to cart. Open your cart to place the order."
+                                : `Added ${units} to cart. Open your cart to place the order.`,
+                            );
+                          } catch (err) {
+                            setToast(
+                              err instanceof ApiError
+                                ? err.message
+                                : "Could not add to cart",
+                            );
+                          }
+                        })();
+                      }}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.orderBtnText}>Add {qty} to cart</Text>
+                    </Pressable>
+                    {cartReady ? (
+                      <Pressable
+                        onPress={() => onOpenCart?.()}
+                        accessibilityRole="button"
+                      >
+                        <Text style={styles.cartLink}>Go to cart</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
 
             <Text style={styles.section}>Delivery</Text>
             <Text style={styles.copy}>
@@ -624,14 +745,6 @@ export function ListingDetailModal({
                     label="Make offer"
                     onPress={() => setOfferOpen(true)}
                   />
-                  <Action
-                    label="Buy now"
-                    primary
-                    onPress={() => {
-                      if (listingId) onBuyNow?.(listingId);
-                      else setToast("Coming soon");
-                    }}
-                  />
                 </>
               ) : null}
               {!isOwner ? (
@@ -643,7 +756,7 @@ export function ListingDetailModal({
                 />
               ) : null}
               <Action
-                label={saved ? "Saved ♥" : "Save"}
+                label={saved ? "♥" : "♡"}
                 onPress={() => {
                   if (!saving) void toggleSave();
                 }}
@@ -816,6 +929,19 @@ export function ListingDetailModal({
         </Modal>
       </View>
     </Modal>
+  );
+}
+
+function EmptyCartMark() {
+  return (
+    <View style={cartMarkStyles.wrap} accessibilityElementsHidden>
+      <View style={cartMarkStyles.handle} />
+      <View style={cartMarkStyles.basket} />
+      <View style={cartMarkStyles.wheels}>
+        <View style={cartMarkStyles.wheel} />
+        <View style={cartMarkStyles.wheel} />
+      </View>
+    </View>
   );
 }
 
@@ -1003,7 +1129,55 @@ const styles = StyleSheet.create({
   },
   similarPrice: { marginTop: 2, fontSize: 12, color: "#5C636A" },
   centerText: { textAlign: "center", marginTop: 16 },
-  actions: { marginTop: 24, gap: 10 },
+  actions: {
+    marginTop: 24,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  cartBlock: { marginTop: 20, gap: 12 },
+  cartCue: { alignItems: "center", gap: 10 },
+  cartOpenBtn: {
+    backgroundColor: "#0E9F6E",
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+  },
+  cartOpenBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 14 },
+  cartForm: {
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E4E7E2",
+    backgroundColor: "#FFFFFF",
+  },
+  qtyRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  qtyBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#E4E7E2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  qtyBtnText: { fontSize: 18, fontWeight: "700", color: "#111315" },
+  qtyValue: { minWidth: 20, textAlign: "center", fontSize: 16, fontWeight: "700" },
+  orderHint: { fontSize: 14, color: "#5C636A" },
+  orderBtn: {
+    backgroundColor: "#0E9F6E",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  orderBtnText: { color: "#FFFFFF", fontWeight: "700", fontSize: 16 },
+  cartLink: {
+    textAlign: "center",
+    color: "#0E9F6E",
+    fontWeight: "700",
+    fontSize: 15,
+  },
   actionBtn: {
     borderWidth: 1,
     borderColor: "#E5E2DC",
@@ -1116,5 +1290,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: "#111315",
+  },
+});
+
+const cartMarkStyles = StyleSheet.create({
+  wrap: { width: 84, height: 78, alignItems: "center" },
+  handle: {
+    width: 34,
+    height: 14,
+    marginLeft: 8,
+    alignSelf: "flex-start",
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderColor: "#5C636A",
+    borderTopRightRadius: 10,
+  },
+  basket: {
+    width: 64,
+    height: 32,
+    marginTop: 2,
+    borderWidth: 3,
+    borderColor: "#5C636A",
+    borderRadius: 8,
+  },
+  wheels: { flexDirection: "row", gap: 18, marginTop: 6 },
+  wheel: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#5C636A",
   },
 });

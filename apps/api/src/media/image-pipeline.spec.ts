@@ -49,6 +49,7 @@ describe('image pipeline validation', () => {
     });
     expect(result.dHash).toHaveLength(16);
     expect(result.exifStripped).toBe(true);
-    expect(result.variants.w640?.webp).toContain('_640.webp');
+    expect(result.variants.w640?.webp).toBe('http://cdn/uploads/u/photo.jpg');
+    expect(result.variants.original).toBe('http://cdn/uploads/u/photo.jpg');
   });
 });

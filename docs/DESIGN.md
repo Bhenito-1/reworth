@@ -45,7 +45,7 @@ Mobile tokens: `apps/mobile/theme/tokens.ts`.
 
 1. Welcome slides (skippable)  
 2. **Method:** phone **or** email  
-3. Phone OTP **or** email register/login  
+3. Email register/login (+ OAuth where enabled)  
 4. Profile customise: avatar (optional), name, bio, community  
 
 ## Do / don’t

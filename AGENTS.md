@@ -26,11 +26,12 @@ Functional · UX · **mobile behaviour verified on iOS + Android; web parity del
 
 | Field | Value |
 | --- | --- |
-| Phase | **Design elevation** `v1.0.3-design-elevation` (+ phone\|email register) |
+| Phase | **Design elevation** `v1.0.3-design-elevation` (+ email register; SMS removed ADR-010) |
 | Last completed (post-launch) | **3.3** (`v2.2-monetization`) |
 | MVP Admin | **`v0.8-admin`** (+ harden) |
 | MVP Risk / Security | **`v0.9-risk-security`** (+ harden) |
 | Status | **Shipped** (`v1.0.3-design-elevation`) |
+| Cart & inventory | **Shipped** (ADR-011) — cart, unit stock, seller confirm/reject, cancel-before-pay, guarded listing removal |
 | Next | Remaining DESIGN.md screen elevation (Sell/PDP/Chat/Home rails); Boost/Plus web parity; staging k6 UAT |
 
 ## MVP / post-launch
@@ -41,8 +42,10 @@ Post-launch through `v2.2-monetization`: swap → communities → intelligence �
 ## Known gaps
 
 - Expo push mock; staging k6 certification; pen-test / NDPR / store sign-offs
+- L1 phone verification deferred (SMS OTP removed — ADR-010)
 - Cross-border: ADR-007 design only; next cities via config + seed
 - Web companion for Boost / Featured / Seller Plus (mobile full — see `docs/MOBILE_PARITY.md`)
 - Promoted search self-serve later (ADR-009 admin-assigned)
+- NSFW image moderation remains the rule-based mock (`IMAGE_MODERATION_PROVIDER`). Image-title checks use the Roboflow workflow in `apps/api/src/vision` and enter moderation as a review signal (mismatch, low confidence, or a failed check → admin review)
 
 See `docs/PHASE_STATUS.md`, `docs/BUYER_JOURNEY_AUDIT.md`, `docs/METRICS.md`, `docs/ADRS/009-promoted-search-admin.md`.

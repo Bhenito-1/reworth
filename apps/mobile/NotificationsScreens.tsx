@@ -20,6 +20,7 @@ import {
   categoryLabel,
   getNotificationPreferences,
   isCriticalCategory,
+  clearNotifications,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
@@ -31,20 +32,24 @@ import {
 
 type Props = {
   visible: boolean;
+  embedded?: boolean;
   onClose: () => void;
   onOpenOrder?: (orderId: string) => void;
   onOpenDispute?: (disputeId: string) => void;
   onOpenChat?: (conversationId: string) => void;
   onOpenListing?: (listingId: string) => void;
+  onOpenSelling?: (listingId?: string) => void;
 };
 
 export function NotificationsModal({
   visible,
+  embedded = false,
   onClose,
   onOpenOrder,
   onOpenDispute,
   onOpenChat,
   onOpenListing,
+  onOpenSelling,
 }: Props) {
   const [tab, setTab] = useState<"inbox" | "prefs">("inbox");
   const [items, setItems] = useState<AppNotification[]>([]);
@@ -100,10 +105,46 @@ export function NotificationsModal({
   }, []);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible && !embedded) return;
     if (tab === "inbox") void loadInbox();
     else void loadPrefs();
-  }, [visible, tab, loadInbox, loadPrefs]);
+  }, [visible, embedded, tab, loadInbox, loadPrefs]);
+
+  async function onMarkAll() {
+    const token = await getAccessToken();
+    if (!token) return;
+    const stamp = new Date().toISOString();
+    const previous = items;
+    setItems((rows) =>
+      rows.map((row) => ({ ...row, readAt: row.readAt ?? stamp })),
+    );
+    try {
+      const result = await markAllNotificationsRead(token);
+      if (result.updated === 0 && previous.some((row) => !row.readAt)) {
+        setItems(previous);
+        setToast("Could not mark notifications as read");
+        return;
+      }
+      setToast("All marked read");
+    } catch (err) {
+      setItems(previous);
+      setToast(err instanceof ApiError ? err.message : "Could not mark as read");
+    }
+  }
+
+  async function onClear() {
+    const token = await getAccessToken();
+    if (!token || items.length === 0) return;
+    const previous = items;
+    setItems([]);
+    try {
+      await clearNotifications(token);
+      setToast("Notifications cleared");
+    } catch (err) {
+      setItems(previous);
+      setToast(err instanceof ApiError ? err.message : "Could not clear notifications");
+    }
+  }
 
   async function openItem(n: AppNotification) {
     const token = await getAccessToken();
@@ -124,6 +165,7 @@ export function NotificationsModal({
     else if (parsed?.kind === "dispute" && parsed.id) onOpenDispute?.(parsed.id);
     else if (parsed?.kind === "chat" && parsed.id) onOpenChat?.(parsed.id);
     else if (parsed?.kind === "listing" && parsed.id) onOpenListing?.(parsed.id);
+    else if (parsed?.kind === "selling") onOpenSelling?.(parsed.id);
   }
 
   async function togglePref(
@@ -175,46 +217,41 @@ export function NotificationsModal({
     }
   }
 
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.root}>
+  const body = (
+      <View style={[styles.root, embedded && styles.rootEmbedded]}>
         <View style={styles.header}>
-          <Pressable onPress={onClose}>
-            <Text style={styles.link}>Close</Text>
-          </Pressable>
+          {embedded ? (
+            <Text style={styles.link}> </Text>
+          ) : (
+            <Pressable onPress={onClose}>
+              <Text style={styles.link}>Close</Text>
+            </Pressable>
+          )}
           <Text style={styles.brand}>Notifications</Text>
-          <Pressable
-            onPress={() =>
-              void (async () => {
-                const token = await getAccessToken();
-                if (!token) return;
-                await markAllNotificationsRead(token);
-                void loadInbox();
-              })()
-            }
-          >
-            <Text style={styles.link}>Read all</Text>
-          </Pressable>
+          {tab === "inbox" ? (
+            <View style={styles.headerActions}>
+              <Pressable onPress={() => void onMarkAll()} disabled={items.length === 0}>
+                <Text style={styles.link}>Read all</Text>
+              </Pressable>
+              <Pressable onPress={() => void onClear()} disabled={items.length === 0}>
+                <Text style={styles.link}>Clear</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable onPress={() => setTab("inbox")}>
+              <Text style={styles.link}>Done</Text>
+            </Pressable>
+          )}
         </View>
 
-        <View style={styles.tabs}>
+        {tab === "inbox" ? (
           <Pressable
-            style={[styles.tab, tab === "inbox" && styles.tabOn]}
-            onPress={() => setTab("inbox")}
-          >
-            <Text style={[styles.tabText, tab === "inbox" && styles.tabTextOn]}>
-              Inbox
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.tab, tab === "prefs" && styles.tabOn]}
             onPress={() => setTab("prefs")}
+            style={styles.settingsLink}
           >
-            <Text style={[styles.tabText, tab === "prefs" && styles.tabTextOn]}>
-              Settings
-            </Text>
+            <Text style={styles.link}>Notification settings</Text>
           </Pressable>
-        </View>
+        ) : null}
 
         {toast ? <Text style={styles.toast}>{toast}</Text> : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -304,12 +341,20 @@ export function NotificationsModal({
           </ScrollView>
         )}
       </View>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      {body}
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#F7F8F6", paddingTop: 48 },
+  rootEmbedded: { paddingTop: 8 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -318,17 +363,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   brand: { fontSize: 17, fontWeight: "700", color: "#1A1D21" },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 12 },
   link: { color: "#0E9F6E", fontWeight: "600", fontSize: 15 },
-  tabs: { flexDirection: "row", gap: 8, paddingHorizontal: 16, marginBottom: 8 },
-  tab: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    backgroundColor: "#E8EBE7",
-  },
-  tabOn: { backgroundColor: "#0E9F6E" },
-  tabText: { fontWeight: "600", color: "#5C636A" },
-  tabTextOn: { color: "#FFF" },
+  settingsLink: { paddingHorizontal: 16, marginBottom: 8 },
   pad: { padding: 16, paddingBottom: 48 },
   row: {
     backgroundColor: "#FFF",
