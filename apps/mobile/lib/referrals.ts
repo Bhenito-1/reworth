@@ -56,7 +56,11 @@ export function referralStatusLabel(status: string): string {
     case "RISK_FLAGGED":
       return "Under review";
     default:
-      return status.replace(/_/g, " ");
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
   }
 }
 

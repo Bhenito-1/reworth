@@ -9,10 +9,11 @@ import {
   type ChangeEvent,
 } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { formatNgn, nairaToKobo, koboToNaira } from "@reworth/shared";
 import { Button, Chip, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
+import { fetchCategories } from "../../lib/discovery";
 import { getAccessToken } from "../../lib/auth";
 import {
   FALLBACK_BANKS,
@@ -37,6 +38,7 @@ import {
   createListing,
   getListing,
   getPriceIntelligence,
+  listingImageUrl,
   patchListing,
   publishListing,
   appealListing,
@@ -81,15 +83,31 @@ type LocalPhoto = {
   id: string;
   file?: File;
   key?: string;
+  existing?: boolean;
   previewUrl: string;
 };
 
+function draftResumeStep(listing: PublicListing): SellStep {
+  if ((listing.images?.length ?? 0) < 2) return "photos";
+  const priced =
+    listing.sellingMode === "GIVE_AWAY" ||
+    listing.sellingMode === "SWAP" ||
+    listing.priceKobo > 0;
+  if (!listing.title?.trim() || !listing.description?.trim() || !priced) {
+    return "draft";
+  }
+  if (!listing.community?.trim()) return "location";
+  return "fulfilment";
+}
+
 export default function SellPage() {
   const router = useRouter();
+  const resumeId = useSearchParams().get("listingId");
   const fileInputId = useId();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [ready, setReady] = useState(false);
+  const [hydratingDraft, setHydratingDraft] = useState(Boolean(resumeId));
   const [step, setStep] = useState<SellStep>("photos");
   const [listingId, setListingId] = useState<string | null>(null);
   const [listing, setListing] = useState<PublicListing | null>(null);
@@ -105,6 +123,10 @@ export default function SellPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [categoryName, setCategoryName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [categories, setCategories] = useState<
+    { id: string; name: string; slug: string }[]
+  >([]);
   const [condition, setCondition] = useState<string>("GOOD");
   const [brand, setBrand] = useState("");
   const [priceNaira, setPriceNaira] = useState("");
@@ -120,9 +142,6 @@ export default function SellPage() {
   const [community, setCommunity] = useState("");
   const [stateKey, setStateKey] = useState("");
   const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
-  const [fulfilmentPickup, setFulfilmentPickup] = useState(true);
-  const [fulfilmentMeet, setFulfilmentMeet] = useState(true);
-  const [fulfilmentDelivery, setFulfilmentDelivery] = useState(false);
   const [donateIfUnsold, setDonateIfUnsold] = useState(false);
   const [donateIfUnsoldDays, setDonateIfUnsoldDays] = useState(30);
   const [payoutAccount, setPayoutAccount] = useState<PayoutAccountView | null>(
@@ -147,6 +166,43 @@ export default function SellPage() {
   const [published, setPublished] = useState<PublicListing | null>(null);
 
   useEffect(() => {
+    void fetchCategories()
+      .then((items) =>
+        setCategories(
+          items.map((item) => ({
+            id: item.id,
+            name: item.name,
+            slug: item.slug,
+          })),
+        ),
+      )
+      .catch(() => setCategories([]));
+  }, []);
+
+  useEffect(() => {
+    if (categoryId || !categoryName.trim() || categories.length === 0) return;
+    const norm = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    const query = norm(categoryName);
+    const match =
+      categories.find(
+        (item) =>
+          norm(item.name) === query || item.slug.replace(/-/g, " ") === query,
+      ) ??
+      categories.find((item) => {
+        const name = norm(item.name);
+        return name.includes(query) || query.includes(name);
+      });
+    if (!match) return;
+    setCategoryId(match.id);
+    if (match.name !== categoryName) setCategoryName(match.name);
+  }, [categories, categoryName, categoryId]);
+
+  useEffect(() => {
     const token = getAccessToken();
     if (!token) {
       router.replace("/");
@@ -157,6 +213,44 @@ export default function SellPage() {
       .then((regions) => setCities(regions))
       .catch(() => setCities([]));
   }, [router]);
+
+  useEffect(() => {
+    if (!ready || !resumeId) return;
+    let cancelled = false;
+    setHydratingDraft(true);
+    void (async () => {
+      try {
+        const token = getAccessToken();
+        if (!token) return;
+        const existing = await getListing(resumeId, token);
+        if (cancelled || existing.status !== "DRAFT") return;
+        setListingId(existing.id);
+        syncFromListing(existing);
+        setPhotos(
+          [...existing.images]
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .flatMap((img) => {
+              const previewUrl = listingImageUrl(img);
+              return previewUrl
+                ? [{ id: img.id, existing: true, previewUrl }]
+                : [];
+            }),
+        );
+        setStep(draftResumeStep(existing));
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof ApiError ? err.message : "Could not open this draft",
+          );
+        }
+      } finally {
+        if (!cancelled) setHydratingDraft(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, resumeId]);
 
   useEffect(() => {
     if (!city || cities.length === 0) return;
@@ -230,6 +324,7 @@ export default function SellPage() {
     setTitle(l.title || "");
     setDescription(l.description || "");
     setCategoryName(l.category?.name ?? "");
+    setCategoryId(l.category?.id ?? "");
     setCondition(l.condition || "GOOD");
     setBrand(l.brand || "");
     setPriceNaira(
@@ -239,9 +334,6 @@ export default function SellPage() {
     setSellingMode((l.sellingMode as SellingModeValue) || "SELL");
     setNegotiable(l.negotiable);
     if (l.community) setCommunity(l.community);
-    setFulfilmentPickup(l.fulfilmentPickup);
-    setFulfilmentMeet(l.fulfilmentMeet);
-    setFulfilmentDelivery(l.fulfilmentDelivery);
     if (l.city) setCity(l.city);
     if (l.donateIfUnsoldDays != null && l.donateIfUnsoldDays > 0) {
       setDonateIfUnsold(true);
@@ -312,9 +404,14 @@ export default function SellPage() {
       const id = await ensureDraft();
       const uploaded: { key: string; sortOrder: number }[] = [];
       const nextPhotos: LocalPhoto[] = [];
+      const hasExisting = photos.some((photo) => photo.existing);
 
       for (let i = 0; i < photos.length; i++) {
         const photo = photos[i];
+        if (photo.existing) {
+          nextPhotos.push(photo);
+          continue;
+        }
         if (photo.key) {
           uploaded.push({ key: photo.key, sortOrder: i });
           nextPhotos.push(photo);
@@ -332,7 +429,11 @@ export default function SellPage() {
       setAssistLoading(true);
       setStep("draft");
       const keys = uploaded.map((u) => u.key);
-      const assist = await assistListing(id, token, keys);
+      const assist = await assistListing(
+        id,
+        token,
+        hasExisting ? undefined : keys,
+      );
       const refreshed = await getListing(id, token);
       syncFromListing(refreshed);
       if (assist.draft) {
@@ -340,6 +441,7 @@ export default function SellPage() {
         setDescription(assist.draft.description || refreshed.description);
         setBrand(assist.draft.brand || refreshed.brand || "");
         setCondition(assist.draft.suggestedCondition || refreshed.condition);
+        setCategoryId("");
         setCategoryName(
           assist.draft.suggestedCategory || refreshed.category?.name || "",
         );
@@ -372,25 +474,28 @@ export default function SellPage() {
     const body: Parameters<typeof patchListing>[2] = {
       title: title.trim(),
       description: description.trim(),
-      brand: brand.trim() || undefined,
+      brand: brand.trim() || null,
       condition,
+      ...(categoryId ? { categoryId } : {}),
+      categoryName: categoryName.trim() || null,
       priceKobo:
-        sellingMode === "GIVE_AWAY"
-          ? 0
-          : Number.isFinite(naira) && naira >= 0
-            ? nairaToKobo(naira)
-            : 0,
-      quantity: sellingMode === "SELL" ? Math.max(1, Number(units) || 1) : 1,
+        sellingMode === "SELL" && Number.isFinite(naira) && naira >= 0
+          ? nairaToKobo(naira)
+          : 0,
+      ...(sellingMode === "SELL" || sellingMode === "GIVE_AWAY"
+        ? { quantity: Math.max(1, Number(units) || 1) }
+        : {}),
       negotiable: sellingMode === "SELL" ? negotiable : false,
       sellingMode,
-      community: community || undefined,
-      fulfilmentPickup,
-      fulfilmentMeet,
-      fulfilmentDelivery,
+      community,
+      fulfilmentPickup: false,
+      fulfilmentMeet: false,
+      fulfilmentDelivery: true,
       city: city || undefined,
-      donateIfUnsoldDays: donateIfUnsold
-        ? Math.min(59, Math.max(7, donateIfUnsoldDays))
-        : null,
+      donateIfUnsoldDays:
+        sellingMode !== "GIVE_AWAY" && donateIfUnsold
+          ? Math.min(59, Math.max(7, donateIfUnsoldDays))
+          : null,
     };
     if (isVehicleCat || vehicleYear || vehicleMake || vehicleMileage) {
       body.vehicle = {
@@ -447,14 +552,14 @@ export default function SellPage() {
 
   async function continueFromFulfilment() {
     setError(null);
-    if (!fulfilmentPickup && !fulfilmentMeet && !fulfilmentDelivery) {
-      setError("Pick at least one fulfilment option.");
-      return;
-    }
     setBusy(true);
     try {
       await saveDraftFields();
-      setStep("bank");
+      setStep(
+        sellingMode === "GIVE_AWAY" || sellingMode === "SWAP"
+          ? "publish"
+          : "bank",
+      );
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : "Could not save fulfilment",
@@ -463,6 +568,15 @@ export default function SellPage() {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (
+      (sellingMode === "GIVE_AWAY" || sellingMode === "SWAP") &&
+      step === "bank"
+    ) {
+      setStep("publish");
+    }
+  }, [sellingMode, step]);
 
   useEffect(() => {
     if (step !== "bank") return;
@@ -486,6 +600,12 @@ export default function SellPage() {
       cancelled = true;
     };
   }, [step]);
+
+  function goBack(next: SellStep) {
+    setError(null);
+    setNibssName(null);
+    setStep(next);
+  }
 
   async function verifyBank() {
     setError(null);
@@ -517,7 +637,10 @@ export default function SellPage() {
           setNibssName(result.nibssName);
           setError("The name on this account does not match the name you entered.");
         } else {
-          setError("We could not find that account at the selected bank.");
+          setError(
+            result.message ||
+              "We could not find that account at the selected bank.",
+          );
         }
         return;
       }
@@ -548,9 +671,12 @@ export default function SellPage() {
     }
   }
 
-  const stepIndex = STEPS.indexOf(step === "done" ? "publish" : step);
+  const skipsPayout =
+    sellingMode === "GIVE_AWAY" || sellingMode === "SWAP";
+  const steps = skipsPayout ? STEPS.filter((item) => item !== "bank") : STEPS;
+  const stepIndex = steps.indexOf(step === "done" ? "publish" : step);
 
-  if (!ready) {
+  if (!ready || hydratingDraft) {
     return (
       <main className="flex min-h-[100dvh] items-center justify-center bg-[var(--rw-bg)]">
         <Skeleton className="h-10 w-40" label="Checking session" />
@@ -574,7 +700,7 @@ export default function SellPage() {
           <div className="flex items-center gap-3">
             {step !== "done" ? (
               <p className="text-sm text-[var(--rw-ink-muted)]">
-                {STEP_LABELS[step]} · {Math.max(stepIndex, 0) + 1}/{STEPS.length}
+                {STEP_LABELS[step]} · {Math.max(stepIndex, 0) + 1}/{steps.length}
               </p>
             ) : null}
           </div>
@@ -586,10 +712,10 @@ export default function SellPage() {
             role="progressbar"
             aria-valuenow={stepIndex + 1}
             aria-valuemin={1}
-            aria-valuemax={STEPS.length}
+            aria-valuemax={steps.length}
             aria-label="Sell progress"
           >
-            {STEPS.map((s, i) => (
+            {steps.map((s, i) => (
               <span
                 key={s}
                 className={[
@@ -622,19 +748,18 @@ export default function SellPage() {
                     key={p.id}
                     className="group relative aspect-square overflow-hidden rounded-[var(--rw-radius)] bg-[var(--rw-bg-elevated)]"
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={p.previewUrl}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
                     <button
                       type="button"
                       onClick={() => removePhoto(p.id)}
-                      className="absolute right-1.5 top-1.5 rounded-full bg-black/55 px-2 py-0.5 text-xs text-white"
-                      aria-label="Remove photo"
+                      className="h-full w-full"
+                      aria-label="Remove this photo"
                     >
-                      ×
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={p.previewUrl}
+                        alt=""
+                        className="pointer-events-none h-full w-full object-cover"
+                      />
                     </button>
                   </div>
                 ))}
@@ -667,7 +792,11 @@ export default function SellPage() {
                 <p className="mt-6 text-sm text-[var(--rw-ink-muted)]">
                   No photos yet — add at least two to continue.
                 </p>
-              ) : null}
+              ) : (
+                <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
+                  Tap a photo to remove it.
+                </p>
+              )}
 
               {error ? (
                 <p className="mt-4 text-sm text-[var(--rw-error)]" role="alert">
@@ -734,12 +863,34 @@ export default function SellPage() {
                       className="w-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
                     />
                   </div>
-                  <Input
-                    label="Category"
-                    value={categoryName}
-                    onChange={(e) => setCategoryName(e.target.value)}
-                    hint="Suggested by AI — edit freely"
-                  />
+                  <div>
+                    <p className="mb-2 text-sm font-medium">Category</p>
+                    {categories.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {categories.map((item) => (
+                          <Chip
+                            key={item.id}
+                            selected={categoryId === item.id}
+                            onClick={() => {
+                              setCategoryId(item.id);
+                              setCategoryName(item.name);
+                            }}
+                          >
+                            {item.name}
+                          </Chip>
+                        ))}
+                      </div>
+                    ) : (
+                      <Input
+                        label="Category"
+                        value={categoryName}
+                        onChange={(e) => {
+                          setCategoryId("");
+                          setCategoryName(e.target.value);
+                        }}
+                      />
+                    )}
+                  </div>
                   {(() => {
                     const catLower = categoryName.trim().toLowerCase();
                     const showVehicle =
@@ -826,7 +977,7 @@ export default function SellPage() {
                       ))}
                     </div>
                   </div>
-                  {sellingMode !== "GIVE_AWAY" ? (
+                  {sellingMode === "SELL" ? (
                     <Input
                       label="Price per unit (₦)"
                       inputMode="numeric"
@@ -843,28 +994,47 @@ export default function SellPage() {
                       }
                     />
                   ) : null}
-                  {sellingMode === "SELL" ? (
-                    <>
-                      <Input
-                        label="Units available"
-                        inputMode="numeric"
-                        value={units}
-                        onChange={(e) =>
-                          setUnits(e.target.value.replace(/[^\d]/g, ""))
-                        }
-                        hint="How many of this item you can sell."
-                      />
-                      <label className="flex items-center gap-3 text-sm font-medium">
-                        <input
-                          type="checkbox"
-                          checked={negotiable}
-                          onChange={(e) => setNegotiable(e.target.checked)}
-                          className="h-4 w-4 accent-[var(--rw-accent)]"
-                        />
-                        Price is negotiable
-                      </label>
-                    </>
+                  {sellingMode === "GIVE_AWAY" ? (
+                    <p className="text-sm text-[var(--rw-ink-muted)]">
+                      Price is ₦0.
+                    </p>
                   ) : null}
+                  {sellingMode === "SWAP" ? (
+                    <p className="text-sm text-[var(--rw-ink-muted)]">
+                      Another user sends a swap proposal for this item.
+                    </p>
+                  ) : null}
+                  {sellingMode === "SELL" || sellingMode === "GIVE_AWAY" ? (
+                    <Input
+                      label={
+                        sellingMode === "GIVE_AWAY"
+                          ? "Units to gift"
+                          : "Units available"
+                      }
+                      inputMode="numeric"
+                      value={units}
+                      onChange={(e) =>
+                        setUnits(e.target.value.replace(/[^\d]/g, ""))
+                      }
+                      hint={
+                        sellingMode === "GIVE_AWAY"
+                          ? undefined
+                          : "How many of this item you can sell."
+                      }
+                    />
+                  ) : null}
+                  {sellingMode === "SELL" ? (
+                    <label className="flex items-center gap-3 text-sm font-medium">
+                      <input
+                        type="checkbox"
+                        checked={negotiable}
+                        onChange={(e) => setNegotiable(e.target.checked)}
+                        className="h-4 w-4 accent-[var(--rw-accent)]"
+                      />
+                      Price is negotiable
+                    </label>
+                  ) : null}
+                  {sellingMode !== "GIVE_AWAY" ? (
                   <div className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4">
                     <label className="flex items-start gap-3 text-sm font-medium">
                       <input
@@ -874,11 +1044,13 @@ export default function SellPage() {
                         className="mt-1 h-4 w-4 accent-[var(--rw-accent)]"
                       />
                       <span>
-                        Donate if unsold
+                        {sellingMode === "SWAP"
+                          ? "Donate if no swap offer"
+                          : "Donate if unsold"}
                         <span className="mt-0.5 block font-normal text-[var(--rw-ink-muted)]">
-                          The listing stays live for 60 days. After the waiting
-                          period, we can hand it to a verified charity or
-                          recycler.
+                          {sellingMode === "SWAP"
+                            ? "The listing stays live for 60 days. If nobody sends a swap offer in that time, we can hand it to a verified charity or recycler."
+                            : "The listing stays live for 60 days. After the waiting period, we can hand it to a verified charity or recycler."}
                         </span>
                       </span>
                     </label>
@@ -903,8 +1075,9 @@ export default function SellPage() {
                       </label>
                     ) : null}
                   </div>
+                  ) : null}
 
-                  {priceIntel && sellingMode !== "GIVE_AWAY" ? (
+                  {priceIntel && sellingMode === "SELL" ? (
                     <aside
                       className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/80 p-4"
                       aria-label="Price sense"
@@ -949,7 +1122,7 @@ export default function SellPage() {
                   <Button
                     variant="secondary"
                     className="flex-1"
-                    onClick={() => setStep("photos")}
+                    onClick={() => goBack("photos")}
                     disabled={busy}
                   >
                     Back
@@ -1038,7 +1211,7 @@ export default function SellPage() {
                 <Button
                   variant="secondary"
                   className="flex-1"
-                  onClick={() => setStep("draft")}
+                  onClick={() => goBack("draft")}
                   disabled={busy}
                 >
                   Back
@@ -1061,44 +1234,12 @@ export default function SellPage() {
                 id="sell-ful-title"
                 className="text-3xl font-semibold tracking-tight"
               >
-                How can buyers get it?
+                ReWorth delivery
               </h1>
               <p className="mt-3 text-[var(--rw-ink-muted)]">
-                Delivery quotes appear at checkout when offered.
+                Buyers receive this by ReWorth delivery. The courier fee is quoted
+                at checkout.
               </p>
-              <div className="mt-8 flex flex-col gap-4">
-                <label className="flex items-start gap-3 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={fulfilmentPickup || fulfilmentMeet}
-                    onChange={(e) => {
-                      setFulfilmentPickup(e.target.checked);
-                      setFulfilmentMeet(e.target.checked);
-                    }}
-                    className="mt-1 h-4 w-4 accent-[var(--rw-accent)]"
-                  />
-                  <span>
-                    <span className="font-semibold">Pickup or meet nearby</span>
-                    <span className="mt-0.5 block text-sm text-[var(--rw-ink-muted)]">
-                      Buyer collects from your area, or you agree a public spot
-                    </span>
-                  </span>
-                </label>
-                <label className="flex items-start gap-3 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={fulfilmentDelivery}
-                    onChange={(e) => setFulfilmentDelivery(e.target.checked)}
-                    className="mt-1 h-4 w-4 accent-[var(--rw-accent)]"
-                  />
-                  <span>
-                    <span className="font-semibold">Platform delivery</span>
-                    <span className="mt-0.5 block text-sm text-[var(--rw-ink-muted)]">
-                      Quote shown at checkout
-                    </span>
-                  </span>
-                </label>
-              </div>
               {error ? (
                 <p className="mt-4 text-sm text-[var(--rw-error)]" role="alert">
                   {error}
@@ -1108,7 +1249,7 @@ export default function SellPage() {
                 <Button
                   variant="secondary"
                   className="flex-1"
-                  onClick={() => setStep("location")}
+                  onClick={() => goBack("location")}
                   disabled={busy}
                 >
                   Back
@@ -1237,7 +1378,7 @@ export default function SellPage() {
                 <Button
                   variant="secondary"
                   className="flex-1"
-                  onClick={() => setStep("fulfilment")}
+                  onClick={() => goBack("fulfilment")}
                   disabled={busy}
                 >
                   Back
@@ -1271,7 +1412,7 @@ export default function SellPage() {
               <div className="mt-8 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-5">
                 <p className="text-2xl font-semibold">
                   {sellingMode === "GIVE_AWAY"
-                    ? "Give away"
+                    ? "Give away · ₦0"
                     : sellingMode === "SWAP"
                       ? "Swap"
                       : formatNgn({
@@ -1286,7 +1427,7 @@ export default function SellPage() {
                 <p className="mt-4 text-sm text-[var(--rw-ink-muted)] line-clamp-3">
                   {description}
                 </p>
-                {payoutAccount ? (
+                {sellingMode !== "GIVE_AWAY" && payoutAccount ? (
                   <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
                     Payout · {payoutAccount.bankName}{" "}
                     {payoutAccount.accountNumberMasked}
@@ -1307,7 +1448,9 @@ export default function SellPage() {
                 <Button
                   variant="secondary"
                   className="flex-1"
-                  onClick={() => setStep("bank")}
+                  onClick={() =>
+                    goBack(sellingMode === "GIVE_AWAY" ? "fulfilment" : "bank")
+                  }
                   disabled={busy}
                 >
                   Back
@@ -1326,7 +1469,7 @@ export default function SellPage() {
 
           {step === "done" && published ? (
             <section aria-labelledby="sell-done-title" className="text-center">
-              <p className="text-sm font-semibold uppercase tracking-wider text-[var(--rw-accent)]">
+              <p className="text-sm font-semibold text-[var(--rw-accent)]">
                 {published.status === "REJECTED"
                   ? "Rejected"
                   : published.status === "UNDER_REVIEW"

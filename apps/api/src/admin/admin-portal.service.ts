@@ -37,6 +37,10 @@ import {
   type PaymentProvider,
 } from '../providers/payment.provider';
 import { ListingStateMachine } from '../listings/listing-state.machine';
+import {
+  levelFromScore,
+  riskScoreAfterApproval,
+} from '../risk/risk-rules.table';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { FRAUD } from './admin-roles';
@@ -615,6 +619,7 @@ export class AdminPortalService {
           : `"${listing.title}" is now live on ReWorth.`,
       deepLink: '/selling',
     });
+    const sellerRisk = await this.relieveSellerRisk(listing.sellerId);
     await this.audit.log({
       actorUserId: actor.id,
       actorRole: actor.roles[0] ?? null,
@@ -622,10 +627,30 @@ export class AdminPortalService {
       entityType: 'Listing',
       entityId: id,
       beforeJson: { status: listing.status },
-      afterJson: { status: updated.status },
+      afterJson: { status: updated.status, sellerRisk },
       ip: ip ?? null,
     });
     return { ok: true, id, status: updated.status };
+  }
+
+  /** An approved listing means this seller can be trusted a step further. */
+  private async relieveSellerRisk(sellerId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: sellerId },
+      select: { riskScore: true },
+    });
+    if (!user) return null;
+    const riskScore = riskScoreAfterApproval(user.riskScore);
+    const riskLevel = levelFromScore(riskScore);
+    await this.prisma.user.update({
+      where: { id: sellerId },
+      data: {
+        riskScore,
+        riskLevel,
+        ...(riskLevel === 'LOW' ? { enhancedVerificationRequired: false } : {}),
+      },
+    });
+    return { before: user.riskScore, after: riskScore, riskLevel };
   }
 
   async rejectListing(

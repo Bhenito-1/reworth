@@ -7,6 +7,7 @@ import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Skeleton } from "@reworth/ui-web";
 import { apiFetch, ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
+import { removeListing } from "../../lib/inventory";
 
 type MineItem = {
   id: string;
@@ -17,9 +18,18 @@ type MineItem = {
   reviewState: string;
   reviewLabel: string;
   reviewNote: string | null;
+  canRemove?: boolean;
+  hasAcceptedOrder?: boolean;
 };
 
-type ListingFilter = "all" | "live" | "review" | "rejected" | "sold";
+type ListingFilter =
+  | "all"
+  | "live"
+  | "review"
+  | "rejected"
+  | "sold"
+  | "closed"
+  | "removed";
 
 const FILTERS: { id: ListingFilter; label: string }[] = [
   { id: "all", label: "All" },
@@ -27,15 +37,55 @@ const FILTERS: { id: ListingFilter; label: string }[] = [
   { id: "review", label: "In review" },
   { id: "rejected", label: "Rejected" },
   { id: "sold", label: "Sold" },
+  { id: "closed", label: "Closed" },
+  { id: "removed", label: "Removed" },
 ];
 
-function groupOf(item: MineItem): Exclude<ListingFilter, "all"> {
+function statusBadgeClass(status: string): string {
+  switch (status) {
+    case "LIVE":
+      return "bg-emerald-50 text-emerald-800";
+    case "RESERVED":
+      return "bg-blue-50 text-blue-800";
+    case "SOLD":
+      return "bg-slate-100 text-slate-800";
+    case "UNDER_REVIEW":
+      return "bg-amber-50 text-amber-800";
+    case "REJECTED":
+      return "bg-red-50 text-red-700";
+    case "DRAFT":
+      return "bg-zinc-100 text-zinc-700";
+    case "EXPIRED":
+      return "bg-orange-50 text-orange-800";
+    case "REMOVED":
+      return "bg-rose-50 text-rose-800";
+    default:
+      return "bg-[var(--rw-bg)] text-[var(--rw-ink-muted)]";
+  }
+}
+
+function groupOf(item: MineItem): Exclude<ListingFilter, "all"> | "draft" {
   if (item.reviewState === "rejected" || item.status === "REJECTED") {
     return "rejected";
   }
   if (item.status === "SOLD") return "sold";
+  if (item.status === "REMOVED" || item.reviewState === "removed") return "removed";
+  if (item.status === "EXPIRED" || item.reviewState === "closed") return "closed";
   if (item.status === "LIVE" || item.status === "RESERVED") return "live";
-  return "review";
+  if (item.status === "UNDER_REVIEW" || item.reviewState === "waiting") return "review";
+  if (item.status === "DRAFT") return "draft";
+  return "closed";
+}
+
+function removalMessage(item: MineItem): string {
+  const title = item.title || "this listing";
+  if (item.status === "DRAFT") {
+    return `Delete the draft “${title}”? This cannot be undone.`;
+  }
+  if (item.hasAcceptedOrder) {
+    return `Remove “${title}” from the marketplace? An order for this listing is already accepted. You still have to fulfil that order. If you do not, your account can be sanctioned. The remaining units will leave the marketplace and this listing will be marked Removed.`;
+  }
+  return `Remove “${title}” from the marketplace? The remaining units will leave the marketplace and this listing will be marked Removed.`;
 }
 
 export default function SellingPage() {
@@ -44,6 +94,8 @@ export default function SellingPage() {
   const [filter, setFilter] = useState<ListingFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const load = useCallback(async () => {
     const token = getAccessToken();
@@ -69,19 +121,57 @@ export default function SellingPage() {
     }
   }, [router]);
 
+  async function onRemove(item: MineItem) {
+    const token = getAccessToken();
+    if (!token) {
+      router.replace("/");
+      return;
+    }
+    const confirmed = window.confirm(removalMessage(item));
+    if (!confirmed) return;
+    setRemovingId(item.id);
+    setError(null);
+    try {
+      await removeListing(token, item.id);
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : item.status === "DRAFT"
+            ? "Could not delete this draft"
+            : "Could not remove this listing",
+      );
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
   useEffect(() => {
     void load();
   }, [load]);
 
   const visible =
     filter === "all" ? items : items.filter((item) => groupOf(item) === filter);
+  const shown = expanded ? visible : visible.slice(0, 10);
 
   return (
     <main className="mx-auto min-h-[100dvh] max-w-2xl bg-[var(--rw-bg)] px-4 py-8 text-[var(--rw-ink)] sm:px-8">
       <h1 className="text-3xl font-semibold tracking-tight">My listings</h1>
       <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-        Live listings, items still in review, and anything that was rejected.
+        Every listing you have made, including live, in review, rejected, sold, closed, and removed.
       </p>
+
+      <div className="mt-4">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={loading}
+          onClick={() => void load()}
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </Button>
+      </div>
 
       <div className="mt-6 flex flex-wrap gap-2" role="tablist" aria-label="Listing status">
         {FILTERS.map((tab) => {
@@ -92,7 +182,10 @@ export default function SellingPage() {
               type="button"
               role="tab"
               aria-selected={selected}
-              onClick={() => setFilter(tab.id)}
+              onClick={() => {
+                setFilter(tab.id);
+                setExpanded(false);
+              }}
               className={[
                 "rounded-full px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
                 selected
@@ -136,39 +229,33 @@ export default function SellingPage() {
         </div>
       ) : (
         <ul className="mt-8 space-y-3">
-          {visible.map((item) => {
+          {shown.map((item) => {
             const group = groupOf(item);
             return (
               <li
                 key={item.id}
                 className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-4"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold">{item.title || "Untitled listing"}</p>
-                    <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
-                      {formatNgn({ amountKobo: item.priceKobo })}
-                    </p>
+                <Link href={`/listings/${item.id}`} className="block">
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="break-words font-semibold">{item.title || "Untitled listing"}</p>
+                      <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
+                        {formatNgn({ amountKobo: item.priceKobo })}
+                      </p>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(item.status)}`}
+                    >
+                      {item.reviewLabel}
+                    </span>
                   </div>
-                  <span
-                    className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      group === "rejected"
-                        ? "bg-red-50 text-red-700"
-                        : group === "review"
-                          ? "bg-amber-50 text-amber-800"
-                          : group === "live"
-                            ? "bg-emerald-50 text-emerald-800"
-                            : "bg-[var(--rw-bg)] text-[var(--rw-ink-muted)]"
-                    }`}
-                  >
-                    {item.reviewLabel}
-                  </span>
-                </div>
-                {item.reviewNote ? (
-                  <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-                    {item.reviewNote}
-                  </p>
-                ) : null}
+                  {item.reviewNote ? (
+                    <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+                      {item.reviewNote}
+                    </p>
+                  ) : null}
+                </Link>
                 {group === "rejected" ? (
                   <Link
                     href={`/selling/${item.id}`}
@@ -176,19 +263,35 @@ export default function SellingPage() {
                   >
                     See why and fix it
                   </Link>
-                ) : group === "live" ? (
-                  <Link
-                    href={`/listings/${item.id}`}
-                    className="mt-3 inline-block text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
+                ) : null}
+                {item.status === "DRAFT" || item.canRemove ? (
+                  <button
+                    type="button"
+                    className="mt-3 block text-sm font-medium text-[var(--rw-error)] hover:underline disabled:opacity-50"
+                    disabled={removingId === item.id}
+                    onClick={() => void onRemove(item)}
                   >
-                    View listing
-                  </Link>
+                    {removingId === item.id
+                      ? item.status === "DRAFT"
+                        ? "Deleting…"
+                        : "Removing…"
+                      : item.status === "DRAFT"
+                        ? "Delete draft"
+                        : "Remove from marketplace"}
+                  </button>
                 ) : null}
               </li>
             );
           })}
         </ul>
       )}
+      {!loading && visible.length > 10 && !expanded ? (
+        <div className="mt-4">
+          <Button variant="secondary" onClick={() => setExpanded(true)}>
+            See more
+          </Button>
+        </div>
+      ) : null}
     </main>
   );
 }

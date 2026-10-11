@@ -3,11 +3,11 @@ import {
   ActivityIndicator,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { EmptyState } from "./components/EmptyState";
 import { ApiError } from "./lib/api";
 import { ensureAccessToken } from "./lib/auth";
@@ -303,8 +303,6 @@ const styles = StyleSheet.create({
   metricLabel: {
     fontSize: 11,
     fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
   },
   metricValue: { fontSize: type.titleSm, fontWeight: "700", marginTop: 4 },
   block: { marginTop: space.lg, gap: space.sm },

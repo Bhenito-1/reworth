@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { nairaToKobo } from "@reworth/shared";
+import { formatNgn, nairaToKobo } from "@reworth/shared";
 import {
   Button,
   EmptyState,
@@ -19,6 +19,7 @@ import { getAccessToken } from "../../../lib/auth";
 import {
   acceptOffer,
   blockUser,
+  unblockUser,
   clientMsgId,
   counterOffer,
   createOffer,
@@ -42,6 +43,51 @@ import {
   subscribeChat,
 } from "../../../lib/chat-socket";
 import type { MeResponse } from "../../../lib/types";
+import {
+  acceptSwapProposal,
+  cancelSwapProposal,
+  parseSwapProposalCard,
+  rejectSwapProposal,
+} from "../../../lib/swap";
+
+type OfferNotice = {
+  message?: string;
+  tone?: "info" | "success" | "warn" | "error";
+  durationMs?: number;
+};
+
+/** Survives React strict mode remounting, which would otherwise drop the notice. */
+let queuedOfferNotice: OfferNotice | null | undefined;
+
+function formatDeliveryDay(iso: string): string {
+  const [year, month, day] = iso.slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return iso;
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function consumeOfferNotice(): OfferNotice | null {
+  if (typeof window === "undefined") return null;
+  if (queuedOfferNotice !== undefined) return queuedOfferNotice;
+  try {
+    const raw = sessionStorage.getItem("reworth:offer-notice");
+    sessionStorage.removeItem("reworth:offer-notice");
+    if (!raw) {
+      queuedOfferNotice = null;
+      return null;
+    }
+    const notice = JSON.parse(raw) as OfferNotice;
+    queuedOfferNotice = notice.message ? notice : null;
+  } catch {
+    sessionStorage.removeItem("reworth:offer-notice");
+    queuedOfferNotice = null;
+  }
+  return queuedOfferNotice ?? null;
+}
 
 type ThreadItem =
   | { kind: "message"; key: string; at: string; message: ChatMessage }
@@ -72,9 +118,10 @@ export default function ChatThreadPage() {
   const [toast, setToast] = useState<{
     message: string;
     tone?: "info" | "success" | "warn" | "error";
+    durationMs?: number;
   } | null>(null);
 
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
   const liveRef = useRef(false);
   const [reloadAt, setReloadAt] = useState(0);
@@ -160,6 +207,21 @@ export default function ChatThreadPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per conversation
   }, [conversationId, router]);
+
+  useEffect(() => {
+    const notice = consumeOfferNotice();
+    if (notice?.message) {
+      setToast({
+        message: notice.message,
+        tone: notice.tone,
+        durationMs: notice.durationMs,
+      });
+    }
+    const clearQueue = window.setTimeout(() => {
+      queuedOfferNotice = undefined;
+    }, 0);
+    return () => window.clearTimeout(clearQueue);
+  }, []);
 
   useEffect(() => {
     if (!error || !conversationId) return;
@@ -253,20 +315,29 @@ export default function ChatThreadPage() {
   }, [conversationId, loading, error]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const scroller = threadRef.current;
+    if (!scroller) return;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
   }, [messages, offers]);
 
   const thread = useMemo(() => {
+    const cutoff = meta?.deletedAt ? new Date(meta.deletedAt).getTime() : 0;
+    const visibleMessages = cutoff
+      ? messages.filter((message) => new Date(message.createdAt).getTime() > cutoff)
+      : messages;
+    const visibleOffers = cutoff
+      ? offers.filter((offer) => new Date(offer.createdAt).getTime() > cutoff)
+      : offers;
     const offerIdsInMessages = new Set(
-      messages.filter((m) => m.offerId).map((m) => m.offerId as string),
+      visibleMessages.filter((m) => m.offerId).map((m) => m.offerId as string),
     );
-    const items: ThreadItem[] = messages.map((m) => ({
+    const items: ThreadItem[] = visibleMessages.map((m) => ({
       kind: "message",
       key: `m-${m.id}`,
       at: m.createdAt,
       message: m,
     }));
-    for (const o of offers) {
+    for (const o of visibleOffers) {
       if (offerIdsInMessages.has(o.id)) continue;
       items.push({
         kind: "offer",
@@ -279,7 +350,7 @@ export default function ChatThreadPage() {
       (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
     );
     return items;
-  }, [messages, offers]);
+  }, [messages, offers, meta?.deletedAt]);
 
   const offersById = useMemo(() => {
     const map = new Map<string, OfferDto>();
@@ -337,9 +408,18 @@ export default function ChatThreadPage() {
     }
   }
 
+  function showOfferResult(message: string, tone: "success" | "error") {
+    setOfferOpen(false);
+    window.requestAnimationFrame(() => {
+      setToast({ message, tone, durationMs: 6000 });
+    });
+  }
+
   async function submitOffer(amountKobo: number, note?: string) {
     const token = getAccessToken();
     if (!token || !meta) return;
+    const amountLabel = formatNgn({ amountKobo });
+    const item = meta.listingTitle?.trim() || "this item";
     setOfferBusy(true);
     try {
       const offer = await createOffer(token, meta.listingId, {
@@ -348,14 +428,18 @@ export default function ChatThreadPage() {
         conversationId: meta.id,
       });
       setOffers((prev) => [offer, ...prev.filter((o) => o.id !== offer.id)]);
-      setOfferOpen(false);
-      setToast({ message: "Offer sent", tone: "success" });
+      showOfferResult(
+        `Offer of ${amountLabel} sent for ${item}. The seller can accept, decline, or counter it.`,
+        "success",
+      );
       await refresh();
     } catch (err) {
-      setToast({
-        message: err instanceof ApiError ? err.message : "Offer failed",
-        tone: "error",
-      });
+      const reason =
+        err instanceof ApiError ? err.message : "Something went wrong. Try again.";
+      showOfferResult(
+        `Your offer of ${amountLabel} for ${item} was not sent. ${reason}`,
+        "error",
+      );
     } finally {
       setOfferBusy(false);
     }
@@ -447,12 +531,31 @@ export default function ChatThreadPage() {
     setSafetyBusy(true);
     try {
       await blockUser(token, meta.counterpart.id);
+      setMeta({ ...meta, blockedByMe: true });
       setSafetyOpen(false);
       setToast({ message: "User blocked", tone: "success" });
-      router.replace("/chats");
     } catch (err) {
       setToast({
         message: err instanceof ApiError ? err.message : "Block failed",
+        tone: "error",
+      });
+    } finally {
+      setSafetyBusy(false);
+    }
+  }
+
+  async function doUnblock() {
+    const token = getAccessToken();
+    if (!token || !meta) return;
+    setSafetyBusy(true);
+    try {
+      await unblockUser(token, meta.counterpart.id);
+      setMeta({ ...meta, blockedByMe: false });
+      setSafetyOpen(false);
+      setToast({ message: "User unblocked", tone: "success" });
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Unblock failed",
         tone: "error",
       });
     } finally {
@@ -516,6 +619,190 @@ export default function ChatThreadPage() {
     }
   }
 
+  async function runSwapAction(
+    action: "accept" | "reject" | "cancel",
+    proposalId: string,
+  ) {
+    const token = getAccessToken();
+    if (!token) return;
+    setActionBusy(true);
+    try {
+      if (action === "accept") {
+        const res = (await acceptSwapProposal(token, proposalId)) as {
+          orders?: { id: string; payerId: string }[];
+        };
+        const mine = res.orders?.find((order) => order.payerId === meId);
+        setToast({
+          message:
+            "Swap accepted. Open the order to pay the delivery fee and the ₦500 swap fee.",
+          tone: "success",
+        });
+        await refresh();
+        if (mine) router.push(`/orders/${mine.id}`);
+        return;
+      }
+      if (action === "cancel") {
+        await cancelSwapProposal(token, proposalId);
+        setToast({ message: "Swap cancelled", tone: "info" });
+      } else {
+        await rejectSwapProposal(token, proposalId);
+        setToast({ message: "Swap rejected", tone: "info" });
+      }
+      await refresh();
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Swap action failed",
+        tone: "error",
+      });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function renderSwapProposal(body: string | null) {
+    const parsed = parseSwapProposalCard(body);
+    const isListingSeller = Boolean(meta && meId === meta.sellerId);
+    const accepted = parsed?.kind === "swap-accepted";
+    const rejected = parsed?.kind === "swap-rejected";
+    const cancelled = parsed?.kind === "swap-cancelled";
+    const closed = accepted || rejected || cancelled;
+    const settled = Boolean(
+      parsed &&
+        !closed &&
+        messages.some((message) => {
+          const later = parseSwapProposalCard(message.body);
+          return (
+            later?.swapProposalId === parsed.swapProposalId &&
+            (later.kind === "swap-accepted" ||
+              later.kind === "swap-rejected" ||
+              later.kind === "swap-cancelled")
+          );
+        }),
+    );
+    if (settled) return null;
+    const mineOrder = parsed?.orders.find((order) => order.payerId === meId);
+    return (
+      <div className="w-full min-w-0 max-w-sm rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4">
+        {accepted ? (
+          <p className="text-[13px] font-semibold leading-5 text-[var(--rw-ink-muted)]">
+            Swap order
+          </p>
+        ) : null}
+        <p className={`${closed ? "mt-1 " : ""}text-[17px] font-semibold leading-6`}>
+          {accepted
+            ? "Swap accepted"
+            : rejected
+              ? "Swap rejected"
+              : cancelled
+                ? "Swap cancelled"
+                : parsed?.title || "Swap proposal"}
+        </p>
+        {!accepted && parsed?.description ? (
+          <p className="mt-2 text-[15px] leading-6 text-[var(--rw-ink-muted)]">
+            {parsed.description}
+          </p>
+        ) : null}
+        {parsed && parsed.imageUrls.length > 0 ? (
+          <div className="mt-3 flex gap-2 overflow-x-auto">
+            {parsed.imageUrls.map((url) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={url}
+                src={url}
+                alt="Swap photo"
+                className="h-24 w-24 shrink-0 rounded-xl object-cover"
+              />
+            ))}
+          </div>
+        ) : null}
+        {accepted && mineOrder?.receive && mineOrder.send ? (
+          <div className="mt-3 space-y-2">
+            {[
+              ["You send", mineOrder.send],
+              ["You receive", mineOrder.receive],
+            ].map(([label, item]) => {
+              const side = item as { title: string; imageUrl?: string | null };
+              return (
+                <div key={String(label)} className="flex items-center gap-3">
+                  {side.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={side.imageUrl}
+                      alt=""
+                      className="h-12 w-12 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <div className="h-12 w-12 rounded-lg bg-[var(--rw-border)]" />
+                  )}
+                  <div>
+                    <p className="text-xs text-[var(--rw-ink-muted)]">{String(label)}</p>
+                    <p className="text-[15px] font-semibold leading-5">{side.title}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {parsed?.deliveryOn ? (
+          <p className="mt-3 text-sm font-semibold">
+            Delivery day · {formatDeliveryDay(parsed.deliveryOn)}
+          </p>
+        ) : null}
+        <p className="mt-2 text-[15px] leading-6 text-[var(--rw-ink-muted)]">
+          {accepted
+            ? "This is now an order for both of you. Each person pays the delivery fee and a ₦500 swap fee. Cancel it from the order, before either of you pays."
+            : rejected
+              ? "This proposal was rejected."
+              : cancelled
+                ? "This proposal was cancelled. The listing is back on the marketplace."
+                : "If they accept, both of you get an order. Each person pays the delivery fee and a ₦500 swap fee."}
+        </p>
+        {parsed && !closed && isListingSeller ? (
+          <div className="mt-3 flex gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={actionBusy}
+              onClick={() => void runSwapAction("accept", parsed.swapProposalId)}
+            >
+              Accept
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={actionBusy}
+              onClick={() => void runSwapAction("reject", parsed.swapProposalId)}
+            >
+              Reject
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={actionBusy}
+              onClick={() => void runSwapAction("cancel", parsed.swapProposalId)}
+            >
+              Cancel swap
+            </Button>
+          </div>
+        ) : parsed && !closed ? (
+          <div className="mt-3 flex flex-col gap-2">
+            <p className="text-[var(--rw-ink-muted)]">Waiting for them to accept</p>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={actionBusy}
+              onClick={() => void runSwapAction("cancel", parsed.swapProposalId)}
+            >
+              Cancel swap
+            </Button>
+          </div>
+        ) : !parsed ? (
+          <p className="mt-3 text-[var(--rw-ink-muted)]">Swap proposal</p>
+        ) : null}
+      </div>
+    );
+  }
+
   function renderOffer(offer: OfferDto) {
     if (!meId) return null;
     return (
@@ -568,16 +855,16 @@ export default function ChatThreadPage() {
   }
 
   return (
-    <main className="flex min-h-[100dvh] flex-col bg-[var(--rw-bg)] text-[var(--rw-ink)]">
-      <header className="sticky top-0 z-20 border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-lg items-center gap-3 px-4 py-3">
+    <main className="flex h-[calc(100dvh-var(--rw-nav-offset,3.5rem))] w-full max-w-full flex-col overflow-hidden bg-[var(--rw-bg)] text-[var(--rw-ink)]">
+      <header className="z-20 shrink-0 border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 backdrop-blur-md">
+        <div className="relative mx-auto flex min-h-12 w-full min-w-0 max-w-lg items-center px-4 py-3 sm:px-8">
           <Link
             href="/chats"
-            className="text-sm font-semibold text-[var(--rw-accent)]"
+            className="relative z-10 text-sm font-semibold text-[var(--rw-accent)]"
           >
             Back
           </Link>
-          <div className="min-w-0 flex-1">
+          <div className="pointer-events-none absolute inset-x-20 text-center">
             <p className="truncate font-semibold">
               {meta?.listingTitle ?? "Conversation"}
             </p>
@@ -588,26 +875,29 @@ export default function ChatThreadPage() {
           <button
             type="button"
             onClick={() => setSafetyOpen(true)}
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
+            className="relative z-10 ml-auto text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
           >
             Safety
           </button>
         </div>
       </header>
 
-      <div className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 pb-4 pt-4">
+      <div
+        ref={threadRef}
+        className="mx-auto flex min-h-0 w-full min-w-0 max-w-lg flex-1 flex-col overflow-x-hidden overflow-y-auto px-4 py-6 sm:px-8"
+      >
         {thread.length === 0 ? (
           <EmptyState
             title="Say hello"
-            description="Ask about condition, pickup, or send an offer."
+            description="Ask about condition, delivery, or send an offer."
             className="flex-1"
           />
         ) : (
-          <ul className="flex flex-1 flex-col gap-3 overflow-y-auto pb-4">
+          <ul className="flex w-full min-w-0 flex-col gap-3 pb-4">
             {thread.map((item) => {
               if (item.kind === "offer") {
                 return (
-                  <li key={item.key} className="flex justify-center">
+                  <li key={item.key} className="flex min-w-0 justify-center">
                     {renderOffer(item.offer)}
                   </li>
                 );
@@ -620,7 +910,7 @@ export default function ChatThreadPage() {
                   : null;
 
               return (
-                <li key={item.key} className="space-y-2">
+                <li key={item.key} className="min-w-0 space-y-2">
                   {m.scamWarning ? (
                     <aside
                       role="alert"
@@ -631,8 +921,12 @@ export default function ChatThreadPage() {
                     </aside>
                   ) : null}
                   {m.type === "OFFER_CARD" && linkedOffer ? (
-                    <div className={mine ? "flex justify-end" : "flex justify-start"}>
+                    <div className={mine ? "flex min-w-0 justify-end" : "flex min-w-0 justify-start"}>
                       {renderOffer(linkedOffer)}
+                    </div>
+                  ) : m.type === "SWAP_PROPOSAL_CARD" ? (
+                    <div className="flex min-w-0 justify-center">
+                      {renderSwapProposal(m.body)}
                     </div>
                   ) : m.type === "SYSTEM" ? (
                     <p className="text-center text-xs text-[var(--rw-ink-muted)]">
@@ -641,7 +935,7 @@ export default function ChatThreadPage() {
                   ) : (
                     <div
                       className={[
-                        "max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed",
+                        "max-w-[85%] min-w-0 break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed",
                         mine
                           ? "ml-auto bg-[var(--rw-accent)] text-white"
                           : "mr-auto border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]",
@@ -652,19 +946,38 @@ export default function ChatThreadPage() {
                           {m.sender.displayName}
                         </p>
                       ) : null}
-                      <p className="whitespace-pre-wrap">{m.body}</p>
+                      <p className="whitespace-pre-wrap break-words">{m.body}</p>
                     </div>
                   )}
                 </li>
               );
             })}
-            <div ref={bottomRef} />
           </ul>
         )}
       </div>
 
-      <div className="sticky bottom-0 border-t border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-lg items-center gap-2 px-4 py-3">
+      <div className="z-20 w-full min-w-0 shrink-0 border-t border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 backdrop-blur-md">
+        {toast ? (
+          <div className="mx-auto w-full min-w-0 max-w-lg px-4 pt-3 sm:px-8">
+            <Toast
+              message={toast.message}
+              tone={toast.tone}
+              durationMs={toast.durationMs}
+              onDismiss={() => setToast(null)}
+            />
+          </div>
+        ) : null}
+        <div className="mx-auto flex w-full min-w-0 max-w-lg flex-col gap-2 px-4 py-3 sm:px-8">
+          {meta?.blockedByMe ? (
+            <Button
+              variant="primary"
+              disabled={safetyBusy}
+              onClick={() => void doUnblock()}
+            >
+              Unblock
+            </Button>
+          ) : (
+            <>
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -677,26 +990,30 @@ export default function ChatThreadPage() {
             placeholder="Message…"
             aria-label="Message"
             maxLength={4000}
-            className="min-w-0 flex-1 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+            className="w-full min-w-0 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
           />
-          <Button
-            variant="primary"
-            size="sm"
-            className="shrink-0"
-            disabled={sending || !draft.trim()}
-            onClick={() => void sendText()}
-          >
-            Send
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="shrink-0"
-            onClick={() => setOfferOpen(true)}
-            disabled={!meta}
-          >
-            Make offer
-          </Button>
+          <div className="flex min-w-0 gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              className="shrink-0"
+              disabled={sending || !draft.trim()}
+              onClick={() => void sendText()}
+            >
+              Send
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="min-w-0 flex-1"
+              onClick={() => setOfferOpen(true)}
+              disabled={!meta}
+            >
+              Make offer
+            </Button>
+          </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -767,24 +1084,15 @@ export default function ChatThreadPage() {
             {meta?.muted ? "Unmute conversation" : "Mute conversation"}
           </Button>
           <Button
-            variant="danger"
+            variant={meta?.blockedByMe ? "secondary" : "danger"}
             disabled={safetyBusy}
-            onClick={() => void doBlock()}
+            onClick={() => void (meta?.blockedByMe ? doUnblock() : doBlock())}
           >
-            Block user
+            {meta?.blockedByMe ? "Unblock user" : "Block user"}
           </Button>
         </div>
       </Modal>
 
-      {toast ? (
-        <div className="fixed bottom-28 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2">
-          <Toast
-            message={toast.message}
-            tone={toast.tone}
-            onDismiss={() => setToast(null)}
-          />
-        </div>
-      ) : null}
     </main>
   );
 }

@@ -3,13 +3,13 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { AppButton } from "./components/AppButton";
 import { EmptyState } from "./components/EmptyState";
 import { ApiError } from "./lib/api";

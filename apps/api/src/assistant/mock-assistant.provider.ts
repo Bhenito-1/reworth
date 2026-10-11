@@ -95,18 +95,52 @@ function confirmTokenFor(
   return `confirm_${createHash('sha256').update(raw).digest('hex').slice(0, 24)}`;
 }
 
-function parseBudgetKobo(content: string): number {
-  const m =
-    content.match(/₦\s*([\d,.]+)\s*m/i) ||
-    content.match(/([\d,.]+)\s*million/i) ||
-    content.match(/([\d,.]+)\s*m\b/i) ||
-    content.match(/([\d,.]+)\s*k\b/i) ||
-    content.match(/([\d,.]+)/);
+const SEARCH_STOP_WORDS = new Set([
+  'find',
+  'search',
+  'show',
+  'listings',
+  'listing',
+  'for',
+  'me',
+  'a',
+  'an',
+  'the',
+  'in',
+  'near',
+  'under',
+  'with',
+  'my',
+  'of',
+  'and',
+  'or',
+  'what',
+  'whats',
+  'used',
+  'fair',
+  'price',
+]);
+
+function searchWords(content: string): string[] {
+  return content
+    .toLowerCase()
+    .replace(/₦/g, ' ')
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 2 && !SEARCH_STOP_WORDS.has(word) && !/^\d+$/.test(word));
+}
+
+/** Parse a shopper budget from free text into kobo. ₦1.5m → 150_000_000. */
+export function parseBudgetKobo(content: string): number {
+  const million = content.match(/₦?\s*([\d,.]+)\s*(?:million|m)\b/i);
+  const thousand = content.match(/₦?\s*([\d,.]+)\s*k\b/i);
+  const plain = content.match(/₦\s*([\d,.]+)/i) || content.match(/([\d,.]+)/);
+  const m = million || thousand || plain;
   if (!m) return 1_500_000_00;
   let n = Number(String(m[1]).replace(/,/g, ''));
-  if (/million|\bm\b/i.test(content) && n < 1000) n *= 1_000_000;
-  else if (/\bk\b/i.test(content) && n < 100_000) n *= 1_000;
-  // treat as naira → kobo when clearly naira-scale
+  if (!Number.isFinite(n) || n <= 0) return 1_500_000_00;
+  if (million) n *= 1_000_000;
+  else if (thousand && n < 100_000) n *= 1_000;
+  // Amounts below 100 million are naira, not kobo.
   if (n < 100_000_000) n *= 100;
   return Math.round(n);
 }
@@ -252,16 +286,14 @@ export class MockAssistantProvider implements AssistantProvider {
     latencyMs: number,
     costMicros: number,
   ): AssistantToolResult {
-    const q = input.content.toLowerCase();
+    const words = searchWords(input.content);
     const catalog = input.listingCatalog ?? [];
     const results = catalog
       .filter((l) => l.city.toLowerCase() === input.city.toLowerCase())
       .filter((l) => {
-        if (!q.trim()) return true;
-        return l.title.toLowerCase().includes(
-          q.replace(/find|search|show|listings|for|me|a|an|the/g, ' ').trim().split(/\s+/).find((w) => w.length > 2) ??
-            '',
-        ) || true;
+        if (words.length === 0) return true;
+        const title = l.title.toLowerCase();
+        return words.some((word) => title.includes(word));
       })
       .slice(0, 8)
       .map((l) => ({ id: l.id, title: l.title, priceKobo: l.priceKobo }));

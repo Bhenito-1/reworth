@@ -7,12 +7,13 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { MockPsp } from '../providers/mock-psp';
 import { PAYMENT_PROVIDER } from '../providers/payment.provider';
 import { PaystackAdapter } from '../providers/paystack.adapter';
-import { PlatformServicesModule } from '../platform-services/platform-services.module';
 import { ReferralsModule } from '../referrals/referrals.module';
 import { ReviewsModule } from '../reviews/reviews.module';
 import { VerticalsModule } from '../verticals/verticals.module';
 import { AdminAlertsModule } from '../admin/admin-alerts.module';
 import { AutoReleaseScheduler } from './auto-release.scheduler';
+import { HomeModule } from '../home/home.module';
+import { SwapModule } from '../swap/swap.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
@@ -42,9 +43,10 @@ export function createPaymentProvider(config: ConfigService) {
     ReviewsModule,
     forwardRef(() => DeliveryModule),
     forwardRef(() => VerticalsModule),
-    forwardRef(() => PlatformServicesModule),
     ReferralsModule,
     InventoryModule,
+    HomeModule,
+    SwapModule,
   ],
   controllers: [OrdersController],
   providers: [

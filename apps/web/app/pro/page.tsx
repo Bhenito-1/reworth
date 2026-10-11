@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
+import { sentenceCaseLabel } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
 import {
   applyPro,
@@ -185,7 +186,9 @@ export default function ProSellerPage() {
                 <div className="mt-3 space-y-2 text-sm">
                   <p>
                     <span className="text-[var(--rw-ink-muted)]">Account · </span>
-                    <span className="font-medium">{account.status}</span>
+                    <span className="font-medium">
+                      {sentenceCaseLabel(account.status)}
+                    </span>
                   </p>
                   {account.subscriptionStatus ? (
                     <p>
@@ -288,7 +291,8 @@ export default function ProSellerPage() {
                   {uploadJob ? (
                     <div className="mt-4 rounded-[var(--rw-radius)] border border-[var(--rw-border)] p-4 text-sm">
                       <p>
-                        Job {uploadJob.id.slice(0, 8)}… · {uploadJob.status} ·{" "}
+                        Job {uploadJob.id.slice(0, 8)}… ·{" "}
+                        {sentenceCaseLabel(uploadJob.status)} ·{" "}
                         {uploadJob.successCount ?? 0} ok /{" "}
                         {uploadJob.errorCount ?? uploadErrors.length} errors
                       </p>

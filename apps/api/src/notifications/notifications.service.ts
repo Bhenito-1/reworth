@@ -18,7 +18,9 @@ import {
   type PushProvider,
 } from '../providers/push.provider';
 import {
+  ALL_NOTIFICATION_CATEGORIES,
   isCriticalCategory,
+  isMarketingEmailCategory,
   PUSH_FREQUENCY_CAP_PER_HOUR,
 } from './notification-categories';
 
@@ -84,6 +86,18 @@ export class NotificationsService {
     const user = await this.prisma.user.findUnique({
       where: { id: input.userId },
     });
+    const consents = await this.prisma.consentRecord.findMany({
+      where: {
+        userId: input.userId,
+        channel: { in: ['EMAIL', 'MARKETING'] },
+      },
+    });
+    const emailAllowed = consents.some(
+      (row) => row.channel === 'EMAIL' && row.granted,
+    );
+    const marketingAllowed = consents.some(
+      (row) => row.channel === 'MARKETING' && row.granted,
+    );
 
     const created: { id: string; channel: NotificationChannel }[] = [];
     const skipped: { channel: NotificationChannel; reason: string }[] = [];
@@ -161,6 +175,14 @@ export class NotificationsService {
       }
 
       if (channel === NotificationChannel.EMAIL) {
+        if (!emailAllowed) {
+          skipped.push({ channel, reason: 'email_consent' });
+          continue;
+        }
+        if (isMarketingEmailCategory(input.category) && !marketingAllowed) {
+          skipped.push({ channel, reason: 'marketing_consent' });
+          continue;
+        }
         if (!input.forceDelivery && inQuietHours) {
           skipped.push({ channel, reason: 'quiet_hours' });
           continue;
@@ -289,6 +311,32 @@ export class NotificationsService {
       create: { userId, category, channel, enabled: effective },
       update: { enabled: effective },
     });
+  }
+
+  /** Turns off every non-essential category. Orders, payments, delivery, and disputes stay on. */
+  async disableNonEssential(userId: string) {
+    const channels = [
+      NotificationChannel.IN_APP,
+      NotificationChannel.PUSH,
+      NotificationChannel.EMAIL,
+    ];
+    const categories = ALL_NOTIFICATION_CATEGORIES.filter(
+      (category) => !isCriticalCategory(category),
+    );
+    await this.prisma.$transaction(
+      categories.flatMap((category) =>
+        channels.map((channel) =>
+          this.prisma.notificationPreference.upsert({
+            where: {
+              userId_category_channel: { userId, category, channel },
+            },
+            create: { userId, category, channel, enabled: false },
+            update: { enabled: false },
+          }),
+        ),
+      ),
+    );
+    return { disabled: categories.length };
   }
 
   async registerPushToken(

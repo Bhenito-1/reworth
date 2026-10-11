@@ -32,13 +32,21 @@ export class CreateListingDto {
   @IsUUID()
   categoryId?: string;
 
+  /** Free-text category from the sell form. Resolved to categoryId when it matches. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(80)
+  categoryName?: string | null;
+
   @IsOptional()
   @IsUUID()
   subcategoryId?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null)
   @IsString()
-  brand?: string;
+  brand?: string | null;
 
   @IsOptional()
   @IsString()
@@ -119,10 +127,6 @@ export class CreateListingDto {
   @IsObject()
   vehicle?: Record<string, unknown>;
 
-  @IsOptional()
-  @IsBoolean()
-  instantBuyEligible?: boolean;
-
   /** Auto-donate after N days unsold; null clears. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== undefined)
@@ -156,13 +160,21 @@ export class UpdateListingDto {
   @IsUUID()
   categoryId?: string;
 
+  /** Free-text category from the sell form. Resolved to categoryId when it matches. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(80)
+  categoryName?: string | null;
+
   @IsOptional()
   @IsUUID()
   subcategoryId?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null)
   @IsString()
-  brand?: string;
+  brand?: string | null;
 
   @IsOptional()
   @IsString()
@@ -247,10 +259,6 @@ export class UpdateListingDto {
   @IsOptional()
   @IsBoolean()
   authRequired?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  instantBuyEligible?: boolean;
 
   /** Auto-donate after N days unsold; null clears. */
   @IsOptional()

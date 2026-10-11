@@ -11,6 +11,7 @@ import {
   getListing,
   patchListing,
   publishListing,
+  sentenceCaseLabel,
 } from "../../../lib/listings";
 import type { PublicListing } from "../../../lib/types";
 
@@ -99,7 +100,7 @@ export default function FixListingPage() {
             "It was rejected again. Adjust the details and try once more.",
         );
       } else {
-        setResult(`Status: ${published.status}`);
+        setResult(`Status: ${sentenceCaseLabel(published.status)}`);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not publish");
@@ -137,7 +138,7 @@ export default function FixListingPage() {
             </div>
           ) : (
             <p className="text-sm text-[var(--rw-ink-muted)]">
-              Status: {listing.status}
+              Status: {sentenceCaseLabel(listing.status)}
             </p>
           )}
           {result ? (

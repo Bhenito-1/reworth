@@ -6,12 +6,12 @@ import { useEffect, useState } from "react";
 import {
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import * as ImagePicker from "expo-image-picker";
 import { ApiError, apiFetch } from "./lib/api";
 import {

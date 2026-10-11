@@ -30,7 +30,7 @@ export class RuleBasedAiMock implements AiListingProvider {
       input.titleHint?.trim() || 'Gently used item in great condition';
     const description =
       input.descriptionHint?.trim() ||
-      `${title}. Clean, functional, and ready for a new home in Lagos. Pickup preferred.`;
+      `${title}. Clean, functional, and ready for a new home in Lagos.`;
     const suggestedCategory = input.categoryHint?.trim() || 'Other';
     const tags = [
       suggestedCategory.toLowerCase(),

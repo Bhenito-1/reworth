@@ -25,6 +25,7 @@ export type VerifyPayoutResponse =
       ok: false;
       reason: 'ACCOUNT_NOT_FOUND' | 'NAME_MISMATCH';
       nibssName?: LegalName;
+      message?: string;
     };
 
 function maskAccount(accountNumber: string): string {
@@ -99,7 +100,11 @@ export class SellerPayoutService {
       institutionCode: dto.bankCode,
     });
     if (!enquiry.found) {
-      return { ok: false, reason: 'ACCOUNT_NOT_FOUND' };
+      return {
+        ok: false,
+        reason: 'ACCOUNT_NOT_FOUND',
+        message: enquiry.message,
+      };
     }
 
     const nibssName = splitAccountName(enquiry.accountName);

@@ -54,6 +54,8 @@ export function clearTokens(): void {
   if (!canUseStorage()) return;
   localStorage.removeItem(ACCESS_KEY);
   localStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem("rw_discovery_location");
+  window.dispatchEvent(new Event("reworth-home-location-cleared"));
   notifyAuthChanged();
 }
 

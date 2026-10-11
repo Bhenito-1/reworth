@@ -147,15 +147,19 @@ export function conditionBadgeSource(condition: string) {
   }
 }
 
-/** Order / offer pipeline status → brand badge art */
+/** Order / offer pipeline status → brand badge art. Unknown statuses stay text-only. */
 export function orderStatusBadgeSource(status: string) {
   switch (status.toUpperCase()) {
+    case "CREATED":
     case "PENDING_PAYMENT":
     case "AWAITING_PAYMENT":
     case "PAYMENT_PENDING":
       return brandAssets.statusPaymentPending;
     case "PAID":
     case "PAYMENT_RECEIVED":
+    case "FUNDED":
+    case "IN_AUTHENTICATION":
+    case "RECEIVED":
       return brandAssets.statusPaid;
     case "READY_FOR_PICKUP":
     case "READY_PICKUP":
@@ -183,6 +187,6 @@ export function orderStatusBadgeSource(status: string) {
     case "ACCEPTED":
       return brandAssets.statusOfferAccepted;
     default:
-      return brandAssets.statusOfferSent;
+      return null;
   }
 }

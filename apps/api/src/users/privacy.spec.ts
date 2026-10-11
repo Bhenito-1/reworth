@@ -111,7 +111,7 @@ describe('UsersService privacy', () => {
     const prisma = buildPrisma();
     const service = new UsersService(prisma as never, audit as never);
     const result = await service.getConsents('u1');
-    expect(result.consents).toHaveLength(3);
+    expect(result.consents).toHaveLength(2);
     expect(result.consents.every((c) => c.granted === false)).toBe(true);
   });
 

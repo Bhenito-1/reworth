@@ -6,21 +6,23 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { screenBounds, ScrollView } from "./components/BoundScroll";
 import { ApiError } from "./lib/api";
 import { clearTokens, ensureAccessToken, getAccessToken } from "./lib/auth";
 import {
   acceptOffer,
   blockUser,
+  unblockUser,
   clientMsgId,
   conversationThumbUrl,
   counterOffer,
   createOffer,
+  deleteConversation,
   listConversations,
   listMessages,
   listOffers,
@@ -30,6 +32,7 @@ import {
   offerStatusLabel,
   postMessage,
   rejectOffer,
+  safeChatPreview,
   reportUser,
   unmuteConversation,
   withdrawOffer,
@@ -45,12 +48,12 @@ import {
 } from "./lib/chat-socket";
 import {
   acceptSwapProposal,
+  cancelSwapProposal,
   parseSwapProposalCard,
   rejectSwapProposal,
 } from "./lib/swap";
 import { formatNgnFromKobo } from "./lib/types";
 import { EmptyState } from "./components/EmptyState";
-import { brandAssets } from "./lib/brandAssets";
 import { useColors } from "./theme/ThemeProvider";
 import { colors } from "./theme/tokens";
 
@@ -58,11 +61,14 @@ type Props = {
   meId: string;
   openConversationId?: string | null;
   onConversationOpened?: () => void;
+  onActiveChange?: (conversationId: string | null) => void;
   onCheckout?: (params: {
     listingId: string;
     offerId?: string;
     orderIntentId?: string;
+    payOrderId?: string;
   }) => void;
+  onOpenOrder?: (orderId: string) => void;
   onBrowse?: () => void;
   /** Called when session cannot be recovered — parent should return to onboarding */
   onSessionExpired?: () => void;
@@ -76,7 +82,9 @@ export function ChatsPanel({
   meId,
   openConversationId,
   onConversationOpened,
+  onActiveChange,
   onCheckout,
+  onOpenOrder,
   onBrowse,
   onSessionExpired,
 }: Props) {
@@ -85,7 +93,15 @@ export function ChatsPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(
+    openConversationId ?? null,
+  );
+  const skipEmptyReport = useRef(activeId == null);
+  const [pendingDelete, setPendingDelete] = useState<ConversationListItem | null>(
+    null,
+  );
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -183,12 +199,41 @@ export function ChatsPanel({
     }
   }, [openConversationId, onConversationOpened]);
 
+  useEffect(() => {
+    if (skipEmptyReport.current && activeId == null) return;
+    skipEmptyReport.current = false;
+    onActiveChange?.(activeId);
+  }, [activeId, onActiveChange]);
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const token = await ensureAccessToken();
+      if (!token) {
+        setSessionExpired(true);
+        return;
+      }
+      await deleteConversation(token, pendingDelete.id);
+      setItems((prev) => prev.filter((row) => row.id !== pendingDelete.id));
+      setPendingDelete(null);
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError ? err.message : "Could not delete this chat",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   if (activeId) {
     return (
       <ChatThread
         conversationId={activeId}
         meId={meId}
         onCheckout={onCheckout}
+        onOpenOrder={onOpenOrder}
         onBack={() => {
           setActiveId(null);
           void load();
@@ -239,6 +284,7 @@ export function ChatsPanel({
         <FlatList
           data={items}
           keyExtractor={(c) => c.id}
+          style={screenBounds}
           contentContainerStyle={styles.listPad}
           renderItem={({ item: c }) => {
             const thumb = conversationThumbUrl(c.listingThumb);
@@ -252,12 +298,22 @@ export function ChatsPanel({
                   },
                 ]}
                 onPress={() => setActiveId(c.id)}
+                onLongPress={() => {
+                  setDeleteError(null);
+                  setPendingDelete(c);
+                }}
+                delayLongPress={500}
                 accessibilityRole="button"
                 accessibilityLabel={c.listingTitle}
+                accessibilityHint="Long press to delete this chat for you"
               >
                 <View style={[styles.thumb, { backgroundColor: theme.border }]}>
                   {thumb ? (
-                    <Image source={{ uri: thumb }} style={styles.thumbImg} />
+                    <Image
+                      source={{ uri: thumb }}
+                      style={styles.thumbImg}
+                      resizeMode="cover"
+                    />
                   ) : (
                     <Text style={[styles.thumbLetter, { color: theme.muted }]}>
                       {(c.listingTitle || "?").slice(0, 1).toUpperCase()}
@@ -292,7 +348,7 @@ export function ChatsPanel({
                   >
                     {c.counterpart.displayName}
                     {c.lastMessagePreview
-                      ? ` · ${c.lastMessagePreview}`
+                      ? ` · ${safeChatPreview(c.lastMessagePreview)}`
                       : " · No messages yet"}
                   </Text>
                   {c.activeOffer ? (
@@ -315,6 +371,46 @@ export function ChatsPanel({
           }}
         />
       )}
+
+      <Modal visible={pendingDelete != null} transparent animationType="slide">
+        <View style={styles.sheetBackdrop}>
+          <View style={[styles.sheet, { backgroundColor: theme.canvas }]}>
+            <Text style={[styles.sheetTitle, { color: theme.ink }]}>
+              Delete chat
+            </Text>
+            <Text style={[styles.copy, { color: theme.muted, marginTop: 8 }]}>
+              Delete this chat with{" "}
+              {pendingDelete?.counterpart.displayName ?? "this member"} on your
+              side? They still have their messages.
+            </Text>
+            {deleteError ? (
+              <Text style={[styles.error, { color: theme.error }]} accessibilityRole="alert">
+                {deleteError}
+              </Text>
+            ) : null}
+            <Pressable
+              style={[styles.primaryBtn, { marginTop: 16 }, deleting && styles.disabled]}
+              disabled={deleting}
+              onPress={() => void confirmDelete()}
+              accessibilityRole="button"
+              accessibilityLabel="Delete chat"
+            >
+              <Text style={styles.primaryBtnText}>
+                {deleting ? "Deleting…" : "Delete chat"}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                if (!deleting) setPendingDelete(null);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+            >
+              <Text style={[styles.linkCenter, { color: theme.orange }]}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -324,6 +420,7 @@ function ChatThread({
   meId,
   onBack,
   onCheckout,
+  onOpenOrder,
 }: {
   conversationId: string;
   meId: string;
@@ -332,7 +429,9 @@ function ChatThread({
     listingId: string;
     offerId?: string;
     orderIntentId?: string;
+    payOrderId?: string;
   }) => void;
+  onOpenOrder?: (orderId: string) => void;
 }) {
   const theme = useColors();
   const [meta, setMeta] = useState<ConversationListItem | null>(null);
@@ -486,22 +585,29 @@ function ChatThread({
   }, [conversationId]);
 
   const thread = useMemo(() => {
+    const cutoff = meta?.deletedAt ? new Date(meta.deletedAt).getTime() : 0;
+    const visibleMessages = cutoff
+      ? messages.filter((message) => new Date(message.createdAt).getTime() > cutoff)
+      : messages;
+    const visibleOffers = cutoff
+      ? offers.filter((offer) => new Date(offer.createdAt).getTime() > cutoff)
+      : offers;
     const inMsg = new Set(
-      messages.filter((m) => m.offerId).map((m) => m.offerId as string),
+      visibleMessages.filter((m) => m.offerId).map((m) => m.offerId as string),
     );
-    const items: ThreadItem[] = messages.map((m) => ({
+    const items: ThreadItem[] = visibleMessages.map((m) => ({
       kind: "message",
       key: `m-${m.id}`,
       at: m.createdAt,
       message: m,
     }));
-    for (const o of offers) {
+    for (const o of visibleOffers) {
       if (inMsg.has(o.id)) continue;
       items.push({ kind: "offer", key: `o-${o.id}`, at: o.createdAt, offer: o });
     }
     items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     return items;
-  }, [messages, offers]);
+  }, [messages, offers, meta?.deletedAt]);
 
   const offersById = useMemo(() => {
     const map = new Map<string, OfferDto>();
@@ -660,10 +766,27 @@ function ChatThread({
     try {
       await blockUser(token, meta.counterpart.id);
       setSafetyOpen(false);
+      setMeta({ ...meta, blockedByMe: true });
+      setSafetyOpen(false);
       setToast("User blocked");
-      onBack();
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : "Block failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doUnblock() {
+    const token = await ensureAccessToken();
+    if (!token || !meta) return;
+    setBusy(true);
+    try {
+      await unblockUser(token, meta.counterpart.id);
+      setMeta({ ...meta, blockedByMe: false });
+      setSafetyOpen(false);
+      setToast("User unblocked");
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Unblock failed");
     } finally {
       setBusy(false);
     }
@@ -715,7 +838,7 @@ function ChatThread({
   }
 
   async function runSwapAction(
-    action: "accept" | "reject",
+    action: "accept" | "reject" | "cancel",
     proposalId: string,
   ) {
     const token = await ensureAccessToken();
@@ -723,8 +846,20 @@ function ChatThread({
     setSwapBusyId(proposalId);
     try {
       if (action === "accept") {
-        await acceptSwapProposal(token, proposalId);
-        setToast("Swap accepted");
+        const res = (await acceptSwapProposal(token, proposalId)) as {
+          orders?: { id: string; payerId: string }[];
+        };
+        const mine = res.orders?.find((order) => order.payerId === meId);
+        setToast(
+          "Swap accepted. Open the order to pay the delivery fee and the ₦500 swap fee.",
+        );
+        await refresh();
+        if (mine) onOpenOrder?.(mine.id);
+        return;
+      }
+      if (action === "cancel") {
+        await cancelSwapProposal(token, proposalId);
+        setToast("Swap cancelled");
       } else {
         await rejectSwapProposal(token, proposalId);
         setToast("Swap rejected");
@@ -737,48 +872,156 @@ function ChatThread({
     }
   }
 
+  function formatDeliveryDay(iso: string): string {
+    const [year, month, day] = iso.slice(0, 10).split("-").map(Number);
+    if (!year || !month || !day) return iso;
+    return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-NG", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  }
+
+  function SwapSide({
+    label,
+    item,
+  }: {
+    label: string;
+    item: { title: string; imageUrl?: string | null };
+  }) {
+    return (
+      <View style={styles.swapSide}>
+        {item.imageUrl ? (
+          <Image
+            source={{ uri: item.imageUrl }}
+            style={styles.swapSidePhoto}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.swapSidePhoto, styles.swapSideFallback]} />
+        )}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.swapSideLabel}>{label}</Text>
+          <Text style={styles.swapSideTitle} numberOfLines={2}>
+            {item.title}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   function renderSwapCard(m: ChatMessage) {
     const parsed = parseSwapProposalCard(m.body);
     if (!parsed) {
       return (
-        <View style={styles.offerCard}>
-          <Text style={styles.offerLabel}>Swap proposal</Text>
-          <Text style={styles.offerStatus}>{m.body}</Text>
+        <View style={styles.swapCard}>
+          <Text style={styles.swapTitle}>Swap proposal</Text>
         </View>
       );
     }
     const isListingSeller = Boolean(meta && meId === meta.sellerId);
-    const cash = parsed.cashComponentKobo ?? 0;
+    const accepted = parsed.kind === "swap-accepted";
+    const rejected = parsed.kind === "swap-rejected";
+    const cancelled = parsed.kind === "swap-cancelled";
+    const closed = accepted || rejected || cancelled;
+    const settled =
+      !closed &&
+      messages.some((message) => {
+        if (message.id === m.id || message.type !== "SWAP_PROPOSAL_CARD") {
+          return false;
+        }
+        const later = parseSwapProposalCard(message.body);
+        return (
+          later?.swapProposalId === parsed.swapProposalId &&
+          (later.kind === "swap-accepted" ||
+            later.kind === "swap-rejected" ||
+            later.kind === "swap-cancelled")
+        );
+      });
+    if (settled) return null;
+    const mineOrder = parsed.orders.find((order) => order.payerId === meId);
     return (
-      <View style={styles.offerCard}>
-        <Text style={styles.offerLabel}>Swap proposal</Text>
-        <Text style={styles.offerAmount}>
-          {cash > 0
-            ? `Item + ${formatNgnFromKobo(cash)}`
-            : "Item for item"}
+      <View style={styles.swapCard}>
+        {accepted ? <Text style={styles.swapEyebrow}>Swap order</Text> : null}
+        <Text style={styles.swapTitle}>
+          {accepted
+            ? "Swap accepted"
+            : rejected
+              ? "Swap rejected"
+              : cancelled
+                ? "Swap cancelled"
+                : parsed.title || "Swap proposal"}
         </Text>
-        <Text style={styles.offerStatus}>Pending response</Text>
-        {isListingSeller ? (
+        {!accepted && parsed.description ? (
+          <Text style={styles.swapBody}>{parsed.description}</Text>
+        ) : null}
+        {parsed.imageUrls.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.swapPhotoRow}
+          >
+            {parsed.imageUrls.map((url) => (
+              <Image
+                key={url}
+                source={{ uri: url }}
+                style={styles.swapPhoto}
+                resizeMode="cover"
+                accessibilityLabel="Swap photo"
+              />
+            ))}
+          </ScrollView>
+        ) : null}
+        {accepted && mineOrder?.receive && mineOrder.send ? (
+          <View style={styles.swapExchange}>
+            <SwapSide label="You send" item={mineOrder.send} />
+            <SwapSide label="You receive" item={mineOrder.receive} />
+          </View>
+        ) : null}
+        {parsed.deliveryOn ? (
+          <Text style={styles.swapMeta}>
+            Delivery day · {formatDeliveryDay(parsed.deliveryOn)}
+          </Text>
+        ) : null}
+        <Text style={styles.swapBody}>
+          {accepted
+            ? "This is now an order for both of you. Each person pays the delivery fee and a ₦500 swap fee. Cancel it from the order, before either of you pays."
+            : rejected
+              ? "This proposal was rejected."
+              : cancelled
+                ? "This proposal was cancelled. The listing is back on the marketplace."
+                : "If they accept, both of you get an order. Each person pays the delivery fee and a ₦500 swap fee."}
+        </Text>
+        {!closed && isListingSeller ? (
           <View style={styles.offerActions}>
             <MiniBtn
               label="Accept"
               primary
               disabled={swapBusyId === parsed.swapProposalId}
-              onPress={() =>
-                void runSwapAction("accept", parsed.swapProposalId)
-              }
+              onPress={() => void runSwapAction("accept", parsed.swapProposalId)}
             />
             <MiniBtn
               label="Reject"
               disabled={swapBusyId === parsed.swapProposalId}
-              onPress={() =>
-                void runSwapAction("reject", parsed.swapProposalId)
-              }
+              onPress={() => void runSwapAction("reject", parsed.swapProposalId)}
+            />
+            <MiniBtn
+              label="Cancel swap"
+              disabled={swapBusyId === parsed.swapProposalId}
+              onPress={() => void runSwapAction("cancel", parsed.swapProposalId)}
             />
           </View>
-        ) : (
-          <Text style={styles.muted}>Waiting for seller</Text>
-        )}
+        ) : !closed ? (
+          <View style={styles.offerActions}>
+            <Text style={styles.muted}>Waiting for them to accept</Text>
+            <MiniBtn
+              label="Cancel swap"
+              disabled={swapBusyId === parsed.swapProposalId}
+              onPress={() => void runSwapAction("cancel", parsed.swapProposalId)}
+            />
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -873,18 +1116,26 @@ function ChatThread({
   return (
     <View style={styles.flex}>
       <View style={styles.threadHeader}>
-        <Pressable onPress={onBack} accessibilityRole="button">
+        <Pressable
+          onPress={onBack}
+          accessibilityRole="button"
+          style={styles.threadSide}
+        >
           <Text style={styles.link}>Back</Text>
         </Pressable>
-        <View style={styles.threadTitles}>
+        <View style={styles.threadTitles} pointerEvents="none">
           <Text style={styles.threadTitle} numberOfLines={1}>
             {meta?.listingTitle ?? "Conversation"}
           </Text>
-          <Text style={styles.muted} numberOfLines={1}>
+          <Text style={styles.threadSubtitle} numberOfLines={1}>
             {meta?.counterpart.displayName ?? "Member"}
           </Text>
         </View>
-        <Pressable onPress={() => setSafetyOpen(true)} accessibilityRole="button">
+        <Pressable
+          onPress={() => setSafetyOpen(true)}
+          accessibilityRole="button"
+          style={[styles.threadSide, styles.threadSideEnd]}
+        >
           <Text style={styles.link}>Safety</Text>
         </Pressable>
       </View>
@@ -959,48 +1210,63 @@ function ChatThread({
         ) : null}
       </ScrollView>
 
-      <View style={styles.composer}>
-        <TextInput
-          style={[
-            styles.composerInput,
-            {
-              borderColor: theme.border,
-              backgroundColor: theme.surface,
-              color: theme.ink,
-            },
-          ]}
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Message…"
-          placeholderTextColor={theme.muted}
-          accessibilityLabel="Message"
-          maxLength={4000}
-        />
-        <Pressable
-          style={[
-            styles.sendBtn,
-            { backgroundColor: theme.orange },
-            (!draft.trim() || sending) && styles.disabled,
-          ]}
-          disabled={!draft.trim() || sending}
-          onPress={() => void sendText()}
-          accessibilityRole="button"
-          accessibilityLabel="Send message"
-        >
-          <Image
-            source={brandAssets.actionChat}
-            style={styles.sendIcon}
-            resizeMode="contain"
+      {meta?.blockedByMe ? (
+        <View style={styles.composer}>
+          <Pressable
+            style={[
+              styles.sendBtn,
+              styles.unblockBtn,
+              { backgroundColor: theme.orange },
+              busy && styles.disabled,
+            ]}
+            disabled={busy}
+            onPress={() => void doUnblock()}
+            accessibilityRole="button"
+            accessibilityLabel="Unblock"
+          >
+            <Text style={styles.sendText}>Unblock</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.composer}>
+          <TextInput
+            style={[
+              styles.composerInput,
+              {
+                borderColor: theme.border,
+                backgroundColor: theme.surface,
+                color: theme.ink,
+              },
+            ]}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Message…"
+            placeholderTextColor={theme.muted}
+            accessibilityLabel="Message"
+            maxLength={4000}
           />
-        </Pressable>
-        <Pressable
-          style={[styles.offerBtn, !meta && styles.disabled]}
-          onPress={() => setOfferOpen(true)}
-          disabled={!meta}
-        >
-          <Text style={styles.offerBtnText}>Make offer</Text>
-        </Pressable>
-      </View>
+          <Pressable
+            style={[
+              styles.sendBtn,
+              { backgroundColor: theme.orange },
+              (!draft.trim() || sending) && styles.disabled,
+            ]}
+            disabled={!draft.trim() || sending}
+            onPress={() => void sendText()}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+          >
+            <Text style={styles.sendText}>Send</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.offerBtn, !meta && styles.disabled]}
+            onPress={() => setOfferOpen(true)}
+            disabled={!meta}
+          >
+            <Text style={styles.offerBtnText}>Make offer</Text>
+          </Pressable>
+        </View>
+      )}
 
       <Modal visible={offerOpen} animationType="slide" transparent>
         <View style={styles.sheetBackdrop}>
@@ -1057,8 +1323,13 @@ function ChatThread({
         </View>
       </Modal>
 
-      <Modal visible={safetyOpen} animationType="slide" transparent>
-        <View style={styles.sheetBackdrop}>
+      {safetyOpen ? (
+        <View style={styles.safetyLayer}>
+          <Pressable
+            style={styles.safetyDismiss}
+            onPress={() => setSafetyOpen(false)}
+            accessibilityLabel="Close safety"
+          />
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>Block or report</Text>
             <Text style={styles.label}>Report reason</Text>
@@ -1079,25 +1350,41 @@ function ChatThread({
               style={[styles.secondaryBtn, busy && styles.disabled]}
               disabled={busy}
               onPress={() => void doMuteToggle()}
-              accessibilityLabel={meta?.muted ? "Unmute conversation" : "Mute conversation"}
+              accessibilityLabel={
+                meta?.muted ? "Unmute conversation" : "Mute conversation"
+              }
             >
               <Text style={styles.secondaryBtnText}>
                 {meta?.muted ? "Unmute conversation" : "Mute conversation"}
               </Text>
             </Pressable>
             <Pressable
-              style={[styles.dangerBtn, busy && styles.disabled]}
+              style={[
+                meta?.blockedByMe ? styles.secondaryBtn : styles.dangerBtn,
+                busy && styles.disabled,
+              ]}
               disabled={busy}
-              onPress={() => void doBlock()}
+              onPress={() => void (meta?.blockedByMe ? doUnblock() : doBlock())}
+              accessibilityLabel={
+                meta?.blockedByMe ? "Unblock user" : "Block user"
+              }
             >
-              <Text style={styles.dangerBtnText}>Block user</Text>
+              <Text
+                style={
+                  meta?.blockedByMe
+                    ? styles.secondaryBtnText
+                    : styles.dangerBtnText
+                }
+              >
+                {meta?.blockedByMe ? "Unblock user" : "Block user"}
+              </Text>
             </Pressable>
             <Pressable onPress={() => setSafetyOpen(false)}>
               <Text style={styles.linkCenter}>Cancel</Text>
             </Pressable>
           </View>
         </View>
-      </Modal>
+      ) : null}
     </View>
   );
 }
@@ -1221,11 +1508,35 @@ const styles = StyleSheet.create({
   threadHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    justifyContent: "space-between",
+    minHeight: 48,
+    paddingHorizontal: 20,
     marginBottom: 8,
   },
-  threadTitles: { flex: 1, minWidth: 0 },
-  threadTitle: { fontSize: 16, fontWeight: "700", color: colors.ink },
+  threadSide: {
+    width: 64,
+    minHeight: 44,
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  threadSideEnd: { alignItems: "flex-end" },
+  threadTitles: {
+    position: "absolute",
+    left: 96,
+    right: 96,
+    alignItems: "center",
+  },
+  threadTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.ink,
+    textAlign: "center",
+  },
+  threadSubtitle: {
+    fontSize: 14,
+    color: colors.muted,
+    textAlign: "center",
+  },
   link: { color: colors.orange, fontWeight: "700", fontSize: 14 },
   linkCenter: {
     marginTop: 14,
@@ -1233,7 +1544,12 @@ const styles = StyleSheet.create({
     color: colors.orange,
     fontWeight: "600",
   },
-  threadPad: { paddingBottom: 16, gap: 10 },
+  threadPad: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 20,
+    gap: 10,
+  },
   centerText: { textAlign: "center" },
   msgBlock: { gap: 6 },
   bubble: {
@@ -1273,7 +1589,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: colors.muted,
-    textTransform: "uppercase",
   },
   offerAmount: {
     marginTop: 4,
@@ -1300,9 +1615,20 @@ const styles = StyleSheet.create({
   miniDanger: { backgroundColor: colors.error, borderColor: colors.error },
   miniText: { fontSize: 13, fontWeight: "700", color: colors.ink },
   miniTextOn: { color: colors.onAccent },
-  composer: { flexDirection: "row", gap: 8, alignItems: "center" },
+  composer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+    minWidth: 0,
+    maxWidth: "100%",
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
   composerInput: {
     flex: 1,
+    minWidth: 0,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 12,
@@ -1320,8 +1646,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  sendIcon: { width: 22, height: 22 },
-  sendText: { color: colors.onAccent, fontWeight: "700" },
+  sendText: { color: colors.onAccent, fontWeight: "700", fontSize: 15 },
   offerBtn: {
     borderRadius: 12,
     borderWidth: 1,
@@ -1333,6 +1658,57 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     gap: 8,
+  },
+  swapCard: {
+    width: "100%",
+    maxWidth: 340,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: 16,
+    gap: 8,
+  },
+  swapEyebrow: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+    color: colors.muted,
+  },
+  swapTitle: {
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: "700",
+    color: colors.ink,
+  },
+  swapBody: {
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.muted,
+  },
+  swapMeta: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: colors.ink,
+  },
+  swapPhotoRow: { gap: 8, paddingTop: 4 },
+  swapPhoto: { width: 96, height: 96, borderRadius: 12 },
+  swapExchange: { gap: 8, marginTop: 4 },
+  swapSide: { flexDirection: "row", alignItems: "center", gap: 10 },
+  swapSidePhoto: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: colors.beige,
+  },
+  swapSideFallback: { backgroundColor: colors.beige },
+  swapSideLabel: { fontSize: 12, lineHeight: 16, color: colors.muted },
+  swapSideTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: colors.ink,
   },
   offerBtnIcon: { width: 22, height: 22 },
   offerBtnText: { fontWeight: "700", color: colors.ink },
@@ -1362,6 +1738,14 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.ink,
   },
+  unblockBtn: { flexGrow: 1, alignItems: "center" },
+  safetyLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  safetyDismiss: { flex: 1 },
   input: {
     borderWidth: 1,
     borderColor: colors.border,

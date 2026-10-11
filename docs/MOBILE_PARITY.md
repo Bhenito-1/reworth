@@ -22,16 +22,16 @@ Companion column notes web’s intended role when mobile is primary.
 | Flow | Mobile | Web | Notes |
 | --- | --- | --- | --- |
 | Onboarding (email register + profile) | **full** | **full** | Mobile: in-app steps. Web: `/onboarding/*` |
-| Home / discovery rails | **full** | **full** | `DiscoveryHome` vs `/` |
-| Search | **full** | **full** | `SearchPanel` vs `/search` |
-| Favourites / wishlist | **full** | **full** | Heart saves for later. Profile → Wishlist and web `/wishlist` can add those items to the cart |
+| Home / discovery rails | **full** | **full** | `DiscoveryHome` vs `/`. Home starts with every listing. Category chips filter the homepage for this visit only; refresh or the × control shows every item again. Choose a location limits it to one state and area; signing out clears that choice. Signed-in seller's own listings stay out of the marketplace and appear in My listings |
+| Search | **full** | **full** | `SearchPanel` vs `/search`. Query required before search or save alert. Empty results cannot be saved. Price min cannot exceed max. Conditions show in sentence case. Marketplace search omits the signed-in seller's own listings |
+| Favourites / wishlist | **full** | **full** | Heart saves for later. Empty wishlist opens search. A listing with no units left is removed from every wishlist. Profile → Wishlist and web `/wishlist` can add remaining items to the cart |
 | Listing detail (PDP) | **full** | **full** | Modal vs `/listings/[id]` — companion OK |
 | Sell / publish | **full** | **full** | `SellFlow` vs `/sell` — camera + gallery filmstrip on mobile |
-| Chat / messaging | **full** | **full** | `ChatScreens` vs `/chats` |
+| Chat / messaging | **full** | **full** | `ChatScreens` vs `/chats`. Mute hides badges. A blocked person replaces the message bar with Unblock, and Safety shows Unblock user |
 | Checkout (mock Paystack) | **full** | **full** | `CheckoutModal` vs `/checkout` |
-| Orders list + detail | **full** | **full** | Profile orders vs `/orders`. Seller confirm/reject and pay-after-confirm on both |
+| Orders list + detail | **full** | **full** | Profile orders vs `/orders`. Pay and cancel are separate actions. A cancelled order shows Cancelled and moves to the Cancelled tab. Unpaid orders show Awaiting payment |
 | Cart | **full** | **full** | Profile → Cart vs `/cart`. Cart is not an order |
-| Seller inventory | **full** | **full** | Profile → Stock vs `/inventory`. Includes sold listings. Remove when nothing is in progress; sold-out stays |
+| Seller inventory | **full** | **full** | My listings (mobile tab, web `/selling`; `/inventory` redirects). Refresh reloads from the server. First 10 show, then See more. All statuses in one list. Drafts: Continue and Delete. Boost, feature, inspection, and moving sale only on live listings. Remove from marketplace only while live; accepted orders stay and must be fulfilled |
 | Disputes | **full** | **full** | `DisputeModal` vs `/disputes/[id]` |
 | Public seller profile | **full** | **full** | `UserProfileModal` vs `/users/[id]` · `/u/[handle]` |
 | Privacy / account delete | **full** | **full** | `PrivacySettings` vs `/settings/privacy` |
@@ -45,14 +45,14 @@ Companion column notes web’s intended role when mobile is primary.
 
 | Flow | Mobile | Web | Notes |
 | --- | --- | --- | --- |
-| Swap propose / respond | **full** | **full** | Mobile: PDP propose → chat; Accept/Reject on `SWAP_PROPOSAL_CARD` |
-| Give-away claim | **full** | **full** | Claim on PDP; web also `/listings/[id]/claims` queue |
+| Swap propose / respond | **full** | **full** | Propose swap with photos, title, description, and a delivery day. Roboflow checks the photos before the offer is sent. Accept, reject, or cancel in chat. After any of those, the proposal buttons disappear for both people. A swap that was accepted is cancelled from the order, and only before either person pays the delivery fee. Accept opens a swap order for both people, alerts the other person, and takes the listing off the marketplace. Each person pays delivery plus a ₦500 swap fee. Either person can cancel the unpaid order, which puts only the original listing back. The other person's proposal was never a listing, so a cancel or reject does not put it on the marketplace. Only the person who listed it can remove it, from My listings, the same as any other live listing. Swap and gift skip bank details |
+| Give-away claim | **full** | **full** | No payout account when listing a gift. Get this gift opens checkout with a delivery quote for the buyer's area |
 | Moving sales browse / follow | **full** | **full** | Mobile: `MovingSalesModal` + Home rail; web `/moving-sales` |
 | Moving sale create | **full** | **full** | Mobile create in modal; web `/moving-sales/new` |
 | Estate communities browse / join | **full** | **full** | Mobile: `CommunitiesModal`; web `/communities` |
 | My communities / invites | **full** | **full** | Mobile Mine tab + invite redeem; web `/account/communities` |
-| Saved-search alerts | **full** | **full** | Mobile: Search → Save alert; Profile → Saved → Alerts (pause/digest/delete); web `/my` + `/search` |
-| Recommendations (similar / home) | **full** | **full** | Mobile: PDP similar + Home **For you** (`surface=home`); web rails |
+| Saved-search alerts | **full** | **full** | Mobile: Search → Save alert; Profile → Wishlist → Alerts. Open search opens Discover with that alert's filters. Web `/my` + `/search` |
+| Recommendations (similar / home) | **full** | **full** | Similar items are other live listings in the same category. Tapping one opens that listing (mobile PDP; web `/listings/:id`). Home **For you** stays `surface=home`. |
 | Price intelligence on sell | **full** | **full** | Mobile sell: range, quick/max, confidence, Use recommended |
 | Seller analytics | **full** | **full** | Mobile: Profile → Stats (`SellerAnalyticsPanel`); web `/sell/analytics` |
 | Vehicle inspection (book / badge) | **full** | **full** | Mobile: Book inspection sheet (request/pay/schedule); web paths fixed to `/listings/:id/inspections` |
@@ -71,7 +71,6 @@ Companion column notes web’s intended role when mobile is primary.
 | Shared budget bundles | **full** | **full** | Mobile: Save & share + `SharedBundleModal` deep link; web `/ask/bundles/[token]` |
 | Room scan | **full** | **full** | Mobile: multi-photo upload, item toggle, drafts; web `/room-scan` |
 | What's it worth | **full** | **full** | Mobile: photo upload + share estimate; web `/worth` |
-| Instant Buy | **full** | **full** | Sell toggle; order schedule/confirm; `GET /instant-buy/by-order/:orderId` |
 | Consignment | **full** | **full** | Mobile: create + list/sold/return lifecycle; web `/consign` |
 | Managed pickup | **full** | **full** | Mobile: book slots + my pickups list; web `/pickup` |
 | Listing Boost / Featured | **full** | **full** | Mobile PDP boost sheet; web PDP owner monetization card |
@@ -89,7 +88,7 @@ These are **expected** on web even when mobile leads; keep parity **full** or do
 
 | Flow | Mobile | Web | Intent |
 | --- | --- | --- | --- |
-| Shareable listing URLs | **full** | **full** | Mobile PDP **Share** → `https://reworth.ng/listings/:id`; deep link opens PDP (`parseDeepLink`) |
+| Shareable listing URLs | **full** | **full** | Share opens WhatsApp, Facebook, X, or copies the public `/listings/:id` link. Origin is `EXPO_PUBLIC_WEB_URL` / `NEXT_PUBLIC_WEB_URL`, otherwise the live site address. |
 | SEO / marketing landing | N/A | **full** | Web-only OK |
 | Admin ops | N/A | Admin app | Out of scope |
 

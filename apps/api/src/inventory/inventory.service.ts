@@ -152,8 +152,10 @@ export class InventoryService {
       if (listing.sellerId !== sellerId) {
         throw new NotFoundException('Listing not found');
       }
-      if (listing.sellingMode !== 'SELL') {
-        throw new BadRequestException('Only items for sale have a unit count');
+      if (listing.sellingMode !== 'SELL' && listing.sellingMode !== 'GIVE_AWAY') {
+        throw new BadRequestException(
+          'Only items for sale or give-away have a unit count',
+        );
       }
       if (!tracksQuantity(listing)) return;
 
@@ -189,6 +191,10 @@ export class InventoryService {
     const available = listing.quantityAvailable ?? 0;
     const reserved = listing.quantityReserved ?? 0;
     const sold = listing.quantitySold ?? 0;
+
+    if (available <= 0) {
+      await tx.favourite.deleteMany({ where: { listingId } });
+    }
 
     let next: ListingStatus | null = null;
     if (available === 0 && reserved === 0 && sold > 0) {

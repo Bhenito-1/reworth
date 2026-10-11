@@ -7,7 +7,7 @@ export type NameEnquiryInput = {
 
 export type NameEnquiryResult =
   | { found: true; accountName: string }
-  | { found: false };
+  | { found: false; message?: string };
 
 export interface AccountNameEnquiry {
   enquire(input: NameEnquiryInput): Promise<NameEnquiryResult>;

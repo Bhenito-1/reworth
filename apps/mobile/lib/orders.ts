@@ -4,6 +4,9 @@
 
 import { apiFetch } from "./api";
 
+/** Every swap charges ₦500 per person, separate from that person's delivery fee. */
+export const SWAP_FEE_KOBO = 50_000;
+
 export type FulfilmentMethod = "PICKUP" | "MEET_POINT" | "DELIVERY";
 
 export type OrderStatus =
@@ -39,6 +42,7 @@ export type OrderDto = {
   amountKobo: number;
   protectionFeeKobo: number;
   deliveryFeeKobo: number;
+  swapFeeKobo?: number;
   totalKobo: number;
   quantity?: number;
   unitPriceKobo?: number;
@@ -48,6 +52,17 @@ export type OrderDto = {
   rejectionReason?: string | null;
   sellerNote?: string | null;
   deliveryDate?: string | null;
+  swapProposalId?: string | null;
+  swapListingAId?: string | null;
+  swapListingBId?: string | null;
+  transactionType?: string;
+  swap?: {
+    deliveryOn: string | null;
+    youReceive: { id: string; title: string; imageUrl: string | null };
+    youSend: { id: string; title: string; imageUrl: string | null };
+    cancellable?: boolean;
+    payableOrderId?: string | null;
+  } | null;
   buyerProtection: boolean;
   coverageEndsAt: string | null;
   autoReleaseAt: string | null;
@@ -170,36 +185,43 @@ export function sortMyOrders<
   return [...ongoing, ...delivered];
 }
 
+/** First word capital, remaining words lower. `PAYMENT_PENDING` → `Payment pending`. */
+export function sentenceCaseLabel(value: string): string {
+  const words = value.trim().replace(/_/g, " ").toLowerCase();
+  if (!words) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function orderStatusLabel(status: string): string {
   switch (status) {
     case "CREATED":
       return "Order placed";
     case "PAYMENT_PENDING":
-      return "Order in progress";
+      return "Awaiting payment";
     case "FUNDED":
-      return "Payment confirmed (in escrow)";
+      return "Paid — held in escrow";
     case "IN_AUTHENTICATION":
       return "In authentication";
     case "SHIPPED":
-      return "Shipped / out for delivery";
+      return "Out for delivery";
     case "HANDED_OVER":
       return "Handed over";
     case "DELIVERED":
-      return "Delivered — confirm receipt";
+      return "Delivered";
     case "RECEIVED":
-      return "Buyer confirmed receipt";
+      return "Receipt confirmed";
     case "COMPLETED":
       return "Completed — funds released";
     case "CANCELLED":
       return "Cancelled";
     case "DISPUTE_HOLD":
-      return "Dispute hold";
+      return "On hold — dispute";
     case "REFUND_REQUESTED":
       return "Refund requested";
     case "REFUND_ISSUED":
       return "Refund issued";
     default:
-      return status;
+      return sentenceCaseLabel(status);
   }
 }
 
@@ -212,7 +234,7 @@ export function fulfilmentLabel(method: string): string {
     case "DELIVERY":
       return "Delivery";
     default:
-      return method;
+      return sentenceCaseLabel(method);
   }
 }
 
@@ -229,7 +251,7 @@ export function disputeReasonLabel(reason: string): string {
     case "INCORRECT_PRODUCT":
       return "Incorrect product";
     default:
-      return reason;
+      return sentenceCaseLabel(reason);
   }
 }
 
@@ -244,7 +266,7 @@ export function disputeStatusLabel(status: string): string {
     case "RESOLVED":
       return "Resolved";
     default:
-      return status;
+      return sentenceCaseLabel(status);
   }
 }
 
@@ -252,15 +274,25 @@ export function paymentStatusFromOrder(order: OrderDto): string {
   switch (order.status) {
     case "PAYMENT_PENDING":
     case "CREATED":
-      return "Pending";
+      return "Awaiting payment";
+    case "FUNDED":
+    case "IN_AUTHENTICATION":
+    case "SHIPPED":
+    case "HANDED_OVER":
+    case "DELIVERED":
+    case "RECEIVED":
+    case "COMPLETED":
+      return "Paid";
     case "CANCELLED":
       return "Cancelled";
+    case "DISPUTE_HOLD":
+      return "On hold";
     case "REFUND_REQUESTED":
       return "Refund requested";
     case "REFUND_ISSUED":
       return "Refunded";
     default:
-      return order.fundedAt ? "Success" : "Unknown";
+      return order.fundedAt ? "Paid" : "Unknown";
   }
 }
 

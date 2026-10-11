@@ -63,6 +63,9 @@ function memory(initial: Listing) {
         return data;
       },
     },
+    favourite: {
+      deleteMany: async () => ({ count: 0 }),
+    },
   };
   return {
     tx: tx as never,

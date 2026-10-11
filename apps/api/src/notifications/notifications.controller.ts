@@ -56,6 +56,11 @@ export class NotificationsController {
     return this.notifications.getPreferences(user.id);
   }
 
+  @Post('preferences/essential-only')
+  essentialOnly(@CurrentUser() user: AuthUser) {
+    return this.notifications.disableNonEssential(user.id);
+  }
+
   @Patch('preferences')
   patchPreference(
     @CurrentUser() user: AuthUser,

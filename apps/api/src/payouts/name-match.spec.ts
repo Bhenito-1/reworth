@@ -44,4 +44,22 @@ describe('namesMatch', () => {
       ),
     ).toBe(false);
   });
+
+  it('rejects a blank middle name when the account has one', () => {
+    expect(
+      namesMatch(
+        { firstName: 'Adewale', middleName: '', lastName: 'Okonkwo' },
+        splitAccountName('ADEWALE CHINEDU OKONKWO'),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not accept a first name that only matches the surname', () => {
+    expect(
+      namesMatch(
+        { firstName: 'Okonkwo', middleName: 'Chinedu', lastName: 'Adewale' },
+        splitAccountName('ADEWALE CHINEDU OKONKWO'),
+      ),
+    ).toBe(false);
+  });
 });

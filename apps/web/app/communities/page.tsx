@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
+import { sentenceCaseLabel } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
 import {
   listEstateCommunities,
@@ -158,7 +159,7 @@ export default function CommunitiesPage() {
                         ) : null}
                       </p>
                       <p className="text-sm text-[var(--rw-ink-muted)]">
-                        {c.type} · {c.privacy.replace(/_/g, " ").toLowerCase()}
+                        {sentenceCaseLabel(c.type)} · {sentenceCaseLabel(c.privacy)}
                       </p>
                     </div>
                     <span className="text-sm font-medium text-[var(--rw-accent)]">

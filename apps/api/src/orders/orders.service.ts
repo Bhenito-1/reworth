@@ -46,8 +46,9 @@ import {
 } from '../providers/payment.provider';
 import { ReferralsService } from '../referrals/referrals.service';
 import { TrustScoreService } from '../reviews/trust-score.service';
-import { InstantBuyService } from '../platform-services/instant-buy.service';
 import { LuxuryAuthService } from '../verticals/luxury-auth.service';
+import { HomeCache } from '../home/home.cache';
+import { SwapProposalsService } from '../swap/swap-proposals.service';
 import { InventoryService } from '../inventory/inventory.service';
 import {
   ConfirmOrderDto,
@@ -111,7 +112,8 @@ export type OrderDto = {
   orderIntentId: string | null;
   amountKobo: number;
   protectionFeeKobo: number;
-  deliveryFeeKobo: number;
+    deliveryFeeKobo: number;
+  swapFeeKobo: number;
   totalKobo: number;
   quantity: number;
   unitPriceKobo: number;
@@ -138,7 +140,15 @@ export type OrderDto = {
   swapListingBId?: string | null;
   legAStatus?: SwapLegStatus | null;
   legBStatus?: SwapLegStatus | null;
-  cashRecipientId?: string | null;
+  swap?: {
+    deliveryOn: string | null;
+    youReceive: { id: string; title: string; imageUrl: string | null };
+    youSend: { id: string; title: string; imageUrl: string | null };
+    /** False once either person has paid. The other person then has to pay too. */
+    cancellable: boolean;
+    /** This viewer's unpaid swap order, including when they opened the other person's order. */
+    payableOrderId: string | null;
+  } | null;
   /** Escrow journey stages for UI. */
   lifecycle?: OrderLifecycleStage[];
   escrow?: EscrowSnapshot;
@@ -165,6 +175,7 @@ function toOrderDto(
     amountKobo: o.amountKobo,
     protectionFeeKobo: o.protectionFeeKobo,
     deliveryFeeKobo: o.deliveryFeeKobo,
+    swapFeeKobo: o.swapFeeKobo ?? 0,
     totalKobo: o.totalKobo,
     quantity: o.quantity ?? 1,
     unitPriceKobo: o.unitPriceKobo || o.amountKobo,
@@ -206,7 +217,6 @@ function toOrderDto(
     swapListingBId: o.swapListingBId,
     legAStatus: o.legAStatus,
     legBStatus: o.legBStatus,
-    cashRecipientId: o.cashRecipientId,
   };
 }
 
@@ -230,12 +240,16 @@ export class OrdersService {
     @Inject(forwardRef(() => LuxuryAuthService))
     private readonly luxuryAuth?: LuxuryAuthService,
     @Optional() private readonly referrals?: ReferralsService,
-    @Optional()
-    @Inject(forwardRef(() => InstantBuyService))
-    private readonly instantBuy?: InstantBuyService,
     @Optional() private readonly inventory?: InventoryService,
     @Optional() private readonly alerts?: AdminAlertsService,
+    @Optional() private readonly homeCache?: HomeCache,
+    @Optional() private readonly swaps?: SwapProposalsService,
   ) {}
+
+  /** Home rails are cached. Drop that copy after stock changes so the next visit reads the database. */
+  private async refreshHomeRails(): Promise<void> {
+    await this.homeCache?.clear();
+  }
 
   private feePct(): number {
     return Number(this.config.get('BUYER_PROTECTION_FEE_PCT') ?? 0.025);
@@ -258,7 +272,7 @@ export class OrdersService {
   async create(
     buyerId: string,
     dto: CreateOrderDto,
-    opts?: { skipEmail?: boolean },
+    opts?: { skipEmail?: boolean; checkoutId?: string },
   ): Promise<OrderDto> {
     const listing = await this.prisma.listing.findUnique({
       where: { id: dto.listingId },
@@ -339,38 +353,13 @@ export class OrdersService {
       this.feeCap(),
     );
 
-    let deliveryFeeKobo = 0;
-    let distanceKm: number | undefined;
-    let meetPointId: string | null = null;
-
-    if (dto.fulfilmentMethod === FulfilmentMethod.MEET_POINT) {
-      if (!dto.meetPointId) {
-        throw new BadRequestException('meetPointId required for MEET_POINT');
-      }
-      const mp = await this.prisma.meetPoint.findFirst({
-        where: { id: dto.meetPointId, active: true },
-      });
-      if (!mp) throw new NotFoundException('Meet point not found');
-      meetPointId = mp.id;
-    }
-
-    if (dto.fulfilmentMethod === FulfilmentMethod.DELIVERY) {
-      if (
-        dto.toLat != null &&
-        dto.toLng != null &&
-        listing.geoLat != null &&
-        listing.geoLng != null
-      ) {
-        distanceKm = haversineKm(
-          listing.geoLat,
-          listing.geoLng,
-          dto.toLat,
-          dto.toLng,
-        );
-        deliveryFeeKobo = computeDeliveryFeeKobo(distanceKm);
-      }
-      // Quote may also be applied via GET /orders/:id/delivery-quote before pay
-    }
+    // Every order ships with ReWorth delivery. Pickup and meet-up are not offered.
+    const fromLat = listing.geoLat ?? 6.5244;
+    const fromLng = listing.geoLng ?? 3.3792;
+    const toLat = dto.toLat ?? fromLat + 0.02;
+    const toLng = dto.toLng ?? fromLng + 0.02;
+    const distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
+    const deliveryFeeKobo = computeDeliveryFeeKobo(distanceKm);
 
     const totalKobo = computeOrderTotalKobo({
       amountKobo,
@@ -386,24 +375,22 @@ export class OrdersService {
           sellerId: listing.sellerId,
           offerId: offerId ?? null,
           orderIntentId: orderIntentId ?? null,
+          checkoutId: opts?.checkoutId ?? null,
           amountKobo,
           quantity,
           unitPriceKobo,
           protectionFeeKobo,
           deliveryFeeKobo,
           totalKobo,
-          fulfilmentMethod: dto.fulfilmentMethod,
-          meetPointId,
+          fulfilmentMethod: FulfilmentMethod.DELIVERY,
+          meetPointId: null,
           status: 'CREATED',
           confirmationStatus: 'PENDING',
           buyerProtection: true,
         },
       });
 
-      if (
-        dto.fulfilmentMethod === FulfilmentMethod.DELIVERY &&
-        deliveryFeeKobo > 0
-      ) {
+      if (deliveryFeeKobo > 0) {
         const shipment = await tx.deliveryShipment.create({
           data: {
             orderId: created.id,
@@ -457,6 +444,7 @@ export class OrdersService {
       return created;
     });
 
+    await this.refreshHomeRails();
     this.notifications.log('order.awaiting_confirmation', {
       orderId: order.id,
       buyerId,
@@ -603,7 +591,7 @@ export class OrdersService {
       where: { OR: [{ buyerId: userId }, { sellerId: userId }] },
       orderBy: { createdAt: 'desc' },
     });
-    return Promise.all(rows.map((r) => this.toEnrichedOrderDto(r.id)));
+    return Promise.all(rows.map((r) => this.toEnrichedOrderDto(r.id, userId)));
   }
 
   async getById(
@@ -622,7 +610,7 @@ export class OrdersService {
     if (order.buyerId !== userId && order.sellerId !== userId) {
       throw new ForbiddenException('Not a participant');
     }
-    const dto = await this.toEnrichedOrderDto(orderId);
+    const dto = await this.toEnrichedOrderDto(orderId, userId);
     return { ...dto, events: order.events };
   }
 
@@ -809,7 +797,7 @@ export class OrdersService {
     await this.notifications.notify({
       userId: order.buyerId,
       category: NotificationCategory.ORDER_CONFIRMED,
-      title: 'Order in progress',
+      title: 'Awaiting payment',
       body: note
         ? `The seller accepted ${order.quantity} × ${title}. Delivery date: ${when}. Note: ${note}. Complete payment to confirm, or cancel.`
         : `The seller accepted ${order.quantity} × ${title}. Delivery date: ${when}. Complete payment to confirm, or cancel.`,
@@ -869,6 +857,7 @@ export class OrdersService {
       return row;
     });
 
+    await this.refreshHomeRails();
     const listing = await this.prisma.listing.findUnique({
       where: { id: order.listingId },
       select: { title: true },
@@ -888,6 +877,21 @@ export class OrdersService {
 
   async cancel(orderId: string, buyerId: string): Promise<OrderDto> {
     const order = await this.requireOrder(orderId);
+    if (
+      order.transactionType === 'SWAP' &&
+      order.swapProposalId &&
+      this.swaps
+    ) {
+      if (order.buyerId !== buyerId && order.sellerId !== buyerId) {
+        throw new ForbiddenException('Not a swap participant');
+      }
+      if (!['CREATED', 'PAYMENT_PENDING'].includes(order.status)) {
+        throw new ConflictException('Can only cancel before payment');
+      }
+      await this.swaps.cancel(order.swapProposalId, buyerId);
+      await this.refreshHomeRails();
+      return toOrderDto(await this.requireOrder(orderId));
+    }
     if (order.buyerId !== buyerId) {
       throw new ForbiddenException('Only the buyer can cancel');
     }
@@ -919,6 +923,7 @@ export class OrdersService {
       return row;
     });
 
+    await this.refreshHomeRails();
     const listing = await this.prisma.listing.findUnique({
       where: { id: order.listingId },
       select: { title: true },
@@ -970,11 +975,58 @@ export class OrdersService {
         data: {
           orderId,
           type: 'FUNDED',
-          payload: { paymentReference, autoReleaseAt },
+          payload: {
+            paymentReference,
+            payerId: order.buyerId,
+            autoReleaseAt,
+          },
         },
       });
 
-      if (this.inventory) {
+      if (order.transactionType === TransactionType.GIVEAWAY) {
+        const qty = 1;
+        const taken = await tx.listing.updateMany({
+          where: {
+            id: order.listingId,
+            quantityAvailable: { gte: qty },
+            status: { in: ['LIVE', 'RESERVED'] },
+          },
+          data: {
+            quantityAvailable: { decrement: qty },
+            quantitySold: { increment: qty },
+          },
+        });
+        if (taken.count !== 1) {
+          throw new ConflictException('This gift has already been claimed');
+        }
+        if (order.giveawayClaimId) {
+          await tx.giveawayClaim.update({
+            where: { id: order.giveawayClaimId },
+            data: { status: 'APPROVED', reviewedAt: fundedAt },
+          });
+        }
+        await tx.orderEvent.create({
+          data: {
+            orderId,
+            type: 'GIFT_UNIT_DEDUCTED',
+            actorUserId: order.buyerId,
+            payload: {
+              payerId: order.buyerId,
+              listingId: order.listingId,
+              units: qty,
+              paymentReference,
+            },
+          },
+        });
+        if (this.inventory) {
+          await this.inventory.syncVisibility(
+            tx,
+            order.listingId,
+            order.buyerId,
+            'gift_paid',
+          );
+        }
+      } else if (this.inventory) {
         await this.inventory.commitSale(
           tx,
           order.listingId,
@@ -997,6 +1049,7 @@ export class OrdersService {
       return tx.order.findUniqueOrThrow({ where: { id: orderId } });
     });
 
+    await this.refreshHomeRails();
     this.notifications.log('order.funded', {
       orderId,
       buyerId: order.buyerId,
@@ -1034,28 +1087,11 @@ export class OrdersService {
       );
     }
 
-    // Instant Buy: start platform fulfilment when listing is eligible
-    if (this.instantBuy) {
-      await this.instantBuy.afterOrderFunded(orderId).catch((err) =>
-        this.logger.warn(
-          `Instant Buy after fund failed: ${(err as Error).message}`,
-        ),
-      );
-    }
-
     if (this.luxuryAuth) {
       const refreshed = await this.requireOrder(orderId);
       if (refreshed.status === 'IN_AUTHENTICATION') {
         return toOrderDto(refreshed);
       }
-    }
-
-    // Swap+cash: if both legs already RECEIVED, release + complete now
-    if (
-      updated.transactionType === TransactionType.SWAP_CASH &&
-      this.legsFullyReceived(updated)
-    ) {
-      return this.completeSwapOrGiveaway(orderId, null);
     }
 
     return this.toEnrichedOrderDto(orderId);
@@ -1203,8 +1239,10 @@ export class OrdersService {
       new Date(Date.now() + this.coverageDays() * 24 * 60 * 60 * 1000);
 
     const listingIds = new Set<string>([order.listingId]);
-    if (order.swapListingAId) listingIds.add(order.swapListingAId);
-    if (order.swapListingBId) listingIds.add(order.swapListingBId);
+    if (order.legBStatus != null) {
+      if (order.swapListingAId) listingIds.add(order.swapListingAId);
+      if (order.swapListingBId) listingIds.add(order.swapListingBId);
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.order.update({
@@ -1248,6 +1286,7 @@ export class OrdersService {
             where: { id: listing.id },
             data: { status: 'SOLD' },
           });
+          await tx.favourite.deleteMany({ where: { listingId: listing.id } });
           await tx.listingEvent.create({
             data: {
               listingId: listing.id,
@@ -1286,6 +1325,7 @@ export class OrdersService {
       return row;
     });
 
+    await this.refreshHomeRails();
     this.notifications.log('order.completed', {
       orderId,
       reason,
@@ -1333,23 +1373,12 @@ export class OrdersService {
     return toOrderDto(updated);
   }
 
-  private isNonCashTransaction(order: Order): boolean {
-    return (
-      order.transactionType === TransactionType.SWAP ||
-      order.transactionType === TransactionType.GIVEAWAY ||
-      (order.transactionType === TransactionType.SWAP_CASH &&
-        order.amountKobo === 0)
-    );
-  }
-
   private legsFullyReceived(order: Order): boolean {
     if (order.transactionType === TransactionType.GIVEAWAY) {
       return order.legAStatus === 'RECEIVED';
     }
-    if (
-      order.transactionType === TransactionType.SWAP ||
-      order.transactionType === TransactionType.SWAP_CASH
-    ) {
+    if (order.transactionType === TransactionType.SWAP) {
+      if (order.legBStatus == null) return order.legAStatus === 'RECEIVED';
       return order.legAStatus === 'RECEIVED' && order.legBStatus === 'RECEIVED';
     }
     return false;
@@ -1379,7 +1408,6 @@ export class OrdersService {
     }
     if (
       order.transactionType !== TransactionType.SWAP &&
-      order.transactionType !== TransactionType.SWAP_CASH &&
       order.transactionType !== TransactionType.GIVEAWAY
     ) {
       throw new BadRequestException('Order is not a swap/give-away');
@@ -1441,7 +1469,6 @@ export class OrdersService {
     }
     if (
       order.transactionType !== TransactionType.SWAP &&
-      order.transactionType !== TransactionType.SWAP_CASH &&
       order.transactionType !== TransactionType.GIVEAWAY
     ) {
       throw new BadRequestException('Order is not a swap/give-away');
@@ -1507,7 +1534,6 @@ export class OrdersService {
     }
     if (
       order.transactionType !== TransactionType.SWAP &&
-      order.transactionType !== TransactionType.SWAP_CASH &&
       order.transactionType !== TransactionType.GIVEAWAY
     ) {
       throw new BadRequestException('Order is not a swap/give-away');
@@ -1589,9 +1615,8 @@ export class OrdersService {
   }
 
   /**
-   * Complete swap/give-away when required legs are RECEIVED.
-   * Pure swap / give-away: skip payment release.
-   * SWAP_CASH with funded escrow: release then complete.
+   * Complete a swap or give-away once the required legs are received.
+   * Delivery is paid on its own and is not released as a seller payout.
    */
   async completeSwapOrGiveaway(
     orderId: string,
@@ -1602,29 +1627,7 @@ export class OrdersService {
       throw new ConflictException('Not all required legs are RECEIVED');
     }
     if (order.status === 'COMPLETED') return toOrderDto(order);
-
-    if (this.isNonCashTransaction(order) || order.amountKobo === 0) {
-      // Pure swap / give-away — no PaymentsService calls
-      return this.finalizeCompleted(orderId, actorUserId, 'swap_legs_complete');
-    }
-
-    // SWAP_CASH: release escrow if funded; otherwise wait for payment
-    const payment = await this.prisma.payment.findFirst({
-      where: { orderId, status: { in: ['SUCCESS', 'RELEASED'] } },
-    });
-    if (payment && payment.status !== 'RELEASED') {
-      return this.releaseEscrow(orderId, actorUserId, 'swap_legs_complete');
-    }
-    if (payment?.status === 'RELEASED') {
-      return this.finalizeCompleted(orderId, actorUserId, 'swap_legs_complete');
-    }
-
-    // Legs done but cash not funded yet — leave PAYMENT_PENDING; complete after fund
-    this.notifications.log('order.swap_legs_awaiting_payment', {
-      orderId,
-      status: order.status,
-    });
-    return toOrderDto(order);
+    return this.finalizeCompleted(orderId, actorUserId, 'swap_legs_complete');
   }
 
   async autoReleaseDue(now = new Date()): Promise<number> {
@@ -1676,7 +1679,10 @@ export class OrdersService {
   }
 
   /** Load order with escrow/lifecycle enrichment for API responses. */
-  async toEnrichedOrderDto(orderId: string): Promise<OrderDto> {
+  async toEnrichedOrderDto(
+    orderId: string,
+    viewerId?: string,
+  ): Promise<OrderDto> {
     const order = await this.prisma.order.findUniqueOrThrow({
       where: { id: orderId },
       include: {
@@ -1706,6 +1712,87 @@ export class OrdersService {
         paymentStatus,
         payoutStatus,
       }),
+      swap: await this.swapPairForOrder(order, viewerId),
+    };
+  }
+
+  /** Both items on a swap order: what this payer sends and what they receive. */
+  private async swapPairForOrder(
+    order: {
+      transactionType: string;
+      listingId: string;
+      buyerId: string;
+      swapProposalId?: string | null;
+      swapListingAId: string | null;
+      swapListingBId: string | null;
+      deliveryDate: Date | null;
+    },
+    viewerId?: string,
+  ): Promise<OrderDto['swap']> {
+    if (
+      order.transactionType !== 'SWAP' ||
+      !order.swapListingAId ||
+      !order.swapListingBId
+    ) {
+      return null;
+    }
+    const rows = await this.prisma.listing.findMany({
+      where: { id: { in: [order.swapListingAId, order.swapListingBId] } },
+      include: {
+        images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      },
+    });
+    const card = (row: (typeof rows)[number]) => {
+      const image = row.images[0];
+      const variants = (image?.variants ?? {}) as {
+        original?: string;
+        w640?: { webp?: string };
+        w1080?: { webp?: string };
+      };
+      const imageUrl =
+        variants.w1080?.webp ?? variants.w640?.webp ?? variants.original ?? null;
+      return {
+        id: row.id,
+        title: row.title?.trim() || 'Item',
+        imageUrl: imageUrl && /^https?:\/\//i.test(imageUrl) ? imageUrl : null,
+      };
+    };
+    const byId = new Map(rows.map((row) => [row.id, card(row)]));
+    const buyerReceives = byId.get(order.listingId);
+    const sendId =
+      order.listingId === order.swapListingAId
+        ? order.swapListingBId
+        : order.swapListingAId;
+    const buyerSends = byId.get(sendId);
+    if (!buyerReceives || !buyerSends) return null;
+    const viewerIsSeller = Boolean(viewerId && viewerId !== order.buyerId);
+    const youReceive = viewerIsSeller ? buyerSends : buyerReceives;
+    const youSend = viewerIsSeller ? buyerReceives : buyerSends;
+    const legs = order.swapProposalId
+      ? await this.prisma.order.findMany({
+          where: { swapProposalId: order.swapProposalId },
+          select: { id: true, status: true, buyerId: true },
+        })
+      : [];
+    const cancellable =
+      legs.length > 0 &&
+      legs.every(
+        (leg) => leg.status === 'CREATED' || leg.status === 'PAYMENT_PENDING',
+      );
+    const payable = viewerId
+      ? legs.find(
+          (leg) =>
+            leg.buyerId === viewerId && leg.status === 'PAYMENT_PENDING',
+        )
+      : undefined;
+    return {
+      deliveryOn: order.deliveryDate
+        ? order.deliveryDate.toISOString().slice(0, 10)
+        : null,
+      youReceive,
+      youSend,
+      cancellable,
+      payableOrderId: payable?.id ?? null,
     };
   }
 }

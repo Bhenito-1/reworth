@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
+import { sentenceCaseLabel } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
 import {
   applyCorporate,
@@ -299,7 +300,9 @@ export default function CorporatePage() {
                   </p>
                   <p>
                     <span className="text-[var(--rw-ink-muted)]">Status · </span>
-                    <span className="font-medium">{account.status}</span>
+                    <span className="font-medium">
+                      {sentenceCaseLabel(account.status)}
+                    </span>
                   </p>
                 </div>
               ) : (

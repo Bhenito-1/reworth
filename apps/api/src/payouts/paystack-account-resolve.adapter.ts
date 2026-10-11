@@ -34,7 +34,13 @@ export class PaystackAccountResolveAdapter implements AccountNameEnquiry {
       headers: { Authorization: `Bearer ${secret}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!response.ok) return { found: false };
+    if (!response.ok) {
+      const failure = (await response.json().catch(() => null)) as {
+        message?: string;
+      } | null;
+      const message = failure?.message?.trim();
+      return { found: false, message: message || undefined };
+    }
     const body = (await response.json()) as {
       status?: boolean;
       data?: { account_name?: string };

@@ -234,7 +234,11 @@ export default function DisputeDetailPage() {
               Resolution
             </h2>
             <p className="mt-2 text-sm font-medium">
-              {String(dispute.resolution ?? "Resolved").replace(/_/g, " ")}
+              {String(dispute.resolution ?? "Resolved")
+                .trim()
+                .replace(/_/g, " ")
+                .toLowerCase()
+                .replace(/^\w/, (letter) => letter.toUpperCase())}
             </p>
             {dispute.resolutionNote ? (
               <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">

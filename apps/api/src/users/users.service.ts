@@ -368,10 +368,19 @@ export class UsersService {
         },
       });
 
-      // Clear private meetup addresses on seller listings
+      // Drop unsold listings with no order. Sold listings, orders, and
+      // payments stay so completed sales remain on record.
       await tx.listing.updateMany({
         where: { sellerId: userId },
         data: { addressPrivate: null },
+      });
+      await tx.listing.updateMany({
+        where: {
+          sellerId: userId,
+          status: { not: 'SOLD' },
+          orders: { none: {} },
+        },
+        data: { status: 'REMOVED' },
       });
 
       // Null/redact address disclosures created by this user

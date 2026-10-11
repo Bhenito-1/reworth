@@ -12,8 +12,8 @@
 - Cart does not create an order or hold stock (`/cart` on web, Profile → Cart on mobile)
 - Sellers set units available; price is per unit
 - New orders reserve units until the seller confirms, the buyer pays, or the order is cancelled or rejected
-- Seller inventory lists every listing, including sold-out items (`/inventory`, Profile → Stock)
-- Sellers can remove a listing from the marketplace when nothing is in progress. Sold-out listings stay in inventory and cannot be deleted
+- My listings shows every listing (live, in review, rejected, sold, closed, removed) on mobile and `/selling`. Drafts resume in Sell and can be deleted. Boost and other live seller tools only appear on live listings
+- Remove from marketplace is only for a live listing. Remaining units leave the marketplace and the status becomes Removed. An already accepted order must still be fulfilled
 - Apply migration `20260930190000_cart_inventory`
 
 ## Design elevation summary (`v1.0.3-design-elevation`)
@@ -93,8 +93,7 @@
 
 - Swap chat Accept/Reject; propose opens conversation
 - Vehicle inspection book (request/pay/schedule); web verticals paths fixed
-- Luxury `authRequired` + Instant Buy + donate-if-unsold on Sell
-- Instant Buy order schedule/confirm + `GET /instant-buy/by-order/:orderId`
+- Luxury `authRequired` + donate-if-unsold on Sell
 
 ### Still open vs full directive
 

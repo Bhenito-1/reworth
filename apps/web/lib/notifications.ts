@@ -97,8 +97,11 @@ export function categoryLabel(category: string): string {
       return "Verification";
     case "DISPUTE_UPDATE":
       return "Disputes";
-    default:
-      return category.replace(/_/g, " ").toLowerCase();
+    default: {
+      const words = category.trim().replace(/_/g, " ").toLowerCase();
+      if (!words) return "";
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    }
   }
 }
 
@@ -110,8 +113,11 @@ export function channelLabel(channel: string): string {
       return "Push";
     case "EMAIL":
       return "Email";
-    default:
-      return channel;
+    default: {
+      const words = channel.trim().replace(/_/g, " ").toLowerCase();
+      if (!words) return "";
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    }
   }
 }
 

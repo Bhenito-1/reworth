@@ -19,6 +19,13 @@ export const NOTIFICATION_CATEGORIES = [
   "DELIVERY_UPDATE",
   "VERIFICATION_UPDATE",
   "DISPUTE_UPDATE",
+  "REVIEW_RECEIVED",
+  "COMMUNITY_NEW_LISTING",
+  "MOVING_SALE_UPDATE",
+  "ORDER_PLACED",
+  "ORDER_CONFIRMED",
+  "ORDER_REJECTED",
+  "ORDER_CANCELLED",
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -35,11 +42,19 @@ export const CRITICAL_CATEGORIES = new Set<string>([
   "PAYMENT_RELEASED",
   "DELIVERY_UPDATE",
   "DISPUTE_UPDATE",
+  "ORDER_PLACED",
+  "ORDER_CONFIRMED",
+  "ORDER_REJECTED",
+  "ORDER_CANCELLED",
 ]);
 
 export function isCriticalCategory(category: string): boolean {
   return (
-    CRITICAL_CATEGORIES.has(category) || category.startsWith("PAYMENT_")
+    CRITICAL_CATEGORIES.has(category) ||
+    category.startsWith("PAYMENT_") ||
+    category.startsWith("ORDER_") ||
+    category === "DELIVERY_UPDATE" ||
+    category === "DISPUTE_UPDATE"
   );
 }
 
@@ -61,8 +76,28 @@ export type NotificationPreference = {
   enabled: boolean;
 };
 
+function sentenceCaseLabel(value: string): string {
+  const words = value.trim().replace(/_/g, " ").toLowerCase();
+  if (!words) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function categoryLabel(category: string): string {
-  return category.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return sentenceCaseLabel(category);
+}
+
+export function channelLabel(channel: string): string {
+  if (channel === "IN_APP") return "In-app";
+  return sentenceCaseLabel(channel);
+}
+
+/** Older swap alerts point at the listing. The chat is the right place to open. */
+export function swapListingIdFromDeepLink(
+  deepLink: string | null | undefined,
+): string | null {
+  if (!deepLink) return null;
+  const match = deepLink.match(/listings\/([\w-]+)\/swap\b/i);
+  return match?.[1] ?? null;
 }
 
 /** Parse reworth:// or path deep links for in-app routing. */
@@ -179,6 +214,16 @@ export function getNotificationPreferences(
   token: string,
 ): Promise<NotificationPreference[]> {
   return apiFetch(`/notifications/preferences`, { token });
+}
+
+/** Leaves orders, payments, delivery, and disputes on. Turns the rest off. */
+export function disableNonEssentialNotifications(
+  token: string,
+): Promise<{ disabled: number }> {
+  return apiFetch(`/notifications/preferences/essential-only`, {
+    method: "POST",
+    token,
+  });
 }
 
 export function patchNotificationPreference(

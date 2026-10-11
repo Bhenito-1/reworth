@@ -3,15 +3,16 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { AppButton } from "./components/AppButton";
 import { ApiError } from "./lib/api";
+import { sentenceCaseLabel } from "./lib/discovery";
 import { ensureAccessToken } from "./lib/auth";
 import {
   applyPro,
@@ -134,7 +135,7 @@ export function ProSellerModal({
     try {
       const job = await uploadProBulkCsvText(token, csv);
       setToast(
-        `Upload ${job.status} · ok ${job.successCount ?? "—"} · errors ${job.errorCount ?? 0}`,
+        `Upload ${sentenceCaseLabel(job.status)} · ok ${job.successCount ?? "—"} · errors ${job.errorCount ?? 0}`,
       );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Bulk upload failed");
@@ -189,7 +190,7 @@ export function ProSellerModal({
                   {account.businessName}
                 </Text>
                 <Text style={{ color: c.muted, fontSize: type.meta }}>
-                  Status · {account.status}
+                  Status · {sentenceCaseLabel(account.status)}
                   {account.handle ? ` · @${account.handle}` : ""}
                 </Text>
                 {account.mrrKobo != null ? (

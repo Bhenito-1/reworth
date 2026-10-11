@@ -4,40 +4,93 @@ import {
   FlatList,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { screenBounds, ScrollView } from "./components/BoundScroll";
 import { ApiError } from "./lib/api";
-import { getAccessToken } from "./lib/auth";
+import { ensureAccessToken, getAccessToken } from "./lib/auth";
 import { nairaToKobo } from "./lib/chat";
-import { getListing, listMine, patchListing, publishListing, type MineListing } from "./lib/listings";
+import { sentenceCaseLabel } from "./lib/discovery";
+import {
+  getListing,
+  listMine,
+  patchListing,
+  publishListing,
+  removeListing,
+  type MineListing,
+} from "./lib/listings";
+
+type ListingFilter =
+  | "all"
+  | "live"
+  | "review"
+  | "rejected"
+  | "sold"
+  | "closed"
+  | "removed";
+
+const STATUS_BADGE: Record<string, { color: string; backgroundColor: string }> = {
+  LIVE: { color: "#065F46", backgroundColor: "#D1FAE5" },
+  RESERVED: { color: "#1E3A8A", backgroundColor: "#DBEAFE" },
+  SOLD: { color: "#172A3A", backgroundColor: "#E7EEF4" },
+  UNDER_REVIEW: { color: "#92400E", backgroundColor: "#FEF3C7" },
+  REJECTED: { color: "#991B1B", backgroundColor: "#FEE2E2" },
+  DRAFT: { color: "#3F3F46", backgroundColor: "#F4F4F5" },
+  EXPIRED: { color: "#7C4A1E", backgroundColor: "#F8E6DC" },
+  REMOVED: { color: "#9F1239", backgroundColor: "#FFE4E6" },
+};
+
+function badgeColors(status: string) {
+  return (
+    STATUS_BADGE[status] ?? { color: "#59636D", backgroundColor: "#F4F4F5" }
+  );
+}
+
+function removalMessage(item: MineListing): string {
+  const title = item.title || "this listing";
+  if (item.status === "DRAFT") {
+    return `Delete the draft “${title}”? This cannot be undone.`;
+  }
+  if (item.hasAcceptedOrder) {
+    return `Remove “${title}” from the marketplace? An order for this listing is already accepted. You still have to fulfil that order. If you do not, your account can be sanctioned. The remaining units will leave the marketplace and this listing will be marked Removed.`;
+  }
+  return `Remove “${title}” from the marketplace? The remaining units will leave the marketplace and this listing will be marked Removed.`;
+}
 
 export function SellerListingsPanel({
   onFixRejected,
+  onOpenListing,
 }: {
   onFixRejected?: (listingId: string) => void;
+  onOpenListing?: (listingId: string) => void;
 }) {
   const [items, setItems] = useState<MineListing[]>([]);
-  const [filter, setFilter] = useState<"all" | "live" | "review" | "rejected" | "sold">(
-    "all",
-  );
+  const [filter, setFilter] = useState<ListingFilter>("all");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<MineListing | null>(null);
 
   const load = useCallback(async () => {
-    const token = await getAccessToken();
-    if (!token) return;
-    setLoading(true);
+    setRefreshing(true);
     setError(null);
     try {
+      const token = await ensureAccessToken();
+      if (!token) {
+        setError("Sign in to see your listings");
+        return;
+      }
       const res = await listMine(token);
       setItems(res.items);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load listings");
     } finally {
+      setRefreshing(false);
       setLoading(false);
     }
   }, []);
@@ -50,21 +103,45 @@ export function SellerListingsPanel({
     if (filter === "all") return true;
     return listingGroup(item) === filter;
   });
+  const shown = expanded ? visible : visible.slice(0, 10);
 
-  if (loading && items.length === 0 && !error) {
-    return <ActivityIndicator color="#0E9F6E" style={{ marginTop: 24 }} />;
+  async function confirmRemove(item: MineListing) {
+    const token = await getAccessToken();
+    if (!token) return;
+    setRemovingId(item.id);
+    setError(null);
+    try {
+      await removeListing(token, item.id);
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : item.status === "DRAFT"
+            ? "Could not delete this draft"
+            : "Could not remove this listing",
+      );
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  function askRemove(item: MineListing) {
+    setPendingRemove(item);
   }
 
   return (
+    <>
     <FlatList
-      data={visible}
+      data={loading ? [] : shown}
       keyExtractor={(item) => item.id}
+      style={screenBounds}
       contentContainerStyle={styles.pad}
       ListHeaderComponent={
         <View>
           <Text style={styles.title}>Your listings</Text>
           <Text style={styles.copy}>
-            Live listings, items still in review, and anything that was rejected.
+            Every listing you have made, including live, in review, rejected, sold, closed, and removed.
           </Text>
           <View style={styles.filters}>
             {(
@@ -74,11 +151,16 @@ export function SellerListingsPanel({
                 ["review", "In review"],
                 ["rejected", "Rejected"],
                 ["sold", "Sold"],
+                ["closed", "Closed"],
+                ["removed", "Removed"],
               ] as const
             ).map(([id, label]) => (
               <Pressable
                 key={id}
-                onPress={() => setFilter(id)}
+                onPress={() => {
+                  setFilter(id);
+                  setExpanded(false);
+                }}
                 style={[styles.filter, filter === id && styles.filterOn]}
                 accessibilityRole="button"
                 accessibilityState={{ selected: filter === id }}
@@ -97,7 +179,9 @@ export function SellerListingsPanel({
         </View>
       }
       ListEmptyComponent={
-        error ? null : (
+        loading ? (
+          <ActivityIndicator style={{ marginTop: 24 }} color="#0E9F6E" />
+        ) : error ? null : (
           <Text style={styles.copy}>
             {items.length === 0
               ? "Nothing here yet. Publish a listing and its review status shows up on this page."
@@ -105,24 +189,24 @@ export function SellerListingsPanel({
           </Text>
         )
       }
-      renderItem={({ item }) => (
+      renderItem={({ item }) => {
+        return (
         <View style={styles.card}>
-          <View style={styles.row}>
-            <Text style={styles.cardTitle}>{item.title}</Text>
-            <Text
-              style={[
-                styles.badge,
-                item.reviewState === "rejected" && styles.badgeRejected,
-                item.reviewState === "waiting" && styles.badgeWaiting,
-                item.reviewState === "approved" && styles.badgeApproved,
-              ]}
-            >
-              {item.reviewLabel}
-            </Text>
-          </View>
-          {item.reviewNote ? (
-            <Text style={styles.note}>{item.reviewNote}</Text>
-          ) : null}
+          <Pressable
+            onPress={() => onOpenListing?.(item.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${item.title || "listing"}`}
+          >
+            <View style={styles.row}>
+              <Text style={styles.cardTitle}>{item.title}</Text>
+              <Text style={[styles.badge, badgeColors(item.status)]}>
+                {item.reviewLabel}
+              </Text>
+            </View>
+            {item.reviewNote ? (
+              <Text style={styles.note}>{item.reviewNote}</Text>
+            ) : null}
+          </Pressable>
           {item.reviewState === "rejected" && onFixRejected ? (
             <Pressable
               onPress={() => onFixRejected(item.id)}
@@ -131,28 +215,108 @@ export function SellerListingsPanel({
               <Text style={styles.refresh}>See why and fix it</Text>
             </Pressable>
           ) : null}
+          {item.status === "DRAFT" || item.canRemove ? (
+            <Pressable
+              onPress={() => askRemove(item)}
+              disabled={removingId === item.id}
+              accessibilityRole="button"
+            >
+              <Text style={styles.remove}>
+                {removingId === item.id
+                  ? item.status === "DRAFT"
+                    ? "Deleting…"
+                    : "Removing…"
+                  : item.status === "DRAFT"
+                    ? "Delete draft"
+                    : "Remove from marketplace"}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
-      )}
-      refreshing={loading}
+        );
+      }}
+      refreshing={refreshing}
       onRefresh={() => void load()}
       ListFooterComponent={
-        <Pressable onPress={() => void load()} accessibilityRole="button">
-          <Text style={styles.refresh}>Refresh</Text>
-        </Pressable>
+        <View>
+          {visible.length > 10 && !expanded ? (
+            <Pressable
+              onPress={() => setExpanded(true)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.refresh}>See more</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={() => void load()}
+            disabled={refreshing}
+            accessibilityRole="button"
+          >
+            <Text style={styles.refresh}>
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </Text>
+          </Pressable>
+        </View>
       }
     />
+    <Modal
+      visible={pendingRemove != null}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setPendingRemove(null)}
+    >
+      <View style={styles.confirmBackdrop}>
+        <View style={styles.confirmCard}>
+          <Text style={styles.confirmTitle}>
+            {pendingRemove?.status === "DRAFT"
+              ? "Delete draft"
+              : "Remove from marketplace"}
+          </Text>
+          <Text style={styles.confirmCopy}>
+            {pendingRemove ? removalMessage(pendingRemove) : ""}
+          </Text>
+          <View style={styles.confirmActions}>
+            <Pressable
+              onPress={() => setPendingRemove(null)}
+              accessibilityRole="button"
+              style={styles.confirmCancel}
+            >
+              <Text style={styles.confirmCancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                const item = pendingRemove;
+                setPendingRemove(null);
+                if (item) void confirmRemove(item);
+              }}
+              accessibilityRole="button"
+              style={styles.confirmRemove}
+            >
+              <Text style={styles.confirmRemoveText}>
+                {pendingRemove?.status === "DRAFT" ? "Delete" : "Remove"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 
 function listingGroup(
   item: MineListing,
-): "live" | "review" | "rejected" | "sold" {
+): Exclude<ListingFilter, "all"> | "draft" {
   if (item.reviewState === "rejected" || item.status === "REJECTED") {
     return "rejected";
   }
   if (item.status === "SOLD") return "sold";
+  if (item.status === "REMOVED" || item.reviewState === "removed") return "removed";
+  if (item.status === "EXPIRED" || item.reviewState === "closed") return "closed";
   if (item.status === "LIVE" || item.status === "RESERVED") return "live";
-  return "review";
+  if (item.status === "UNDER_REVIEW" || item.reviewState === "waiting") return "review";
+  if (item.status === "DRAFT") return "draft";
+  return "closed";
 }
 
 const styles = StyleSheet.create({
@@ -190,18 +354,45 @@ const styles = StyleSheet.create({
   badge: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#5C636A",
-    backgroundColor: "#F3F0EA",
     overflow: "hidden",
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
-  badgeWaiting: { color: "#92400E", backgroundColor: "#FEF3C7" },
-  badgeRejected: { color: "#991B1B", backgroundColor: "#FEE2E2" },
-  badgeApproved: { color: "#065F46", backgroundColor: "#D1FAE5" },
   note: { marginTop: 8, fontSize: 14, lineHeight: 20, color: "#5C636A" },
   refresh: { color: "#0E9F6E", fontWeight: "600", marginTop: 8 },
+  remove: { color: "#B42318", fontWeight: "600", marginTop: 8 },
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(17,19,21,0.45)",
+    justifyContent: "center",
+    padding: 24,
+  },
+  confirmCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 20,
+  },
+  confirmTitle: { fontSize: 18, fontWeight: "700", color: "#111315" },
+  confirmCopy: { marginTop: 10, fontSize: 15, lineHeight: 22, color: "#5C636A" },
+  confirmActions: { flexDirection: "row", gap: 10, marginTop: 18 },
+  confirmCancel: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E5E2DC",
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  confirmCancelText: { fontWeight: "600", color: "#111315" },
+  confirmRemove: {
+    flex: 1,
+    borderRadius: 12,
+    backgroundColor: "#B42318",
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  confirmRemoveText: { fontWeight: "700", color: "#FFFFFF" },
 });
 
 export function ListingFixModal({
@@ -290,7 +481,7 @@ export function ListingFixModal({
         );
         setError("It was rejected again. Adjust the details and try once more.");
       } else {
-        setResult(`Status: ${published.status}`);
+        setResult(`Status: ${sentenceCaseLabel(published.status)}`);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not publish");

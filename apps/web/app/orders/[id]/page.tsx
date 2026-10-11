@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
@@ -23,6 +23,7 @@ import {
   type DeliveryShipment,
 } from "../../../lib/delivery";
 import { fetchRecommendations } from "../../../lib/intelligence";
+import { cancelSwapProposal } from "../../../lib/swap";
 import {
   cancelOrder,
   confirmOrder,
@@ -31,12 +32,14 @@ import {
   disputeIdFromEvents,
   fulfilmentLabel,
   getOrder,
+  SWAP_FEE_KOBO,
   initiatePayment,
   isMockPsp,
   markHandedOver,
   newIdempotencyKey,
   openDispute,
   orderStatusLabel,
+  sentenceCaseLabel,
   paymentStatusFromOrder,
   refundStatusFromOrder,
   rejectOrder,
@@ -47,12 +50,24 @@ import {
 } from "../../../lib/orders";
 import type { MeResponse, PublicListing } from "../../../lib/types";
 import {
+  clearOrderReviewPending,
   createOrderReview,
   markOrderReviewPending,
   resolveOrderReviewState,
   type CreateReviewBody,
   type OrderReviewUiState,
 } from "../../../lib/trust";
+
+function formatDeliveryDay(iso: string): string {
+  const [year, month, day] = iso.slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return iso;
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
 
 function ordersListHref(from: string | null): string {
   if (from === "buying" || from === "cancelled" || from === "selling") {
@@ -73,6 +88,9 @@ export default function OrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const actionRef = useRef<"pay" | "cancel" | null>(null);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [sellerNote, setSellerNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
@@ -94,14 +112,14 @@ export default function OrderDetailPage() {
   const [discloseBusy, setDiscloseBusy] = useState(false);
   const [disclosedAddress, setDisclosedAddress] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
     if (!orderId) return;
     const token = getAccessToken();
     if (!token) {
       router.replace("/");
       return;
     }
-    setLoading(true);
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const [me, detail] = await Promise.all([
@@ -120,13 +138,11 @@ export default function OrderDetailPage() {
       } else {
         setShipment(null);
       }
-      if (detail.status === "COMPLETED") {
-        const counterpartId =
-          me.id === detail.buyerId ? detail.sellerId : detail.buyerId;
+      if (detail.status === "COMPLETED" && me.id === detail.buyerId) {
         const resolved = await resolveOrderReviewState({
           orderId: detail.id,
           meId: me.id,
-          counterpartId,
+          counterpartId: detail.sellerId,
         });
         setReviewState(resolved.state);
         if (me.id === detail.buyerId) {
@@ -202,13 +218,26 @@ export default function OrderDetailPage() {
     }
   }
 
+  function applyCancelled(current: OrderDetail): OrderDetail {
+    return {
+      ...current,
+      status: "CANCELLED",
+      swap: current.swap
+        ? { ...current.swap, cancellable: false, payableOrderId: null }
+        : current.swap,
+    };
+  }
+
   async function payNow() {
+    if (actionRef.current) return;
     const token = getAccessToken();
-    if (!token || !orderId) return;
-    setBusy(true);
+    const target = order?.swap?.payableOrderId || orderId;
+    if (!token || !target) return;
+    actionRef.current = "pay";
+    setPaying(true);
     try {
       const pay = await initiatePayment(token, {
-        orderId,
+        orderId: target,
         idempotencyKey: newIdempotencyKey(),
       });
       setPayment(pay);
@@ -218,7 +247,8 @@ export default function OrderDetailPage() {
         tone: "error",
       });
     } finally {
-      setBusy(false);
+      actionRef.current = null;
+      setPaying(false);
     }
   }
 
@@ -243,25 +273,61 @@ export default function OrderDetailPage() {
     }
   }
 
+  async function cancelSwap() {
+    if (actionRef.current) return;
+    const token = getAccessToken();
+    if (!token || !order?.swapProposalId) return;
+    actionRef.current = "cancel";
+    setCancelling(true);
+    try {
+      await cancelSwapProposal(token, order.swapProposalId);
+      setOrder((current) => (current ? applyCancelled(current) : current));
+      setToast({
+        message: "Swap cancelled. The listing is back on the marketplace.",
+        tone: "success",
+      });
+      await load(true);
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not cancel the swap",
+        tone: "error",
+      });
+    } finally {
+      actionRef.current = null;
+      setCancelling(false);
+    }
+  }
+
   async function runAction(
     action: "handed-over" | "confirm" | "cancel",
   ) {
+    if (actionRef.current) return;
     const token = getAccessToken();
     if (!token || !orderId) return;
-    setBusy(true);
+    actionRef.current = action === "cancel" ? "cancel" : null;
+    if (action === "cancel") setCancelling(true);
+    else setBusy(true);
     try {
       if (action === "handed-over") await markHandedOver(token, orderId);
       else if (action === "confirm") await confirmReceipt(token, orderId);
-      else await cancelOrder(token, orderId);
-      setToast({ message: "Updated", tone: "success" });
-      await load();
+      else {
+        await cancelOrder(token, orderId);
+        setOrder((current) => (current ? applyCancelled(current) : current));
+      }
+      setToast({
+        message: action === "cancel" ? "Order cancelled" : "Updated",
+        tone: "success",
+      });
+      await load(true);
     } catch (err) {
       setToast({
         message: err instanceof ApiError ? err.message : "Action failed",
         tone: "error",
       });
     } finally {
+      actionRef.current = null;
       setBusy(false);
+      setCancelling(false);
     }
   }
 
@@ -296,12 +362,12 @@ export default function OrderDetailPage() {
       const created = await createOrderReview(token, orderId, body);
       if (created.status === "PUBLISHED") {
         setReviewState("done");
-        setToast({ message: "Reviews published", tone: "success" });
+        setToast({ message: "Rating published on the listing", tone: "success" });
       } else {
         markOrderReviewPending(orderId);
         setReviewState("waiting");
         setToast({
-          message: "Review saved — waiting for the other party",
+          message: "Rating saved. It shows on this seller's listings.",
           tone: "success",
         });
       }
@@ -309,10 +375,10 @@ export default function OrderDetailPage() {
       const msg =
         err instanceof ApiError ? err.message : "Could not submit review";
       if (/already reviewed/i.test(msg)) {
-        markOrderReviewPending(orderId);
-        setReviewState("waiting");
+        clearOrderReviewPending(orderId);
+        setReviewState("done");
         setToast({
-          message: "Waiting for the other party",
+          message: "You already rated this order",
           tone: "info",
         });
       } else {
@@ -354,17 +420,28 @@ export default function OrderDetailPage() {
   const isBuyer = meId === order.buyerId;
   const isSeller = meId === order.sellerId;
   const disputeId = disputeIdFromEvents(order.events);
+  const swapOpen =
+    Boolean(order.swap) &&
+    order.swap?.cancellable !== false &&
+    (order.status === "CREATED" || order.status === "PAYMENT_PENDING");
+  const canCancelSwap = swapOpen && (isBuyer || isSeller);
   const canCancel =
+    !canCancelSwap &&
     isBuyer &&
     (order.status === "CREATED" || order.status === "PAYMENT_PENDING");
   const awaitingSeller =
     isSeller &&
     order.confirmationStatus === "PENDING" &&
     order.status === "CREATED";
-  const canPay =
-    isBuyer &&
-    order.status === "PAYMENT_PENDING" &&
-    order.confirmationStatus !== "PENDING";
+  const payTargetId = order.swap
+    ? (order.swap.payableOrderId ??
+      (isBuyer && order.status === "PAYMENT_PENDING" ? order.id : null))
+    : isBuyer &&
+        order.status === "PAYMENT_PENDING" &&
+        order.confirmationStatus !== "PENDING"
+      ? order.id
+      : null;
+  const canPay = Boolean(payTargetId);
   const canHandOver =
     isSeller &&
     (order.status === "FUNDED" || order.status === "IN_AUTHENTICATION");
@@ -403,13 +480,49 @@ export default function OrderDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">
-              {order.listingTitle?.trim() || "Order"}
+              {order.swap ? "Swap order" : order.listingTitle?.trim() || "Order"}
             </h1>
+            {order.swap ? (
+              <div className="mt-4 space-y-3">
+                {(
+                  [
+                    ["You send", order.swap.youSend],
+                    ["You receive", order.swap.youReceive],
+                  ] as const
+                ).map(([label, item]) => (
+                  <div key={label} className="flex items-center gap-3">
+                    {item.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={item.imageUrl}
+                        alt=""
+                        className="h-16 w-16 rounded-xl object-cover"
+                      />
+                    ) : (
+                      <div className="h-16 w-16 rounded-xl bg-[var(--rw-border)]" />
+                    )}
+                    <div>
+                      <p className="text-sm text-[var(--rw-ink-muted)]">{label}</p>
+                      <p className="font-semibold">{item.title}</p>
+                    </div>
+                  </div>
+                ))}
+                {order.swap.deliveryOn ? (
+                  <p className="text-sm font-semibold">
+                    Delivery day · {formatDeliveryDay(order.swap.deliveryOn)}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <p className="mt-1 text-lg font-semibold">
-              {formatNgn({ amountKobo: order.totalKobo })}
+              {formatNgn({
+                amountKobo: order.swap
+                  ? order.deliveryFeeKobo + SWAP_FEE_KOBO
+                  : order.totalKobo,
+              })}
             </p>
             <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
-              {isBuyer ? "Buying" : isSeller ? "Selling" : "Order"} ·{" "}
+              {order.swap ? "Swap" : isBuyer ? "Buying" : isSeller ? "Selling" : "Order"} ·{" "}
               {fulfilmentLabel(String(order.fulfilmentMethod))}
             </p>
           </div>
@@ -418,20 +531,53 @@ export default function OrderDetailPage() {
           </Chip>
         </div>
 
-        <dl className="mt-6 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm sm:grid-cols-2">
-          <div>
-            <dt className="text-[var(--rw-ink-muted)]">Item</dt>
-            <dd className="font-medium">
-              {order.listingTitle?.trim() || "Listing"}
-              {order.quantity && order.quantity > 1 ? ` · ${order.quantity} units` : ""}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[var(--rw-ink-muted)]">Protection fee</dt>
-            <dd className="font-medium">
-              {formatNgn({ amountKobo: order.protectionFeeKobo })}
-            </dd>
-          </div>
+        {order.swap ? (
+          <dl className="mt-6 space-y-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-[var(--rw-ink-muted)]">Delivery fee</dt>
+              <dd className="font-medium">
+                {formatNgn({ amountKobo: order.deliveryFeeKobo })}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-[var(--rw-ink-muted)]">Swap fee</dt>
+              <dd className="font-medium">
+                {formatNgn({ amountKobo: SWAP_FEE_KOBO })}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4 border-t border-[var(--rw-border)] pt-3 text-base font-semibold">
+              <dt>Total</dt>
+              <dd>
+                {formatNgn({
+                  amountKobo: order.deliveryFeeKobo + SWAP_FEE_KOBO,
+                })}
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <dl className="mt-6 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-[var(--rw-ink-muted)]">Item</dt>
+              <dd className="font-medium">
+                {order.listingTitle?.trim() || "Listing"}
+                {order.quantity && order.quantity > 1 ? ` · ${order.quantity} units` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--rw-ink-muted)]">Delivery fee</dt>
+              <dd className="font-medium">
+                {formatNgn({ amountKobo: order.deliveryFeeKobo })}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--rw-ink-muted)]">Protection fee</dt>
+              <dd className="font-medium">
+                {formatNgn({ amountKobo: order.protectionFeeKobo })}
+              </dd>
+            </div>
+          </dl>
+        )}
+        <dl className="mt-3 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm sm:grid-cols-2">
           <div>
             <dt className="text-[var(--rw-ink-muted)]">Payment</dt>
             <dd className="font-medium">{paymentStatusFromOrder(order)}</dd>
@@ -520,13 +666,32 @@ export default function OrderDetailPage() {
 
         {canPay ? (
           <div className="mt-4 space-y-2">
+            {order.swap && payTargetId && payTargetId !== order.id ? (
+              <p className="text-sm text-[var(--rw-ink-muted)]">
+                This pays your delivery fee and the ₦500 swap fee.
+              </p>
+            ) : null}
             {!payment ? (
-              <Button variant="primary" disabled={busy} onClick={() => void payNow()}>
-                Complete payment
+              <Button
+                variant="primary"
+                disabled={paying || cancelling || busy}
+                onClick={() => void payNow()}
+              >
+                {paying
+                  ? "Starting payment…"
+                  : order.swap
+                    ? "Pay delivery and swap fee"
+                    : order.amountKobo === 0
+                      ? "Pay delivery"
+                      : "Complete payment"}
               </Button>
             ) : isMockPsp(payment) ? (
-              <Button variant="primary" disabled={busy} onClick={() => void simulatePay()}>
-                Simulate payment
+              <Button
+                variant="primary"
+                disabled={paying || cancelling || busy}
+                onClick={() => void simulatePay()}
+              >
+                {paying ? "Starting payment…" : "Simulate payment"}
               </Button>
             ) : payment.checkoutUrl ? (
               <a href={payment.checkoutUrl} className="text-sm font-medium text-[var(--rw-accent)]">
@@ -654,9 +819,7 @@ export default function OrderDetailPage() {
                   className="absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-[var(--rw-accent)]"
                 />
                 <p className="text-sm font-medium">
-                  {orderStatusLabel(ev.type) === ev.type
-                    ? ev.type.replace(/_/g, " ")
-                    : orderStatusLabel(ev.type)}
+                  {sentenceCaseLabel(ev.type)}
                 </p>
                 <time
                   className="text-xs text-[var(--rw-ink-muted)]"
@@ -688,13 +851,29 @@ export default function OrderDetailPage() {
               Confirm receipt
             </Button>
           ) : null}
+          {canCancelSwap ? (
+            <>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={paying || cancelling || busy}
+                onClick={() => void cancelSwap()}
+              >
+                {cancelling ? "Cancelling…" : "Cancel swap"}
+              </Button>
+              <p className="w-full text-sm text-[var(--rw-ink-muted)]">
+                Cancel swap puts the listing back on the marketplace. Once either person pays, the swap has to be completed.
+              </p>
+            </>
+          ) : null}
           {canCancel ? (
             <Button
+              type="button"
               variant="danger"
-              disabled={busy}
+              disabled={paying || cancelling || busy}
               onClick={() => void runAction("cancel")}
             >
-              Cancel order
+              {cancelling ? "Cancelling…" : "Cancel order"}
             </Button>
           ) : null}
           {canDispute ? (
@@ -708,7 +887,13 @@ export default function OrderDetailPage() {
           ) : null}
         </div>
 
-        {order.status === "COMPLETED" ? (
+        {order.status === "COMPLETED" && isSeller ? (
+          <p className="mt-8 text-sm text-[var(--rw-ink-muted)]">
+            Buyers rate the purchase after this order. That rating shows on your listings. Sellers do not rate buyers.
+          </p>
+        ) : null}
+
+        {order.status === "COMPLETED" && isBuyer ? (
           <section className="mt-10" aria-labelledby="review-section">
             <h2 id="review-section" className="sr-only">
               Review
@@ -721,9 +906,9 @@ export default function OrderDetailPage() {
             ) : null}
             {reviewState === "waiting" ? (
               <aside className="mt-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-gold)]/40 bg-[var(--rw-gold-muted)]/50 px-4 py-4">
-                <p className="font-semibold">Waiting for other party</p>
+                <p className="font-semibold">Rating saved</p>
                 <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
-                  Your review is saved. It will publish when they leave theirs.
+                  Your rating of the purchase will show on this seller&apos;s listings.
                 </p>
               </aside>
             ) : null}
@@ -733,7 +918,7 @@ export default function OrderDetailPage() {
                   Review published
                 </p>
                 <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
-                  Thanks — both sides have rated this order.
+                  Thanks — your rating is on the listing.
                 </p>
               </aside>
             ) : null}
@@ -747,7 +932,7 @@ export default function OrderDetailPage() {
             </h2>
             <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
               {alsoLike.map((item) => (
-                <li key={item.id} className="w-40 shrink-0">
+                <li key={item.id} className="w-[7.5rem] shrink-0">
                   <DiscoveryListingCard listing={item} />
                 </li>
               ))}

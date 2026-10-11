@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -48,6 +49,11 @@ export class CartService {
     if (!listing) throw new NotFoundException('Listing not found');
     if (listing.sellerId === userId) {
       throw new BadRequestException('You cannot add your own listing to the cart');
+    }
+    if (listing.sellingMode === 'GIVE_AWAY') {
+      throw new BadRequestException(
+        'A gift is not reserved in the cart. Pay the delivery fee to receive one unit.',
+      );
     }
     if (listing.sellingMode !== 'SELL') {
       throw new BadRequestException('Only items for sale can be added to the cart');
@@ -112,6 +118,7 @@ export class CartService {
       throw new BadRequestException('Your cart is empty');
     }
 
+    const checkoutId = randomUUID();
     const orders = [];
     const placed: {
       id: string;
@@ -129,9 +136,9 @@ export class CartService {
             listingId: row.listingId,
             quantity: row.quantity,
             buyNow: true,
-            fulfilmentMethod: dto.fulfilmentMethod ?? FulfilmentMethod.PICKUP,
+            fulfilmentMethod: FulfilmentMethod.DELIVERY,
           },
-          { skipEmail: true },
+          { skipEmail: true, checkoutId },
         );
         await this.prisma.cartItem.delete({ where: { id: row.id } });
         orders.push(order);

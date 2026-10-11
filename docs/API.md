@@ -67,6 +67,7 @@ GET /api/v1/healthz
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
 | GET/POST | `/conversations` | user | |
+| DELETE | `/conversations/:id` | user | Hides the chat for the caller only |
 | GET/POST | `/conversations/:id/messages` | user | |
 | POST | `/listings/:id/offers` | user | |
 | POST | `/offers/:id/accept\|reject\|counter` | user | |

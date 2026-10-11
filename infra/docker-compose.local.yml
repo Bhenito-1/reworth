@@ -39,9 +39,12 @@ services:
     container_name: reworth-s3mock
     restart: unless-stopped
     environment:
-      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: reworth-media
+      COM_ADOBE_TESTING_S3MOCK_DOMAIN_INITIAL_BUCKETS: reworth-media
+      COM_ADOBE_TESTING_S3MOCK_DOMAIN_RETAIN_FILES_ON_EXIT: "true"
     ports:
       - "9020:9090"
+    volumes:
+      - s3mock_data:/s3mockroot
 
   mailhog:
     image: mailhog/mailhog:latest
@@ -54,3 +57,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  s3mock_data:

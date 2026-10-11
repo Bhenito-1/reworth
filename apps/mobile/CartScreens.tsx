@@ -3,13 +3,14 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { ApiError } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
+import { sentenceCaseLabel } from "./lib/discovery";
 import { formatNgnFromKobo } from "./lib/types";
 import {
   checkoutCart,
@@ -25,9 +26,11 @@ import {
 export function CartPanel({
   onOpenListing,
   onCheckedOut,
+  onSearch,
 }: {
   onOpenListing: (id: string) => void;
   onCheckedOut: () => void;
+  onSearch: () => void;
 }) {
   const [items, setItems] = useState<CartItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +56,7 @@ export function CartPanel({
     if (!token) return;
     setBusy(true);
     try {
-      await checkoutCart(token, "PICKUP");
+      await checkoutCart(token, "DELIVERY");
       onCheckedOut();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Checkout failed");
@@ -69,7 +72,17 @@ export function CartPanel({
 
   return (
     <ScrollView contentContainerStyle={styles.pad}>
-      <Text style={styles.title}>Cart</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>Cart</Text>
+        <Pressable
+          onPress={onSearch}
+          accessibilityRole="button"
+          accessibilityLabel="Search products"
+          style={styles.searchBtn}
+        >
+          <Text style={styles.searchBtnText}>Search</Text>
+        </Pressable>
+      </View>
       <Text style={styles.copy}>
         Adding an item does not place an order. Checkout reserves units and asks
         the seller to confirm before you pay.
@@ -145,8 +158,10 @@ export function CartPanel({
 
 export function InventoryPanel({
   onOpenListing,
+  embedded = false,
 }: {
   onOpenListing: (id: string) => void;
+  embedded?: boolean;
 }) {
   const [rows, setRows] = useState<InventoryRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -202,12 +217,12 @@ export function InventoryPanel({
     return <ActivityIndicator style={{ marginTop: 24 }} color="#0E9F6E" />;
   }
 
-  return (
-    <ScrollView contentContainerStyle={styles.pad}>
-      <Text style={styles.title}>Inventory</Text>
+  const body = (
+    <View style={embedded ? styles.embedded : undefined}>
+      <Text style={styles.title}>{embedded ? "Stock" : "Inventory"}</Text>
       <Text style={styles.copy}>
-        All of your listings, including sold items that are off the marketplace.
-        You can take a listing down when nothing is in progress. A sold-out listing stays here.
+        Units listed, available, reserved, and sold. You can take a listing down
+        when nothing is in progress. A sold-out listing stays here.
       </Text>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {rows && rows.length === 0 ? (
@@ -218,7 +233,7 @@ export function InventoryPanel({
           <Text style={styles.itemTitle}>{row.title || "Untitled"}</Text>
           <Text style={styles.copy}>
             {formatNgnFromKobo(row.priceKobo)} per unit ·{" "}
-            {row.onMarketplace ? "On marketplace" : row.status}
+            {row.onMarketplace ? "On marketplace" : sentenceCaseLabel(row.status)}
           </Text>
           <Text style={styles.copy}>
             Listed {row.quantityTotal} · Available {row.quantityAvailable} · Reserved{" "}
@@ -242,13 +257,34 @@ export function InventoryPanel({
           ) : null}
         </Pressable>
       ))}
-    </ScrollView>
+    </View>
   );
+
+  if (embedded) return body;
+  return <ScrollView contentContainerStyle={styles.pad}>{body}</ScrollView>;
 }
 
 const styles = StyleSheet.create({
   pad: { padding: 16, paddingBottom: 48, gap: 12 },
+  embedded: { gap: 12, marginTop: 28 },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   title: { fontSize: 24, fontWeight: "600" },
+  searchBtn: {
+    minHeight: 44,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#E5E2DC",
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  searchBtnText: { fontSize: 15, fontWeight: "700", color: "#111315" },
   copy: { color: "#5C574E", fontSize: 14, lineHeight: 20 },
   error: { color: "#9B2C2C" },
   remove: { color: "#9B2C2C", fontSize: 14, fontWeight: "600", marginTop: 4 },

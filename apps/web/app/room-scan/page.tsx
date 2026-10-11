@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
+import { CONDITION_LABELS } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
 import {
   createRoomScan,
@@ -351,7 +352,14 @@ export default function RoomScanPage() {
                       <span>
                         <span className="block font-medium">{item.label}</span>
                         <span className="text-xs text-[var(--rw-ink-muted)]">
-                          {[item.brandHint, item.categoryHint, item.condition]
+                          {[
+                            item.brandHint,
+                            item.categoryHint,
+                            item.condition
+                              ? (CONDITION_LABELS[item.condition] ??
+                                item.condition)
+                              : null,
+                          ]
                             .filter(Boolean)
                             .join(" · ")}
                         </span>

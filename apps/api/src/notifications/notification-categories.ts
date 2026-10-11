@@ -47,6 +47,18 @@ export const CRITICAL_CATEGORIES: ReadonlySet<string> = new Set([
   NotificationCategory.ORDER_CANCELLED,
 ]);
 
+/** Product ads and catalogue promotions. These need marketing consent. */
+const MARKETING_EMAIL_CATEGORIES: ReadonlySet<string> = new Set([
+  NotificationCategory.PRICE_DROP,
+  NotificationCategory.SAVED_SEARCH_MATCH,
+  NotificationCategory.COMMUNITY_NEW_LISTING,
+  NotificationCategory.MOVING_SALE_UPDATE,
+]);
+
+export function isMarketingEmailCategory(category: string): boolean {
+  return MARKETING_EMAIL_CATEGORIES.has(category);
+}
+
 export function isCriticalCategory(category: string): boolean {
   return (
     CRITICAL_CATEGORIES.has(category) ||

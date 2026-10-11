@@ -104,9 +104,9 @@ export default function StorefrontPage() {
               No live listings yet.
             </p>
           ) : (
-            <ul className="mt-4 grid gap-4 sm:grid-cols-2">
+            <ul className="mt-4 flex flex-wrap gap-3">
               {listings.map((item) => (
-                <li key={item.id}>
+                <li key={item.id} className="w-[7.5rem] shrink-0">
                   <DiscoveryListingCard listing={item} />
                 </li>
               ))}

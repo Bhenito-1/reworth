@@ -4,13 +4,13 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { ListingCard } from "./components/ListingCard";
 import { ApiError } from "./lib/api";
 import { ensureAccessToken, getAccessToken } from "./lib/auth";
@@ -27,6 +27,7 @@ import {
   type AssistantTurnCard,
   type SavedBundle,
 } from "./lib/assistant";
+import { conditionLabel, sentenceCaseLabel } from "./lib/discovery";
 import { completeMedia, createListing, presignMedia } from "./lib/listings";
 import {
   bookManagedPickup,
@@ -955,7 +956,7 @@ function ScanPanel({
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {scan ? (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Status: {scan.status}</Text>
+          <Text style={styles.cardTitle}>Status: {sentenceCaseLabel(scan.status)}</Text>
           <Text style={styles.meta}>
             Tap items to include / skip before drafting.
           </Text>
@@ -972,7 +973,7 @@ function ScanPanel({
                 <Text style={styles.meta}>
                   {on ? "✓ " : "○ "}
                   {it.label}
-                  {it.condition ? ` · ${it.condition}` : ""}
+                  {it.condition ? ` · ${conditionLabel(it.condition)}` : ""}
                 </Text>
               </Pressable>
             );

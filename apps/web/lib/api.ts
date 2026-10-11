@@ -62,6 +62,7 @@ export async function apiFetch<T>(
     typeof FormData !== "undefined" && body instanceof FormData;
   const res = await fetch(`${API_URL}${path.startsWith("/") ? path : `/${path}`}`, {
     ...rest,
+    cache: rest.cache ?? "no-store",
     headers: {
       Accept: "application/json",
       ...(body !== undefined && !isFormData

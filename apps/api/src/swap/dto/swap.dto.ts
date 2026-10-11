@@ -1,23 +1,30 @@
 import {
-  IsInt,
   IsOptional,
   IsString,
+  Matches,
   IsUUID,
-  Max,
   MaxLength,
-  Min,
 } from 'class-validator';
 
 export class CreateSwapProposalDto {
   @IsUUID()
   offeredListingId!: string;
 
-  /** Positive = proposer pays seller. Default 0 (pure swap). */
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(10_000_000_000)
-  cashComponentKobo?: number;
+  @IsString()
+  @MaxLength(140)
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  description?: string;
+
+  /** Calendar day the proposer wants both items delivered, YYYY-MM-DD. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  deliveryOn?: string;
 
   @IsOptional()
   @IsString()
@@ -33,12 +40,6 @@ export class CounterSwapProposalDto {
   @IsOptional()
   @IsUUID()
   offeredListingId?: string;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(10_000_000_000)
-  cashComponentKobo?: number;
 
   @IsOptional()
   @IsString()

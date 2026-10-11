@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { ApiError, apiFetch } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import { brandAssets, orderStatusBadgeSource } from "./lib/brandAssets";
@@ -18,21 +18,11 @@ import {
   fallbackDeliveryDestination,
   getDeliveryQuote,
   getOrderShipment,
-  listMeetPoints,
-  setOrderMeetPoint,
   shipmentStatusLabel,
   type DeliveryShipment,
-  type MeetPoint,
 } from "./lib/delivery";
 import { getListing } from "./lib/listings";
-import {
-  confirmInstantBuy,
-  generateWatPickupSlots,
-  getInstantBuyByOrder,
-  scheduleInstantBuy,
-  type InstantBuyFulfilment,
-  type ManagedPickupSlot,
-} from "./lib/platform-services";
+import { cancelSwapProposal, createGiveawayClaim, getGiftDeliveryQuote } from "./lib/swap";
 import {
   addDisputeEvidence,
   cancelOrder,
@@ -55,8 +45,10 @@ import {
   isCancelledOrder,
   isDeliveredOrder,
   newIdempotencyKey,
+  SWAP_FEE_KOBO,
   openDispute,
   orderStatusLabel,
+  sentenceCaseLabel,
   sortMyOrders,
   rejectSellerOrder,
   paymentStatusFromOrder,
@@ -77,6 +69,7 @@ import {
   type PublicListing,
 } from "./lib/types";
 import {
+  clearOrderReviewPending,
   createOrderReview,
   markOrderReviewPending,
   resolveOrderReviewState,
@@ -89,15 +82,29 @@ type CheckoutParams = {
   listingId: string;
   offerId?: string;
   orderIntentId?: string;
+  payOrderId?: string;
   quantity?: number;
 };
 
 type Props = {
   meId: string | null;
   onOpenOrder?: (orderId: string) => void;
+  /** Bumps after an order changes so the list picks up the new status. */
+  refreshKey?: number;
 };
 
 type OrderListTab = "selling" | "buying" | "cancelled";
+
+function formatDeliveryDay(iso: string): string {
+  const [year, month, day] = iso.slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return iso;
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
 
 function ordersForTab(
   orders: OrderDto[],
@@ -167,7 +174,12 @@ function OrderRoleTabs({
             accessibilityRole="tab"
             accessibilityState={{ selected }}
           >
-            <Text style={[styles.roleTabText, selected && styles.roleTabTextOn]}>
+            <Text
+              style={[styles.roleTabText, selected && styles.roleTabTextOn]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
+            >
               {item.label}
             </Text>
           </Pressable>
@@ -177,12 +189,13 @@ function OrderRoleTabs({
   );
 }
 
-export function OrdersPanel({ meId, onOpenOrder }: Props) {
+export function OrdersPanel({ meId, onOpenOrder, refreshKey = 0 }: Props) {
   const [orders, setOrders] = useState<OrderDto[]>([]);
   const [tab, setTab] = useState<OrderListTab>("selling");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const loadedOnce = useRef(false);
   const load = useCallback(async () => {
     const token = await getAccessToken();
     if (!token) {
@@ -190,10 +203,11 @@ export function OrdersPanel({ meId, onOpenOrder }: Props) {
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
     setError(null);
     try {
       setOrders(await listOrders(token));
+      loadedOnce.current = true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load orders");
     } finally {
@@ -203,7 +217,7 @@ export function OrdersPanel({ meId, onOpenOrder }: Props) {
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   if (loading) {
     return (
@@ -288,11 +302,13 @@ export function OrdersPanel({ meId, onOpenOrder }: Props) {
               {role} · {fulfilmentLabel(String(o.fulfilmentMethod))}
             </Text>
             <View style={styles.badgeRow}>
-              <Image
-                source={orderStatusBadgeSource(String(o.status))}
-                style={styles.statusBadgeIcon}
-                resizeMode="contain"
-              />
+              {orderStatusBadgeSource(String(o.status)) ? (
+                <Image
+                  source={orderStatusBadgeSource(String(o.status))!}
+                  style={styles.statusBadgeIcon}
+                  resizeMode="contain"
+                />
+              ) : null}
               <Text style={styles.badge}>
                 {orderStatusLabel(String(o.status))}
               </Text>
@@ -319,14 +335,14 @@ export function CheckoutModal({
   const [listing, setListing] = useState<PublicListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fulfilment, setFulfilment] = useState<FulfilmentMethod>("MEET_POINT");
+  const [fulfilment] = useState<FulfilmentMethod>("DELIVERY");
   const [busy, setBusy] = useState(false);
   const [payment, setPayment] = useState<PaymentDto | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
-  const [meetPoints, setMeetPoints] = useState<MeetPoint[]>([]);
-  const [meetPointId, setMeetPointId] = useState<string | null>(null);
   const [deliveryFeeKobo, setDeliveryFeeKobo] = useState(0);
+  const [swapPair, setSwapPair] = useState<OrderDetail["swap"]>(null);
+  const [giftArea, setGiftArea] = useState("");
   const [quoteBusy, setQuoteBusy] = useState(false);
 
   useEffect(() => {
@@ -334,8 +350,6 @@ export function CheckoutModal({
       setListing(null);
       setPayment(null);
       setOrderId(null);
-      setMeetPoints([]);
-      setMeetPointId(null);
       setDeliveryFeeKobo(0);
       return;
     }
@@ -346,32 +360,30 @@ export function CheckoutModal({
       setPayment(null);
       setOrderId(null);
       setDeliveryFeeKobo(0);
+      setGiftArea("");
       try {
         const token = await getAccessToken();
         const data = await getListing(listingId, token);
         if (cancelled) return;
         setListing(data);
-        setFulfilment(
-          data.fulfilmentPickup
-            ? "PICKUP"
-            : data.fulfilmentMeet
-              ? "MEET_POINT"
-              : data.fulfilmentDelivery
-                ? "DELIVERY"
-                : "MEET_POINT",
-        );
-        if (token && data.fulfilmentMeet !== false) {
-          try {
-            const points = await listMeetPoints(
-              token,
-              data.community || undefined,
-            );
-            if (!cancelled) {
-              setMeetPoints(points);
-              setMeetPointId(points[0]?.id ?? null);
-            }
-          } catch {
-            if (!cancelled) setMeetPoints([]);
+        if (params?.payOrderId) {
+          if (!token) {
+            setError("Sign in to pay the delivery fee.");
+          } else {
+            const order = await getOrder(token, params.payOrderId);
+            if (cancelled) return;
+            setDeliveryFeeKobo(order.deliveryFeeKobo);
+            setOrderId(order.id);
+            setSwapPair(order.swap ?? null);
+          }
+        } else if (data.sellingMode === "GIVE_AWAY") {
+          if (!token) {
+            setError("Sign in to see the delivery quote for your area.");
+          } else {
+            const quote = await getGiftDeliveryQuote(token, listingId);
+            if (cancelled) return;
+            setDeliveryFeeKobo(quote.deliveryFeeKobo);
+            setGiftArea(quote.area);
           }
         }
       } catch (err) {
@@ -385,21 +397,31 @@ export function CheckoutModal({
     return () => {
       cancelled = true;
     };
-  }, [listingId]);
+  }, [listingId, params?.payOrderId]);
 
   const quantity = Math.max(1, params?.quantity ?? 1);
+  const isGift = listing?.sellingMode === "GIVE_AWAY";
+  const isSwapCheckout = Boolean(params?.payOrderId);
   const unitKobo = listing?.priceKobo ?? 0;
-  const amountKobo =
-    params?.offerId || params?.orderIntentId ? unitKobo : unitKobo * quantity;
-  const fee = useMemo(() => computeProtectionFeeKobo(amountKobo), [amountKobo]);
+  const amountKobo = isSwapCheckout
+    ? 0
+    : params?.offerId || params?.orderIntentId
+      ? unitKobo
+      : unitKobo * quantity;
+  const fee = useMemo(
+    () => (isGift || isSwapCheckout ? 0 : computeProtectionFeeKobo(amountKobo)),
+    [amountKobo, isGift, isSwapCheckout],
+  );
   const total = useMemo(
     () =>
-      computeOrderTotalKobo({
-        amountKobo,
-        protectionFeeKobo: fee,
-        deliveryFeeKobo: fulfilment === "DELIVERY" ? deliveryFeeKobo : 0,
-      }),
-    [amountKobo, fee, fulfilment, deliveryFeeKobo],
+      isSwapCheckout
+        ? deliveryFeeKobo + SWAP_FEE_KOBO
+        : computeOrderTotalKobo({
+            amountKobo,
+            protectionFeeKobo: fee,
+            deliveryFeeKobo: fulfilment === "DELIVERY" ? deliveryFeeKobo : 0,
+          }),
+    [amountKobo, fee, fulfilment, deliveryFeeKobo, isSwapCheckout],
   );
 
   async function placeAndPay() {
@@ -408,9 +430,29 @@ export function CheckoutModal({
     setBusy(true);
     setError(null);
     try {
+      if (params?.payOrderId) {
+        setOrderId(params.payOrderId);
+        const pay = await initiatePayment(token, {
+          orderId: params.payOrderId,
+          idempotencyKey: newIdempotencyKey(),
+        });
+        setPayment(pay);
+        return;
+      }
+      if (listing?.sellingMode === "GIVE_AWAY") {
+        const claimed = await createGiveawayClaim(token, listingId);
+        setOrderId(claimed.order.id);
+        setDeliveryFeeKobo(claimed.order.deliveryFeeKobo);
+        const pay = await initiatePayment(token, {
+          orderId: claimed.order.id,
+          idempotencyKey: newIdempotencyKey(),
+        });
+        setPayment(pay);
+        return;
+      }
       const order = await createOrder(token, {
         listingId,
-        fulfilmentMethod: fulfilment,
+        fulfilmentMethod: "DELIVERY",
         ...(quantity > 1 ? { quantity } : {}),
         ...(params?.orderIntentId
           ? { orderIntentId: params.orderIntentId }
@@ -425,25 +467,19 @@ export function CheckoutModal({
         return;
       }
 
-      if (fulfilment === "MEET_POINT" && meetPointId) {
-        await setOrderMeetPoint(token, order.id, meetPointId);
-      }
-
-      if (fulfilment === "DELIVERY") {
-        setQuoteBusy(true);
-        const dest = fallbackDeliveryDestination(
-          (listing as { geoLat?: number | null })?.geoLat,
-          (listing as { geoLng?: number | null })?.geoLng,
-        );
-        const quote = await getDeliveryQuote(
-          token,
-          order.id,
-          dest.toLat,
-          dest.toLng,
-        );
-        setDeliveryFeeKobo(quote.deliveryFeeKobo ?? quote.feeKobo);
-        setQuoteBusy(false);
-      }
+      setQuoteBusy(true);
+      const dest = fallbackDeliveryDestination(
+        (listing as { geoLat?: number | null })?.geoLat,
+        (listing as { geoLng?: number | null })?.geoLng,
+      );
+      const quote = await getDeliveryQuote(
+        token,
+        order.id,
+        dest.toLat,
+        dest.toLng,
+      );
+      setDeliveryFeeKobo(quote.deliveryFeeKobo ?? quote.feeKobo);
+      setQuoteBusy(false);
 
       const pay = await initiatePayment(token, {
         orderId: order.id,
@@ -500,11 +536,67 @@ export function CheckoutModal({
             {error ? <Text style={styles.error}>{error}</Text> : null}
             {listing ? (
               <>
+                {isSwapCheckout && swapPair ? (
+                  <View style={{ gap: 10, marginBottom: 12 }}>
+                    <Text style={styles.cardTitle}>Swap order</Text>
+                    {(
+                      [
+                        ["You send", swapPair.youSend],
+                        ["You receive", swapPair.youReceive],
+                      ] as const
+                    ).map(([label, item]) => (
+                      <View
+                        key={label}
+                        style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+                      >
+                        {item.imageUrl ? (
+                          <Image
+                            source={{ uri: item.imageUrl }}
+                            style={{ width: 64, height: 64, borderRadius: 12 }}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View
+                            style={{
+                              width: 64,
+                              height: 64,
+                              borderRadius: 12,
+                              backgroundColor: colors.beige,
+                            }}
+                          />
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.muted}>{label}</Text>
+                          <Text style={styles.cardTitle}>{item.title}</Text>
+                        </View>
+                      </View>
+                    ))}
+                    {swapPair.deliveryOn ? (
+                      <Text style={styles.muted}>
+                        Delivery day · {formatDeliveryDay(swapPair.deliveryOn)}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : thumb ? (
+                  <View style={styles.checkoutPhoto}>
+                    <Image
+                      source={{ uri: thumb }}
+                      style={styles.checkoutPhotoImg}
+                      resizeMode="cover"
+                      accessibilityLabel="Listing photo"
+                    />
+                  </View>
+                ) : null}
+                {isSwapCheckout && swapPair ? null : (
+                  <>
                 <Text style={styles.cardTitle}>
                   {listing.title || "Untitled"}
                 </Text>
                 <Text style={styles.price}>{formatNgnFromKobo(amountKobo)}</Text>
+                  </>
+                )}
 
+                {isGift || isSwapCheckout ? null : (
                 <View style={styles.protect}>
                   <View style={styles.protectHeader}>
                     <Image
@@ -542,130 +634,40 @@ export function CheckoutModal({
                     total.
                   </Text>
                 </View>
+                )}
 
-                <Text style={styles.section}>How you get it</Text>
-                <View style={styles.rowWrap}>
-                  {(
-                    [
-                      listing.fulfilmentPickup
-                        ? (["PICKUP", "Pickup"] as const)
-                        : null,
-                      listing.fulfilmentMeet
-                        ? (["MEET_POINT", "Meet"] as const)
-                        : null,
-                      listing.fulfilmentDelivery
-                        ? (["DELIVERY", "Delivery"] as const)
-                        : null,
-                    ].filter(Boolean) as [FulfilmentMethod, string][]
-                  )
-                    .concat(
-                      !listing.fulfilmentPickup &&
-                        !listing.fulfilmentMeet &&
-                        !listing.fulfilmentDelivery
-                        ? [
-                            ["PICKUP", "Pickup"],
-                            ["MEET_POINT", "Meet"],
-                            ["DELIVERY", "Delivery"],
-                          ]
-                        : [],
-                    )
-                    .map(([value, label]) => (
-                      <Pressable
-                        key={value}
-                        style={[
-                          styles.chip,
-                          fulfilment === value && styles.chipOn,
-                        ]}
-                        onPress={() => setFulfilment(value)}
-                        disabled={Boolean(payment)}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: fulfilment === value }}
-                      >
-                        <Text
-                          style={[
-                            styles.chipText,
-                            fulfilment === value && styles.chipTextOn,
-                          ]}
-                        >
-                          {label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                </View>
-
-                <View style={styles.fulfilHint}>
-                  {fulfilment === "PICKUP" ? (
-                    <Text style={styles.muted}>
-                      Collect from the seller’s address after payment. Address is
-                      shared only once the order is paid.
-                    </Text>
-                  ) : null}
-                  {fulfilment === "MEET_POINT" ? (
-                    <Text style={styles.muted}>
-                      Meet at a public ReWorth-suggested spot. Bring photo ID and
-                      confirm the item before releasing payment.
-                    </Text>
-                  ) : null}
-                  {fulfilment === "DELIVERY" ? (
-                    <Text style={styles.muted}>
-                      Courier quote is calculated after you create the order
-                      (₦1,500 + ₦150/km). Fee joins the total before you pay.
-                      {quoteBusy ? " Quoting…" : ""}
-                    </Text>
-                  ) : null}
-                </View>
-
-                {fulfilment === "MEET_POINT" && meetPoints.length > 0 ? (
-                  <>
-                    <Text style={styles.section}>Safe meet point</Text>
-                    <View style={styles.rowWrap}>
-                      {meetPoints.map((p) => (
-                        <Pressable
-                          key={p.id}
-                          style={[
-                            styles.chip,
-                            meetPointId === p.id && styles.chipOn,
-                          ]}
-                          onPress={() => setMeetPointId(p.id)}
-                          disabled={Boolean(payment)}
-                        >
-                          <Text
-                            style={[
-                              styles.chipText,
-                              meetPointId === p.id && styles.chipTextOn,
-                            ]}
-                          >
-                            {p.name}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                    {meetPointId ? (
-                      <Text style={styles.muted}>
-                        {meetPoints.find((p) => p.id === meetPointId)?.landmark}
-                      </Text>
-                    ) : null}
-                  </>
-                ) : null}
-
-                {fulfilment === "MEET_POINT" && meetPoints.length === 0 ? (
-                  <Text style={styles.muted}>
-                    No curated meet points for this community yet — chat with the
-                    seller to agree a public spot after pay.
-                  </Text>
-                ) : null}
+                <Text style={styles.section}>ReWorth delivery</Text>
+                <Text style={styles.muted}>
+                  {isSwapCheckout
+                    ? "You pay the delivery fee and a ₦500 swap fee."
+                    : isGift
+                    ? `Delivery to ${giftArea || "your area"}. The fee is ₦1,500 plus ₦150 per kilometre.`
+                    : "Every order is delivered by ReWorth. The courier is simulated for now. Fee is ₦1,500 plus ₦150 per kilometre."}
+                  {quoteBusy ? " Quoting…" : ""}
+                </Text>
 
                 <View style={styles.breakdown}>
-                  <Row label="Item" value={formatNgnFromKobo(amountKobo)} />
-                  <Row label="Protection fee" value={formatNgnFromKobo(fee)} />
-                  {fulfilment === "DELIVERY" && deliveryFeeKobo > 0 ? (
+                  {isSwapCheckout ? null : (
+                    <Row label="Item" value={formatNgnFromKobo(amountKobo)} />
+                  )}
+                  {isGift || isSwapCheckout ? null : (
+                    <Row label="Protection fee" value={formatNgnFromKobo(fee)} />
+                  )}
+                  {isGift || deliveryFeeKobo > 0 || isSwapCheckout ? (
                     <Row
-                      label="Delivery"
+                      label={
+                        isGift
+                          ? `Delivery to ${giftArea || "your area"}`
+                          : "Delivery fee"
+                      }
                       value={formatNgnFromKobo(deliveryFeeKobo)}
                     />
                   ) : null}
+                  {isSwapCheckout ? (
+                    <Row label="Swap fee" value={formatNgnFromKobo(SWAP_FEE_KOBO)} />
+                  ) : null}
                   <Row
-                    label="Total due now"
+                    label="Total"
                     value={formatNgnFromKobo(total)}
                     bold
                   />
@@ -680,7 +682,13 @@ export function CheckoutModal({
                     accessibilityLabel="Pay with ReWorth"
                   >
                     <Text style={styles.primaryBtnText}>
-                      {busy ? "Creating…" : "Place order"}
+                      {busy
+                        ? "Creating…"
+                        : isSwapCheckout
+                          ? "Pay delivery and swap fee"
+                          : isGift
+                            ? "Pay delivery"
+                            : "Place order"}
                     </Text>
                   </Pressable>
                 ) : (
@@ -704,14 +712,6 @@ export function CheckoutModal({
                     ) : null}
                   </>
                 )}
-                {thumb ? (
-                  <Image
-                    source={{ uri: thumb }}
-                    style={styles.checkoutThumb}
-                    resizeMode="cover"
-                    accessibilityLabel="Listing photo"
-                  />
-                ) : null}
               </>
             ) : null}
           </ScrollView>
@@ -726,16 +726,21 @@ export function OrderDetailModal({
   meId,
   onClose,
   onOpenDispute,
+  onChanged,
 }: {
   orderId: string | null;
   meId: string | null;
   onClose: () => void;
   onOpenDispute: (disputeId: string) => void;
+  onChanged?: () => void;
 }) {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const actionRef = useRef<"pay" | "cancel" | "other" | null>(null);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [sellerNote, setSellerNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
@@ -756,19 +761,12 @@ export function OrderDetailModal({
   const [shipment, setShipment] = useState<DeliveryShipment | null>(null);
   const [discloseBusy, setDiscloseBusy] = useState(false);
   const [disclosedAddress, setDisclosedAddress] = useState<string | null>(null);
-  const [ibFulfilment, setIbFulfilment] = useState<InstantBuyFulfilment | null>(
-    null,
-  );
-  const [ibSlots] = useState<ManagedPickupSlot[]>(() =>
-    generateWatPickupSlots(6),
-  );
-  const [ibBusy, setIbBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (quiet = false) => {
     if (!orderId) return;
     const token = await getAccessToken();
     if (!token) return;
-    setLoading(true);
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const detail = await getOrder(token, orderId);
@@ -783,19 +781,11 @@ export function OrderDetailModal({
       } else {
         setShipment(null);
       }
-      try {
-        const ib = await getInstantBuyByOrder(token, orderId);
-        setIbFulfilment(ib);
-      } catch {
-        setIbFulfilment(null);
-      }
-      if (detail.status === "COMPLETED" && meId) {
-        const counterpartId =
-          meId === detail.buyerId ? detail.sellerId : detail.buyerId;
+      if (detail.status === "COMPLETED" && meId && meId === detail.buyerId) {
         const resolved = await resolveOrderReviewState({
           orderId: detail.id,
           meId,
-          counterpartId,
+          counterpartId: detail.sellerId,
         });
         setReviewState(resolved.state);
       } else {
@@ -814,19 +804,86 @@ export function OrderDetailModal({
     else setOrder(null);
   }, [orderId, load]);
 
+  function applyCancelled(current: OrderDetail): OrderDetail {
+    return {
+      ...current,
+      status: "CANCELLED",
+      swap: current.swap
+        ? { ...current.swap, cancellable: false, payableOrderId: null }
+        : current.swap,
+    };
+  }
+
+  async function startPayment(targetOrderId: string) {
+    if (actionRef.current) return;
+    const token = await getAccessToken();
+    if (!token) return;
+    actionRef.current = "pay";
+    setPaying(true);
+    try {
+      const pay = await initiatePayment(token, {
+        orderId: targetOrderId,
+        idempotencyKey: newIdempotencyKey(),
+      });
+      if (isMockPsp(pay)) {
+        await simulateMockPspCharge({
+          reference: pay.reference,
+          event: "charge.success",
+        });
+        await load(true);
+        onChanged?.();
+      }
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not start payment",
+      );
+    } finally {
+      actionRef.current = null;
+      setPaying(false);
+    }
+  }
+
+  async function cancelSwap() {
+    if (actionRef.current) return;
+    const token = await getAccessToken();
+    if (!token || !order?.swapProposalId) return;
+    actionRef.current = "cancel";
+    setCancelling(true);
+    try {
+      await cancelSwapProposal(token, order.swapProposalId);
+      setOrder((current) => (current ? applyCancelled(current) : current));
+      await load(true);
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not cancel the swap");
+    } finally {
+      actionRef.current = null;
+      setCancelling(false);
+    }
+  }
+
   async function run(action: "handed-over" | "confirm" | "cancel") {
+    if (actionRef.current) return;
     const token = await getAccessToken();
     if (!token || !orderId) return;
-    setBusy(true);
+    actionRef.current = action === "cancel" ? "cancel" : "other";
+    if (action === "cancel") setCancelling(true);
+    else setBusy(true);
     try {
       if (action === "handed-over") await markHandedOver(token, orderId);
       else if (action === "confirm") await confirmReceipt(token, orderId);
       else await cancelOrder(token, orderId);
-      await load();
+      if (action === "cancel") {
+        setOrder((current) => (current ? applyCancelled(current) : current));
+      }
+      await load(true);
+      onChanged?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Action failed");
     } finally {
+      actionRef.current = null;
       setBusy(false);
+      setCancelling(false);
     }
   }
 
@@ -872,8 +929,8 @@ export function OrderDetailModal({
       const msg =
         err instanceof ApiError ? err.message : "Could not submit review";
       if (/already reviewed/i.test(msg)) {
-        await markOrderReviewPending(orderId);
-        setReviewState("waiting");
+        await clearOrderReviewPending(orderId);
+        setReviewState("done");
       } else {
         setError(msg);
       }
@@ -884,6 +941,14 @@ export function OrderDetailModal({
 
   const isBuyer = order && meId === order.buyerId;
   const isSeller = order && meId === order.sellerId;
+  const payTargetId = !order
+    ? null
+    : order.swap
+      ? (order.swap.payableOrderId ??
+        (isBuyer && order.status === "PAYMENT_PENDING" ? order.id : null))
+      : isBuyer && order.status === "PAYMENT_PENDING"
+        ? order.id
+        : null;
   const disputeId = order ? disputeIdFromEvents(order.events) : null;
 
   return (
@@ -910,42 +975,102 @@ export function OrderDetailModal({
             {order ? (
               <>
                 <Text style={styles.cardTitle} numberOfLines={2}>
-                  {order.listingTitle?.trim() || "Listing"}
+                  {order.swap ? "Swap order" : order.listingTitle?.trim() || "Listing"}
                 </Text>
+                {order.swap ? (
+                  <View style={{ gap: 10, marginTop: 12 }}>
+                    {(
+                      [
+                        ["You send", order.swap.youSend],
+                        ["You receive", order.swap.youReceive],
+                      ] as const
+                    ).map(([label, item]) => (
+                      <View
+                        key={label}
+                        style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+                      >
+                        {item.imageUrl ? (
+                          <Image
+                            source={{ uri: item.imageUrl }}
+                            style={{ width: 64, height: 64, borderRadius: 12 }}
+                            resizeMode="cover"
+                          />
+                        ) : null}
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.muted}>{label}</Text>
+                          <Text style={styles.cardTitle}>{item.title}</Text>
+                        </View>
+                      </View>
+                    ))}
+                    {order.swap.deliveryOn ? (
+                      <Text style={styles.muted}>
+                        Delivery day · {formatDeliveryDay(order.swap.deliveryOn)}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
                 <Text style={styles.price}>
-                  {formatNgnFromKobo(order.totalKobo)}
+                  {formatNgnFromKobo(
+                    order.swap
+                      ? order.deliveryFeeKobo + SWAP_FEE_KOBO
+                      : order.totalKobo,
+                  )}
                 </Text>
                 <View style={styles.badgeRow}>
-                  <Image
-                    source={orderStatusBadgeSource(String(order.status))}
-                    style={styles.statusBadgeIcon}
-                    resizeMode="contain"
-                  />
+                  {orderStatusBadgeSource(String(order.status)) ? (
+                    <Image
+                      source={orderStatusBadgeSource(String(order.status))!}
+                      style={styles.statusBadgeIcon}
+                      resizeMode="contain"
+                    />
+                  ) : null}
                   <Text style={styles.badge}>
                     {orderStatusLabel(String(order.status))}
                   </Text>
                 </View>
                 <Text style={styles.muted}>
-                  {isBuyer ? "Buying" : isSeller ? "Selling" : "Order"} ·{" "}
+                  {order.swap ? "Swap" : isBuyer ? "Buying" : isSeller ? "Selling" : "Order"} ·{" "}
                   {fulfilmentLabel(String(order.fulfilmentMethod))}
                 </Text>
 
+                {order.swap ? (
+                  <View style={styles.breakdown}>
+                    <Row
+                      label="Delivery fee"
+                      value={formatNgnFromKobo(order.deliveryFeeKobo)}
+                    />
+                    <Row
+                      label="Swap fee"
+                      value={formatNgnFromKobo(SWAP_FEE_KOBO)}
+                    />
+                    <Row
+                      label="Total"
+                      value={formatNgnFromKobo(
+                        order.deliveryFeeKobo + SWAP_FEE_KOBO,
+                      )}
+                      bold
+                    />
+                  </View>
+                ) : (
+                  <View style={styles.breakdown}>
+                    <Row
+                      label="Protection fee"
+                      value={formatNgnFromKobo(order.protectionFeeKobo)}
+                    />
+                    {order.deliveryFeeKobo > 0 ? (
+                      <Row
+                        label="Delivery fee"
+                        value={formatNgnFromKobo(order.deliveryFeeKobo)}
+                      />
+                    ) : null}
+                  </View>
+                )}
                 <View style={styles.breakdown}>
                   <Row
                     label="Payment"
                     value={paymentStatusFromOrder(order)}
                   />
                   <Row label="Refund" value={refundStatusFromOrder(order)} />
-                  <Row
-                    label="Protection fee"
-                    value={formatNgnFromKobo(order.protectionFeeKobo)}
-                  />
-                  {order.deliveryFeeKobo > 0 ? (
-                    <Row
-                      label="Delivery"
-                      value={formatNgnFromKobo(order.deliveryFeeKobo)}
-                    />
-                  ) : null}
                 </View>
 
                 {shipment ? (
@@ -1029,14 +1154,16 @@ export function OrderDetailModal({
                         current && styles.eventCurrent,
                       ]}
                     >
-                      <Image
-                        source={orderStatusBadgeSource(String(ev.type))}
-                        style={[
-                          styles.eventBadgeIcon,
-                          !current && { opacity: 0.55 },
-                        ]}
-                        resizeMode="contain"
-                      />
+                      {orderStatusBadgeSource(String(ev.type)) ? (
+                        <Image
+                          source={orderStatusBadgeSource(String(ev.type))!}
+                          style={[
+                            styles.eventBadgeIcon,
+                            !current && { opacity: 0.55 },
+                          ]}
+                          resizeMode="contain"
+                        />
+                      ) : null}
                       <View style={{ flex: 1 }}>
                         <Text
                           style={[
@@ -1044,7 +1171,7 @@ export function OrderDetailModal({
                             current && styles.eventTypeCurrent,
                           ]}
                         >
-                          {ev.type.replace(/_/g, " ")}
+                          {sentenceCaseLabel(ev.type)}
                         </Text>
                         <Text style={styles.muted}>
                           {new Date(ev.createdAt).toLocaleString()}
@@ -1136,93 +1263,6 @@ export function OrderDetailModal({
                   {order.rejectionReason ? (
                     <Text style={styles.muted}>Rejected: {order.rejectionReason}</Text>
                   ) : null}
-                  {ibFulfilment ? (
-                    <View style={styles.disputeBox}>
-                      <Text style={styles.section}>
-                        Instant Buy · {String(ibFulfilment.status)}
-                      </Text>
-                      {isSeller && !ibFulfilment.slotStartAt ? (
-                        <>
-                          <Text style={styles.muted}>
-                            Pick a pickup window (WAT)
-                          </Text>
-                          {ibSlots.map((slot) => (
-                            <ActionBtn
-                              key={slot.slotStartAt}
-                              label={slot.label}
-                              disabled={ibBusy}
-                              onPress={() => {
-                                void (async () => {
-                                  const token = await getAccessToken();
-                                  if (!token || !ibFulfilment) return;
-                                  setIbBusy(true);
-                                  try {
-                                    await scheduleInstantBuy(
-                                      token,
-                                      ibFulfilment.id,
-                                      {
-                                        slotStartAt: slot.slotStartAt,
-                                        slotEndAt: slot.slotEndAt,
-                                      },
-                                    );
-                                    await load();
-                                  } catch (err) {
-                                    setError(
-                                      err instanceof ApiError
-                                        ? err.message
-                                        : "Schedule failed",
-                                    );
-                                  } finally {
-                                    setIbBusy(false);
-                                  }
-                                })();
-                              }}
-                            />
-                          ))}
-                        </>
-                      ) : null}
-                      {ibFulfilment.slotStartAt ? (
-                        <Text style={styles.muted}>
-                          Slot{" "}
-                          {new Date(ibFulfilment.slotStartAt).toLocaleString(
-                            "en-NG",
-                            { timeZone: "Africa/Lagos" },
-                          )}
-                        </Text>
-                      ) : null}
-                      {isBuyer &&
-                      ["DELIVERED", "OUT_FOR_DELIVERY", "IN_TRANSIT"].includes(
-                        String(ibFulfilment.status).toUpperCase(),
-                      ) ? (
-                        <ActionBtn
-                          label="Confirm Instant Buy delivery"
-                          disabled={ibBusy}
-                          onPress={() => {
-                            void (async () => {
-                              const token = await getAccessToken();
-                              if (!token || !ibFulfilment) return;
-                              setIbBusy(true);
-                              try {
-                                await confirmInstantBuy(
-                                  token,
-                                  ibFulfilment.id,
-                                );
-                                await load();
-                              } catch (err) {
-                                setError(
-                                  err instanceof ApiError
-                                    ? err.message
-                                    : "Confirm failed",
-                                );
-                              } finally {
-                                setIbBusy(false);
-                              }
-                            })();
-                          }}
-                        />
-                      ) : null}
-                    </View>
-                  ) : null}
                   {isSeller && order.status === "FUNDED" ? (
                     <ActionBtn
                       label="Mark handed over"
@@ -1240,47 +1280,47 @@ export function OrderDetailModal({
                       onPress={() => void run("confirm")}
                     />
                   ) : null}
-                  {isBuyer && order.status === "PAYMENT_PENDING" ? (
+                  {order.swap && payTargetId && payTargetId !== order.id ? (
+                    <Text style={styles.muted}>
+                      This pays your delivery fee and the ₦500 swap fee.
+                    </Text>
+                  ) : null}
+                  {payTargetId ? (
                     <ActionBtn
-                      label={busy ? "Starting payment…" : "Complete payment"}
-                      disabled={busy}
-                      onPress={() => {
-                        void (async () => {
-                          const token = await getAccessToken();
-                          if (!token || !orderId) return;
-                          setBusy(true);
-                          try {
-                            const pay = await initiatePayment(token, {
-                              orderId,
-                              idempotencyKey: newIdempotencyKey(),
-                            });
-                            if (isMockPsp(pay)) {
-                              await simulateMockPspCharge({
-                                reference: pay.reference,
-                                event: "charge.success",
-                              });
-                              await load();
-                            }
-                          } catch (err) {
-                            setError(
-                              err instanceof ApiError
-                                ? err.message
-                                : "Could not start payment",
-                            );
-                          } finally {
-                            setBusy(false);
-                          }
-                        })();
-                      }}
+                      label={
+                        paying
+                          ? "Starting payment…"
+                          : order.swap
+                            ? "Pay delivery and swap fee"
+                            : "Complete payment"
+                      }
+                      disabled={paying || cancelling || busy}
+                      onPress={() => void startPayment(payTargetId)}
                     />
                   ) : null}
-                  {isBuyer &&
+                  {order.swap &&
+                  order.swap.cancellable !== false &&
+                  (isBuyer || isSeller) &&
+                  (order.status === "CREATED" ||
+                    order.status === "PAYMENT_PENDING") ? (
+                    <>
+                      <ActionBtn
+                        label={cancelling ? "Cancelling…" : "Cancel swap"}
+                        danger
+                        disabled={paying || cancelling || busy}
+                        onPress={() => void cancelSwap()}
+                      />
+                      <Text style={styles.muted}>
+                        Cancel swap puts the listing back on the marketplace. Once either person pays, the swap has to be completed.
+                      </Text>
+                    </>
+                  ) : isBuyer &&
                   (order.status === "CREATED" ||
                     order.status === "PAYMENT_PENDING") ? (
                     <ActionBtn
-                      label="Cancel"
+                      label={cancelling ? "Cancelling…" : "Cancel"}
                       danger
-                      disabled={busy}
+                      disabled={paying || cancelling || busy}
                       onPress={() => void run("cancel")}
                     />
                   ) : null}
@@ -1335,13 +1375,18 @@ export function OrderDetailModal({
                   </View>
                 ) : null}
 
-                {order.status === "COMPLETED" ? (
+                {order.status === "COMPLETED" && isSeller ? (
+                  <Text style={styles.muted}>
+                    Buyers rate the purchase after this order. That rating shows on your listings. Sellers do not rate buyers.
+                  </Text>
+                ) : null}
+                {order.status === "COMPLETED" && isBuyer ? (
                   <View style={styles.reviewBox}>
                     {reviewState === "form" ? (
                       <>
                         <Text style={styles.section}>Leave a review</Text>
                         <Text style={styles.muted}>
-                          Publishes when both sides have rated.
+                          Rate the purchase. Only buyers can rate, and it shows on this seller's listings.
                         </Text>
                         <StarRow
                           label="Overall"
@@ -1387,12 +1432,10 @@ export function OrderDetailModal({
                     ) : null}
                     {reviewState === "waiting" ? (
                       <View style={styles.waitCard}>
-                        <Text style={styles.waitTitle}>
-                          Waiting for other party
-                        </Text>
+                        <Text style={styles.waitTitle}>Rating saved</Text>
                         <Text style={styles.muted}>
-                          Your review is saved. It publishes when they leave
-                          theirs.
+                          Your rating of the purchase will show on this
+                          seller's listings.
                         </Text>
                       </View>
                     ) : null}
@@ -1400,7 +1443,7 @@ export function OrderDetailModal({
                       <View style={styles.doneCard}>
                         <Text style={styles.doneTitle}>Review published</Text>
                         <Text style={styles.muted}>
-                          Thanks — both sides have rated this order.
+                          Thanks — your rating is on the listing.
                         </Text>
                       </View>
                     ) : null}
@@ -1527,11 +1570,13 @@ export function DisputeModal({
                   {disputeReasonLabel(String(dispute.reason))}
                 </Text>
                 <View style={styles.badgeRow}>
-                  <Image
-                    source={orderStatusBadgeSource(String(dispute.status))}
-                    style={styles.statusBadgeIcon}
-                    resizeMode="contain"
-                  />
+                  {orderStatusBadgeSource(String(dispute.status)) ? (
+                    <Image
+                      source={orderStatusBadgeSource(String(dispute.status))!}
+                      style={styles.statusBadgeIcon}
+                      resizeMode="contain"
+                    />
+                  ) : null}
                   <Text style={styles.badge}>
                     {disputeStatusLabel(String(dispute.status))}
                   </Text>
@@ -1549,7 +1594,7 @@ export function DisputeModal({
                   <View style={styles.protect}>
                     <Text style={styles.protectTitle}>Resolution</Text>
                     <Text style={styles.muted}>
-                      {String(dispute.resolution ?? "").replace(/_/g, " ")}
+                      {sentenceCaseLabel(String(dispute.resolution ?? ""))}
                     </Text>
                     {dispute.resolutionNote ? (
                       <Text style={styles.muted}>{dispute.resolutionNote}</Text>
@@ -1713,8 +1758,8 @@ const styles = StyleSheet.create({
   brand: { fontSize: 18, fontWeight: "700", color: colors.ink },
   roleTabs: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
+    flexWrap: "nowrap",
+    gap: 6,
     marginTop: 12,
     marginBottom: 12,
   },
@@ -1724,22 +1769,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: colors.muted,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
   },
   roleTab: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 999,
-    paddingHorizontal: 14,
+    paddingHorizontal: 6,
     paddingVertical: 8,
     backgroundColor: colors.surface,
   },
   roleTabOn: { backgroundColor: colors.orange, borderColor: colors.orange },
-  roleTabText: { fontSize: 13, fontWeight: "700", color: colors.ink },
+  roleTabText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: colors.ink,
+    textAlign: "center",
+  },
   roleTabTextOn: { color: "#fff" },
   link: { color: colors.orange, fontWeight: "600", fontSize: 15 },
-  pad: { padding: 16, paddingBottom: 40, gap: 10 },
+  pad: { paddingVertical: 16, paddingHorizontal: 4, paddingBottom: 40, gap: 10 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
   error: { color: colors.error, marginBottom: 8 },
   emptyTitle: { fontSize: 18, fontWeight: "600", marginBottom: 6 },
@@ -1814,12 +1866,17 @@ const styles = StyleSheet.create({
   trustSignalIcon: { width: 16, height: 16 },
   trustSignalLabel: { fontSize: 11, fontWeight: "600", color: colors.muted },
   fulfilHint: { marginTop: 8, marginBottom: 4 },
-  checkoutThumb: {
-    marginTop: 16,
+  checkoutPhoto: {
     width: "100%",
-    height: 160,
+    aspectRatio: 4 / 3,
     borderRadius: 12,
+    overflow: "hidden",
+    marginBottom: 12,
     backgroundColor: colors.beige,
+  },
+  checkoutPhotoImg: {
+    width: "100%",
+    height: "100%",
   },
   section: { fontSize: 16, fontWeight: "600", marginTop: 8 },
   rowWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
@@ -1899,14 +1956,13 @@ const styles = StyleSheet.create({
   },
   eventType: {
     fontWeight: "600",
-    textTransform: "capitalize",
     fontSize: 15,
     color: colors.ink,
   },
   eventTypeCurrent: {
     color: colors.orange,
   },
-  actionsCol: { gap: 4, marginTop: 8 },
+  actionsCol: { gap: 12, marginTop: 8 },
   disputeBox: {
     marginTop: 12,
     padding: 12,

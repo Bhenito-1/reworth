@@ -282,7 +282,7 @@ export class MovingSalesService {
       where: { status: 'ACTIVE' },
       include: {
         listings: {
-          where: { status: { in: ['LIVE', 'RESERVED'] } },
+          where: { status: { in: ['LIVE', 'RESERVED'] }, quantityAvailable: { gt: 0 } },
           select: { id: true, priceKobo: true, geoLat: true, geoLng: true },
         },
         follows: viewerId
@@ -363,13 +363,24 @@ export class MovingSalesService {
     lat?: number;
     lng?: number;
     radiusKm?: number;
+    community?: string;
     limit?: number;
   }) {
     const rows = await this.prisma.movingSale.findMany({
-      where: { status: 'ACTIVE' },
+      where: {
+        status: 'ACTIVE',
+        ...(opts.community
+          ? {
+              community: {
+                equals: opts.community,
+                mode: 'insensitive' as const,
+              },
+            }
+          : {}),
+      },
       include: {
         listings: {
-          where: { status: { in: ['LIVE', 'RESERVED'] } },
+          where: { status: { in: ['LIVE', 'RESERVED'] }, quantityAvailable: { gt: 0 } },
           select: {
             id: true,
             priceKobo: true,

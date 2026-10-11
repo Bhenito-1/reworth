@@ -7,6 +7,34 @@ import type {
   UpdateListingBody,
 } from "./types";
 
+function configuredWebOrigin(): string {
+  const raw = (process.env.NEXT_PUBLIC_WEB_URL ?? "").trim();
+  return raw.replace(/\/$/, "");
+}
+
+/** Public listing URL. The live site uses its own address unless NEXT_PUBLIC_WEB_URL is set. */
+export function listingShareUrl(id: string): string {
+  const path = `/listings/${encodeURIComponent(id)}`;
+  const configured = configuredWebOrigin();
+  if (configured) return `${configured}${path}`;
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return `${window.location.origin.replace(/\/$/, "")}${path}`;
+  }
+  return path;
+}
+
+export function listingShareLinks(id: string, title: string) {
+  const url = listingShareUrl(id);
+  const text = `${title} on ReWorth`;
+  return {
+    url,
+    message: `${text}\n${url}`,
+    whatsapp: `https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`,
+    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`,
+    x: `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`,
+  };
+}
+
 /** Best URL from image variants for display. */
 export function listingImageUrl(
   image: PublicListing["images"][number] | undefined,
@@ -175,6 +203,13 @@ export function formatPostedAt(iso: string | null | undefined): string {
     day: "numeric",
     month: "short",
   });
+}
+
+/** `ORDER_CANCELLED` → `Order cancelled`. */
+export function sentenceCaseLabel(value: string): string {
+  const words = value.trim().replace(/_/g, " ").toLowerCase();
+  if (!words) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 export const CONDITION_LABELS: Record<string, string> = {

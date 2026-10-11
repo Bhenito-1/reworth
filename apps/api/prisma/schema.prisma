@@ -92,7 +92,6 @@ enum ListingStatus {
 enum SellingMode {
   SELL
   SWAP
-  SWAP_CASH
   GIVE_AWAY
 }
 
@@ -162,7 +161,6 @@ enum GiveawayClaimStatus {
 enum TransactionType {
   CASH
   SWAP
-  SWAP_CASH
   GIVEAWAY
 }
 
@@ -289,17 +287,6 @@ enum RoomScanStatus {
   READY
   DRAFTS_CREATED
   FAILED
-  CANCELLED
-}
-
-enum InstantBuyFulfilmentStatus {
-  PENDING_PICKUP
-  PICKED_UP
-  IN_TRANSIT
-  DELIVERED
-  CONFIRMED
-  SLA_BREACHED
-  REFUNDED
   CANCELLED
 }
 
@@ -497,6 +484,7 @@ model User {
   mutesCreated         UserMute[]           @relation("UserMuter")
   mutesReceived        UserMute[]           @relation("UserMuted")
   ordersAsBuyer        Order[]              @relation("OrderBuyer")
+  paymentsMade         Payment[]            @relation("PaymentPayer")
   ordersAsSeller       Order[]              @relation("OrderSeller")
   orderEvents          OrderEvent[]         @relation("OrderEventActor")
   disputesOpened       Dispute[]            @relation("DisputeOpener")
@@ -531,7 +519,6 @@ model User {
   consentRecords       ConsentRecord[]
   swapProposals        SwapProposal[]       @relation("SwapProposer")
   giveawayClaims       GiveawayClaim[]      @relation("GiveawayClaimant")
-  ordersAsCashRecipient Order[]             @relation("OrderCashRecipient")
   movingSales          MovingSale[]         @relation("MovingSaleSeller")
   movingSaleFollows    MovingSaleFollow[]
   communityMemberships CommunityMembership[]
@@ -777,8 +764,6 @@ model Listing {
   authenticationStatus AuthenticationStatus @default(NOT_REQUIRED)
   certificateId      String?
   authenticatedAt    DateTime?
-  /// Instant Buy eligible (phones/electronics curated).
-  instantBuyEligible Boolean       @default(false)
   /// If set, schedule circular hand-off when unsold for N days.
   donateIfUnsoldDays Int?
   /// Units the seller listed. Price (`priceKobo`) is per unit.
@@ -820,7 +805,6 @@ model Listing {
   ordersAsSwapB         Order[]        @relation("OrderSwapListingB")
   vehicleInspections    VehicleInspection[]
   luxuryAuthJobs        LuxuryAuthJob[]
-  instantBuyFulfilment  InstantBuyFulfilment?
   consignment           Consignment?
   circularHandoffs      CircularHandoff[]
   relocationItems       RelocationItem[]
@@ -836,7 +820,6 @@ model Listing {
   @@index([createdAt])
   @@index([expiresAt])
   @@index([authenticationStatus])
-  @@index([instantBuyEligible])
   @@index([status, quantityAvailable])
   @@map("listings")
 }
@@ -1111,6 +1094,9 @@ model Conversation {
   buyerId       String   @db.Uuid
   sellerId      String   @db.Uuid
   lastMessageAt DateTime?
+  /// Viewer-only hide. A newer message brings the chat back for that person.
+  buyerDeletedAt  DateTime?
+  sellerDeletedAt DateTime?
   createdAt     DateTime @default(now())
 
   listing  Listing   @relation(fields: [listingId], references: [id], onDelete: Cascade)
@@ -1234,6 +1220,8 @@ model Order {
   sellerId          String           @db.Uuid
   offerId           String?          @db.Uuid
   orderIntentId     String?          @unique @db.Uuid
+  /// Set when several orders are placed from one cart checkout.
+  checkoutId        String?          @db.Uuid
   amountKobo        Int
   /// Units in this order. `amountKobo` is unit price × quantity.
   quantity          Int              @default(1)
@@ -1256,13 +1244,14 @@ model Order {
   fundedAt          DateTime?
   completedAt       DateTime?
   transactionType   TransactionType  @default(CASH)
-  swapProposalId    String?          @unique @db.Uuid
+  swapProposalId    String?          @db.Uuid
+  /// ₦500 per person on a swap. Gifts and sales leave this at 0.
+  swapFeeKobo       Int              @default(0)
   giveawayClaimId   String?          @unique @db.Uuid
   swapListingAId    String?          @db.Uuid
   swapListingBId    String?          @db.Uuid
   legAStatus        SwapLegStatus?
   legBStatus        SwapLegStatus?
-  cashRecipientId   String?          @db.Uuid
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
@@ -1274,7 +1263,6 @@ model Order {
   giveawayClaim GiveawayClaim? @relation(fields: [giveawayClaimId], references: [id], onDelete: SetNull)
   swapListingA  Listing?      @relation("OrderSwapListingA", fields: [swapListingAId], references: [id], onDelete: SetNull)
   swapListingB  Listing?      @relation("OrderSwapListingB", fields: [swapListingBId], references: [id], onDelete: SetNull)
-  cashRecipient User?         @relation("OrderCashRecipient", fields: [cashRecipientId], references: [id], onDelete: SetNull)
   events      OrderEvent[]
   payments    Payment[]
   payouts     Payout[]
@@ -1288,7 +1276,6 @@ model Order {
   supportTickets     SupportTicket[]
   reviews            Review[]
   luxuryAuthJob      LuxuryAuthJob?
-  instantBuyFulfilment InstantBuyFulfilment?
 
   @@index([buyerId, createdAt])
   @@index([sellerId, createdAt])
@@ -1298,6 +1285,8 @@ model Order {
   @@index([status, autoReleaseAt])
   @@index([meetPointId])
   @@index([transactionType])
+  @@index([checkoutId])
+  @@index([swapProposalId])
   @@map("orders")
 }
 
@@ -1306,8 +1295,6 @@ model SwapProposal {
   listingId          String             @db.Uuid
   proposerId         String             @db.Uuid
   offeredListingId   String             @db.Uuid
-  /// Positive = proposer pays seller; 0 = pure swap.
-  cashComponentKobo  Int                @default(0)
   note               String?
   status             SwapProposalStatus @default(PENDING)
   parentProposalId   String?            @db.Uuid
@@ -1322,7 +1309,7 @@ model SwapProposal {
   parentProposal SwapProposal? @relation("SwapProposalChain", fields: [parentProposalId], references: [id], onDelete: SetNull)
   counters       SwapProposal[] @relation("SwapProposalChain")
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  order          Order?
+  orders         Order[]
 
   @@index([listingId, status])
   @@index([proposerId, listingId, status])
@@ -1370,6 +1357,8 @@ model OrderEvent {
 model Payment {
   id               String        @id @default(uuid()) @db.Uuid
   orderId          String        @db.Uuid
+  /// The user who paid. For a gift or a swap leg this is the person receiving that delivery.
+  payerId          String?       @db.Uuid
   provider         String
   reference        String        @unique
   amountKobo       Int
@@ -1380,9 +1369,11 @@ model Payment {
   updatedAt        DateTime      @updatedAt
 
   order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payer   User?    @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: SetNull)
   refunds Refund[]
 
   @@index([orderId])
+  @@index([payerId])
   @@map("payments")
 }
 
@@ -1906,7 +1897,7 @@ model UserWarning {
   @@map("user_warnings")
 }
 
-/// Two-way post-transaction review. Visible only when both sides have submitted (PUBLISHED).
+/// Buyer rating of the seller after a completed order. Published as soon as the buyer submits.
 model Review {
   id                     String       @id @default(uuid()) @db.Uuid
   orderId                String       @db.Uuid
@@ -2435,27 +2426,6 @@ model ValuationLog {
 
   @@index([userId, createdAt])
   @@map("valuation_logs")
-}
-
-model InstantBuyFulfilment {
-  id              String                     @id @default(uuid()) @db.Uuid
-  orderId         String                     @unique @db.Uuid
-  listingId       String                     @unique @db.Uuid
-  status          InstantBuyFulfilmentStatus @default(PENDING_PICKUP)
-  slaDeadlineAt   DateTime
-  pickedUpAt      DateTime?
-  deliveredAt     DateTime?
-  confirmedAt     DateTime?
-  refundedAt      DateTime?
-  refundIdempotencyKey String?               @unique
-  createdAt       DateTime                   @default(now())
-  updatedAt       DateTime                   @updatedAt
-
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
-
-  @@index([status, slaDeadlineAt])
-  @@map("instant_buy_fulfilments")
 }
 
 model Consignment {

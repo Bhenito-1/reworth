@@ -68,11 +68,11 @@ function ToolResultsView({
           return (
             <ul
               key={idx}
-              className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+              className="flex flex-wrap gap-3"
               aria-label="Search results"
             >
               {listings.slice(0, 6).map((listing) => (
-                <li key={listing.id}>
+                <li key={listing.id} className="w-[7.5rem] shrink-0">
                   <DiscoveryListingCard listing={listing} />
                 </li>
               ))}
@@ -96,9 +96,9 @@ function ToolResultsView({
                 </span>
                 {" · "}budget {formatNgn({ amountKobo: bundle.budgetKobo })}
               </p>
-              <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <ul className="mt-3 flex flex-wrap gap-3">
                 {(bundle.listings ?? []).map((listing) => (
-                  <li key={listing.id}>
+                  <li key={listing.id} className="w-[7.5rem] shrink-0">
                     <DiscoveryListingCard listing={listing} />
                   </li>
                 ))}
@@ -368,7 +368,7 @@ export default function AskReWorthPage() {
   }
 
   return (
-    <main className="relative flex min-h-[100dvh] flex-col bg-[var(--rw-bg)] text-[var(--rw-ink)]">
+    <main className="relative flex h-[calc(100dvh-var(--rw-nav-offset,3.5rem))] w-full max-w-full flex-col overflow-hidden bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-[32vh]"
@@ -390,7 +390,7 @@ export default function AskReWorthPage() {
         </div>
       </header>
 
-      <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-4 pt-6 sm:px-6">
+      <div className="relative z-10 mx-auto flex min-h-0 w-full min-w-0 max-w-3xl flex-1 flex-col overflow-hidden px-4 pb-4 pt-6 sm:px-6">
         <p className="sr-only">{ASSISTANT_GROUNDING_BRIEF}</p>
         <p className="mb-4 text-sm text-[var(--rw-ink-muted)]">
           Lagos shopping assistant — bundles, search, and estimates. Mutations
@@ -414,7 +414,7 @@ export default function AskReWorthPage() {
           />
         ) : (
           <div
-            className="flex flex-1 flex-col gap-4 overflow-y-auto"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto"
             role="log"
             aria-live="polite"
             aria-relevant="additions"
@@ -425,13 +425,13 @@ export default function AskReWorthPage() {
                 <div
                   key={row.id}
                   className={[
-                    "max-w-[92%] rounded-[var(--rw-radius-lg)] px-4 py-3 text-sm sm:max-w-[85%]",
+                    "min-w-0 max-w-[92%] break-words rounded-[var(--rw-radius-lg)] px-4 py-3 text-sm sm:max-w-[85%]",
                     isUser
                       ? "ml-auto bg-[var(--rw-accent)] text-white"
                       : "mr-auto border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95",
                   ].join(" ")}
                 >
-                  <p className="whitespace-pre-wrap leading-relaxed">
+                  <p className="whitespace-pre-wrap break-words leading-relaxed">
                     {row.content}
                   </p>
                   {!isUser && row.toolResults.length > 0 ? (
@@ -479,7 +479,7 @@ export default function AskReWorthPage() {
 
         <form
           onSubmit={(e) => void onSend(e)}
-          className="mt-4 flex items-end gap-2 border-t border-[var(--rw-border)]/60 pt-4"
+          className="mt-4 flex min-w-0 items-end gap-2 border-t border-[var(--rw-border)]/60 pt-4"
         >
           <label htmlFor="ask-input" className="sr-only">
             Message Ask ReWorth
@@ -489,13 +489,20 @@ export default function AskReWorthPage() {
             rows={2}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void onSend();
+              }
+            }}
             placeholder="e.g. Furnish a one-bed with ₦1.5m…"
             disabled={sending || !sessionId}
-            className="min-h-[2.75rem] flex-1 resize-none rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)] disabled:opacity-60"
+            className="min-h-[2.75rem] min-w-0 flex-1 resize-none rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)] disabled:opacity-60"
           />
           <Button
             type="submit"
             variant="primary"
+            className="shrink-0"
             disabled={sending || !sessionId || !input.trim()}
           >
             Send

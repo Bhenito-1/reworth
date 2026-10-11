@@ -26,14 +26,6 @@ export class CreateValuationDto {
   city?: string;
 }
 
-export class ScheduleInstantBuyDto {
-  @IsDateString()
-  slotStartAt!: string;
-
-  @IsDateString()
-  slotEndAt!: string;
-}
-
 export class CreateConsignmentDto {
   @IsString()
   @MaxLength(200)

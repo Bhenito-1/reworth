@@ -79,10 +79,11 @@ export async function listRegions(): Promise<RegionCity[]> {
 
 export async function getRegion(key: string): Promise<RegionDetail | null> {
   try {
-    const raw = await apiFetch<unknown>(
+    const res = await apiFetch<RegionDetail & { found?: boolean }>(
       `/regions/${encodeURIComponent(key)}`,
     );
-    return normalize(raw) as RegionDetail | null;
+    if (!res || res.found === false) return null;
+    return res;
   } catch (err) {
     const status = (err as { status?: number })?.status;
     if (status === 404) return null;
@@ -218,12 +219,4 @@ export function communityLabelsForCity(cityKey: string): string[] {
 
 export function regionLabel(city: RegionCity): string {
   return city.displayName || city.key || city.city;
-}
-
-export async function getRegion(city: string): Promise<RegionDetail | null> {
-  const res = await apiFetch<RegionDetail & { found?: boolean }>(
-    `/regions/${encodeURIComponent(city)}`,
-  );
-  if (res.found === false) return null;
-  return res;
 }

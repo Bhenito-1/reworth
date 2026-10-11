@@ -323,9 +323,9 @@ export default function PublicProfilePage() {
               No live listings right now.
             </p>
           ) : (
-            <ul className="mt-4 grid gap-4 sm:grid-cols-2">
+            <ul className="mt-4 flex flex-wrap gap-3">
               {profile.activeListings.map((listing) => (
-                <li key={listing.id}>
+                <li key={listing.id} className="w-[7.5rem] shrink-0">
                   <DiscoveryListingCard
                     listing={listing}
                     href={`/listings/${listing.id}?from=/users/${userId}`}
@@ -370,7 +370,7 @@ export default function PublicProfilePage() {
                     ) : null}
                     {review.reply ? (
                       <div className="mt-3 border-l-2 border-[var(--rw-accent)] pl-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--rw-ink-muted)]">
+                        <p className="text-xs font-semibold text-[var(--rw-ink-muted)]">
                           Reply from {profile.displayName}
                         </p>
                         <p className="mt-1 text-sm">{review.reply}</p>

@@ -81,15 +81,15 @@ export class DeliveryService {
     const listing = await this.prisma.listing.findUnique({
       where: { id: order.listingId },
     });
-    if (!listing?.geoLat || !listing?.geoLng) {
-      throw new BadRequestException(
-        'Listing missing geo coordinates for delivery quote',
-      );
+    if (!listing) {
+      throw new BadRequestException('Listing missing for delivery quote');
     }
+    const fromLat = listing.geoLat ?? 6.5244;
+    const fromLng = listing.geoLng ?? 3.3792;
 
     const quote = await this.provider.quote({
-      fromLat: listing.geoLat,
-      fromLng: listing.geoLng,
+      fromLat,
+      fromLng,
       toLat,
       toLng,
       city: listing.city,

@@ -7,7 +7,12 @@ import { Button, Chip, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "./DiscoveryListingCard";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
-import { COMMUNITIES } from "../../lib/communities";
+import {
+  areaChoices,
+  FALLBACK_AREAS,
+  FALLBACK_STATES,
+  type AreaChoice,
+} from "../../lib/areas";
 import {
   RADIUS_OPTIONS,
   fetchCategories,
@@ -15,14 +20,24 @@ import {
   favouriteListing,
   getMeFavourites,
   looksLikeNaturalLanguage,
-  loadDiscoveryLocation,
-  saveDiscoveryLocation,
   unfavouriteListing,
   type DiscoveryLocation,
 } from "../../lib/discovery";
+import { getRegion, listRegions, type RegionCity } from "../../lib/region";
 import { formatNgn } from "@reworth/shared";
 import { addToCart } from "../../lib/cart";
 import type { CategoryNode, HomeRail, RadiusKm } from "../../lib/types";
+
+function listingInCategory(
+  item: { category: { id: string; slug: string } | null },
+  selected: { id: string; slug: string },
+): boolean {
+  const category = item.category;
+  if (!category) return false;
+  if (category.id === selected.id) return true;
+  const parent = category.slug.split("--")[0];
+  return parent === selected.slug || category.slug === selected.slug;
+}
 
 function sellerCatalogue(rails: HomeRail[]): HomeRail[] {
   return rails.filter((rail) => rail.id !== "my_listed_products");
@@ -32,12 +47,21 @@ export function DiscoveryHomePage() {
   const router = useRouter();
 
   const [loc, setLoc] = useState<DiscoveryLocation>({
+    city: "",
     community: "",
     radiusKm: "all",
   });
+  const [locationOpen, setLocationOpen] = useState(false);
+  const [regions, setRegions] = useState<RegionCity[]>([]);
+  const [draftState, setDraftState] = useState("");
+  const [draftArea, setDraftArea] = useState("");
+  const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
   const [query, setQuery] = useState("");
   const [useNl, setUseNl] = useState(false);
   const [categories, setCategories] = useState<CategoryNode[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryNode | null>(
+    null,
+  );
   const [rails, setRails] = useState<HomeRail[]>([]);
   const [favourites, setFavourites] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{
@@ -48,11 +72,20 @@ export function DiscoveryHomePage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setLoc(loadDiscoveryLocation());
+    const onClear = () => {
+      setLoc({ city: "", community: "", radiusKm: "all" });
+      setLocationOpen(false);
+    };
+    window.addEventListener("reworth-home-location-cleared", onClear);
+    return () =>
+      window.removeEventListener("reworth-home-location-cleared", onClear);
   }, []);
 
-  const load = useCallback(async (location: DiscoveryLocation) => {
-    setLoading(true);
+  const load = useCallback(async (
+    location: DiscoveryLocation,
+    opts?: { silent?: boolean },
+  ) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const radiusKm =
@@ -63,6 +96,7 @@ export function DiscoveryHomePage() {
         fetchHome(
           {
             community: location.community || undefined,
+            city: location.community ? location.city || undefined : undefined,
             radiusKm,
           },
           getAccessToken(),
@@ -78,6 +112,7 @@ export function DiscoveryHomePage() {
         );
       }
     } catch (err) {
+      if (opts?.silent) return;
       setError(err instanceof ApiError ? err.message : "Could not load home");
       setRails([]);
     } finally {
@@ -89,10 +124,85 @@ export function DiscoveryHomePage() {
     void load(loc);
   }, [loc, load]);
 
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      void load(loc, { silent: true });
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [loc, load]);
+
   function updateLoc(next: DiscoveryLocation) {
     setLoc(next);
-    saveDiscoveryLocation(next);
   }
+
+  function openLocation() {
+    setDraftState("");
+    setDraftArea(loc.community);
+    setLocationOpen(true);
+    void listRegions()
+      .then((items) => {
+        const list =
+          items.length > 0
+            ? items
+            : FALLBACK_STATES.map((item) => ({
+                key: item.key,
+                city: item.key,
+                displayName: item.displayName,
+              }));
+        setRegions(list);
+        if (loc.city) {
+          const match = list.find(
+            (item) =>
+              item.displayName === loc.city ||
+              item.city === loc.city ||
+              item.key === loc.city,
+          );
+          if (match) setDraftState(match.city || match.key);
+        }
+      })
+      .catch(() => {
+        setRegions(
+          FALLBACK_STATES.map((item) => ({
+            key: item.key,
+            city: item.key,
+            displayName: item.displayName,
+          })),
+        );
+      });
+  }
+
+  useEffect(() => {
+    if (!draftState) {
+      setAreaOptions([]);
+      return;
+    }
+    let cancelled = false;
+    void getRegion(draftState)
+      .then((detail) => {
+        if (cancelled) return;
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[draftState] ?? []);
+        setAreaOptions(areaChoices(draftState, source));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAreaOptions(
+            areaChoices(draftState, FALLBACK_AREAS[draftState] ?? []),
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftState]);
+
+  const locationLabel = loc.community
+    ? `${loc.community}, ${loc.city || "selected state"} · Change`
+    : "Filter items by location";
 
   async function toggleFavourite(listing: { id: string }) {
     const token = getAccessToken();
@@ -182,7 +292,7 @@ export function DiscoveryHomePage() {
               id="home-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search Lagos…"
+              placeholder="Search items…"
               className="min-w-0 flex-1 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
             />
             <label className="hidden items-center gap-1 text-xs text-[var(--rw-ink-muted)] sm:flex">
@@ -242,26 +352,120 @@ export function DiscoveryHomePage() {
 
         <section
           aria-label="Location"
-          className="mt-6 flex flex-wrap items-center gap-2"
+          className="mt-6 flex flex-wrap items-start gap-2"
         >
-          <label className="sr-only" htmlFor="home-community">
-            Community
-          </label>
-          <select
-            id="home-community"
-            value={loc.community}
-            onChange={(e) =>
-              updateLoc({ ...loc, community: e.target.value })
-            }
-            className="rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            <option value="">All communities</option>
-            {COMMUNITIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => (locationOpen ? setLocationOpen(false) : openLocation())}
+              className="rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+              aria-expanded={locationOpen}
+              aria-haspopup="dialog"
+            >
+              {locationLabel} ▾
+            </button>
+            {locationOpen ? (
+              <div
+                role="dialog"
+                aria-label="Choose a location"
+                className="absolute left-0 z-20 mt-2 w-[min(100vw-2rem,22rem)] rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 shadow-lg"
+              >
+                <p className="text-sm text-[var(--rw-ink-muted)]">
+                  Pick a state, then an area. Home keeps showing every listing until you apply this.
+                </p>
+                <p className="mt-3 text-sm font-semibold">State</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {(regions.length > 0
+                    ? regions
+                    : FALLBACK_STATES.map((item) => ({
+                        key: item.key,
+                        city: item.key,
+                        displayName: item.displayName,
+                      }))
+                  ).map((item) => {
+                    const key = item.city || item.key;
+                    const selected = draftState === key;
+                    return (
+                      <Chip
+                        key={key}
+                        selected={selected}
+                        onClick={() => {
+                          setDraftState(key);
+                          setDraftArea("");
+                        }}
+                      >
+                        {item.displayName}
+                      </Chip>
+                    );
+                  })}
+                </div>
+                {draftState ? (
+                  <>
+                    <p className="mt-3 text-sm font-semibold">Area</p>
+                    {areaOptions.length === 0 ? (
+                      <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+                        No areas are available for this state yet.
+                      </p>
+                    ) : (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {areaOptions.map((area) => (
+                          <Chip
+                            key={area.value}
+                            selected={draftArea === area.value}
+                            onClick={() => setDraftArea(area.value)}
+                          >
+                            {area.label}
+                          </Chip>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="mt-3 text-sm text-[var(--rw-ink-muted)]">
+                    Select a state to see its areas.
+                  </p>
+                )}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!draftState || !draftArea}
+                    onClick={() => {
+                      const state = (
+                        regions.length > 0
+                          ? regions
+                          : FALLBACK_STATES.map((item) => ({
+                              key: item.key,
+                              city: item.key,
+                              displayName: item.displayName,
+                            }))
+                      ).find((item) => (item.city || item.key) === draftState);
+                      if (!state || !draftArea) return;
+                      updateLoc({
+                        ...loc,
+                        city: state.displayName,
+                        community: draftArea,
+                      });
+                      setLocationOpen(false);
+                    }}
+                  >
+                    Show this area
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      updateLoc({ ...loc, city: "", community: "" });
+                      setLocationOpen(false);
+                    }}
+                  >
+                    Show all areas
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Radius">
             {RADIUS_OPTIONS.map((opt) => (
               <Chip
@@ -286,14 +490,28 @@ export function DiscoveryHomePage() {
                   />
                 ))
               : categories.map((cat) => (
-                  <Link
+                  <Chip
                     key={cat.id}
-                    href={`/search?categoryId=${encodeURIComponent(cat.id)}`}
-                    className="shrink-0"
+                    selected={categoryFilter?.id === cat.id}
+                    onClick={() =>
+                      setCategoryFilter((current) =>
+                        current?.id === cat.id ? null : cat,
+                      )
+                    }
                   >
-                    <Chip>{cat.name}</Chip>
-                  </Link>
+                    {cat.name}
+                  </Chip>
                 ))}
+            {categoryFilter ? (
+              <button
+                type="button"
+                aria-label="Clear category filter"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--rw-border)] text-lg font-semibold"
+                onClick={() => setCategoryFilter(null)}
+              >
+                ×
+              </button>
+            ) : null}
           </div>
         </section>
 
@@ -318,7 +536,7 @@ export function DiscoveryHomePage() {
                   {Array.from({ length: 4 }).map((__, j) => (
                     <Skeleton
                       key={j}
-                      className="h-56 w-44 shrink-0 rounded-[var(--rw-radius-lg)]"
+                      className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
                       label="Loading card"
                     />
                   ))}
@@ -328,7 +546,18 @@ export function DiscoveryHomePage() {
           </div>
         ) : (
           <div className="mt-10 space-y-12">
-            {rails.map((rail) => {
+            {(categoryFilter
+              ? rails
+                  .filter((rail) => rail.id !== "moving_sales")
+                  .map((rail) => ({
+                    ...rail,
+                    items: rail.items.filter((item) =>
+                      listingInCategory(item, categoryFilter),
+                    ),
+                  }))
+                  .filter((rail) => rail.items.length > 0)
+              : rails
+            ).map((rail) => {
               const isMovingSales = rail.id === "moving_sales";
               const movingSales = rail.movingSales ?? [];
               const hasMoving = isMovingSales && movingSales.length > 0;
@@ -383,7 +612,7 @@ export function DiscoveryHomePage() {
                       {hasListings ? (
                         <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
                           {rail.items.map((item) => (
-                            <li key={item.id} className="w-44 shrink-0 sm:w-52">
+                            <li key={item.id} className="w-[7.5rem] shrink-0">
                               <DiscoveryListingCard
                                 listing={item}
                                 favourited={favourites.has(item.id)}
@@ -409,8 +638,29 @@ export function DiscoveryHomePage() {
                 description="Try another community or be the first to sell."
                 action={
                   <Link href="/sell">
-                    <Button variant="sell">SELL</Button>
+                    <Button variant="sell">Sell</Button>
                   </Link>
+                }
+              />
+            ) : categoryFilter &&
+              rails
+                .filter((rail) => rail.id !== "moving_sales")
+                .every(
+                  (rail) =>
+                    rail.items.filter((item) =>
+                      listingInCategory(item, categoryFilter),
+                    ).length === 0,
+                ) ? (
+              <EmptyState
+                title={`No ${categoryFilter.name} items`}
+                description="Nothing in this category is on the homepage right now."
+                action={
+                  <Button
+                    variant="secondary"
+                    onClick={() => setCategoryFilter(null)}
+                  >
+                    Show all items
+                  </Button>
                 }
               />
             ) : null}

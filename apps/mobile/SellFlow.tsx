@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { ApiError } from "./lib/api";
+import { ScrollView } from "./components/BoundScroll";
+import { ApiError, apiFetch } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import {
   assistListing,
@@ -40,6 +40,7 @@ import {
 } from "./lib/payout";
 import {
   formatNgnFromKobo,
+  listingImageUrl,
   type PriceIntelligence,
   type PublicListing,
   type SellingModeValue,
@@ -59,12 +60,37 @@ type LocalPhoto = {
   name: string;
   type: string;
   key?: string;
+  file?: Blob;
+  existing?: boolean;
 };
 
 type Props = {
+  resumeId?: string | null;
   onPublished?: (listing: PublicListing) => void;
   onOpenListing?: (id: string) => void;
 };
+
+const CONDITIONS = [
+  ["NEW", "New"],
+  ["LIKE_NEW", "Like new"],
+  ["VERY_GOOD", "Very good"],
+  ["GOOD", "Good"],
+  ["FAIR", "Fair"],
+  ["FOR_PARTS", "For parts"],
+] as const;
+
+function draftResumeStep(listing: PublicListing): SellStep {
+  if ((listing.images?.length ?? 0) < 2) return "photos";
+  const priced =
+    listing.sellingMode === "GIVE_AWAY" ||
+    listing.sellingMode === "SWAP" ||
+    listing.priceKobo > 0;
+  if (!listing.title?.trim() || !listing.description?.trim() || !priced) {
+    return "draft";
+  }
+  if (!listing.community?.trim()) return "location";
+  return "fulfilment";
+}
 
 async function pickImages(): Promise<LocalPhoto[]> {
   try {
@@ -81,6 +107,7 @@ async function pickImages(): Promise<LocalPhoto[]> {
           fileName?: string | null;
           mimeType?: string | null;
           fileSize?: number | null;
+          file?: Blob | null;
         }>;
       }>;
     };
@@ -99,6 +126,7 @@ async function pickImages(): Promise<LocalPhoto[]> {
       uri: a.uri,
       name: a.fileName ?? `photo-${i}.jpg`,
       type: a.mimeType ?? "image/jpeg",
+      file: a.file ?? undefined,
     }));
   } catch {
     return mockPhotos();
@@ -122,8 +150,10 @@ function mockPhotos(): LocalPhoto[] {
   ];
 }
 
-export function SellFlow({ onPublished, onOpenListing }: Props) {
+export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
   const [step, setStep] = useState<SellStep>("photos");
+  const [hydrating, setHydrating] = useState(Boolean(resumeId));
+  const draftCity = useRef<string | null>(null);
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
   const [listingId, setListingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -138,6 +168,10 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
   const [brand, setBrand] = useState("");
   const [condition, setCondition] = useState("GOOD");
   const [categoryName, setCategoryName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [categories, setCategories] = useState<
+    { id: string; name: string; slug: string }[]
+  >([]);
   const [priceNaira, setPriceNaira] = useState("");
   const [units, setUnits] = useState("1");
   const [priceIntel, setPriceIntel] = useState<PriceIntelligence | null>(null);
@@ -148,9 +182,6 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
   const [stateKey, setStateKey] = useState("");
   const [regions, setRegions] = useState<RegionCity[]>([]);
   const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
-  const [fulfilmentPickup, setFulfilmentPickup] = useState(true);
-  const [fulfilmentMeet, setFulfilmentMeet] = useState(true);
-  const [fulfilmentDelivery, setFulfilmentDelivery] = useState(false);
   const [donateIfUnsold, setDonateIfUnsold] = useState(false);
   const [donateIfUnsoldDays, setDonateIfUnsoldDays] = useState("30");
   const [published, setPublished] = useState<PublicListing | null>(null);
@@ -179,6 +210,110 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
   }, []);
 
   useEffect(() => {
+    if (!resumeId) return;
+    let cancelled = false;
+    setHydrating(true);
+    void (async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token || cancelled) return;
+        const listing = await getListing(resumeId, token);
+        if (cancelled || listing.status !== "DRAFT") return;
+        setListingId(listing.id);
+        setTitle(listing.title || "");
+        setDescription(listing.description || "");
+        setBrand(listing.brand || "");
+        setCondition(listing.condition || "GOOD");
+        setCategoryName(listing.category?.name ?? "");
+        setCategoryId(listing.category?.id ?? "");
+        if (
+          listing.donateIfUnsoldDays != null &&
+          listing.donateIfUnsoldDays > 0
+        ) {
+          setDonateIfUnsold(true);
+          setDonateIfUnsoldDays(String(listing.donateIfUnsoldDays));
+        } else {
+          setDonateIfUnsold(false);
+        }
+        setPriceNaira(
+          listing.priceKobo > 0 ? String(Math.round(listing.priceKobo / 100)) : "",
+        );
+        setUnits(
+          String(
+            listing.quantityTotal && listing.quantityTotal > 0
+              ? listing.quantityTotal
+              : 1,
+          ),
+        );
+        setSellingMode((listing.sellingMode as SellingModeValue) || "SELL");
+        setNegotiable(listing.negotiable);
+        if (listing.community) setCommunity(listing.community);
+        if (listing.city) {
+          draftCity.current = listing.city;
+          const cityName = listing.city.toLowerCase();
+          const match = FALLBACK_STATES.find(
+            (item) =>
+              item.city.toLowerCase() === cityName ||
+              item.displayName.toLowerCase() === cityName,
+          );
+          if (match) setStateKey(match.city);
+        }
+        setError(null);
+        setPhotos(
+          [...(listing.images ?? [])]
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .flatMap((img) => {
+              const uri = listingImageUrl(img);
+              return uri
+                ? [
+                    {
+                      uri,
+                      name: "photo.jpg",
+                      type: "image/jpeg",
+                      existing: true,
+                    },
+                  ]
+                : [];
+            }),
+        );
+        setStep(draftResumeStep(listing));
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof ApiError ? err.message : "Could not open this draft",
+          );
+        }
+      } finally {
+        if (!cancelled) setHydrating(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [resumeId]);
+
+  useEffect(() => {
+    const city = draftCity.current;
+    if (!city || stateKey) return;
+    const cityName = city.toLowerCase();
+    const match = regions.find(
+      (item) =>
+        item.city.toLowerCase() === cityName ||
+        item.displayName.toLowerCase() === cityName,
+    );
+    if (match) setStateKey(match.city);
+  }, [regions, stateKey]);
+
+  useEffect(() => {
+    if (
+      (sellingMode === "GIVE_AWAY" || sellingMode === "SWAP") &&
+      step === "bank"
+    ) {
+      setStep("publish");
+    }
+  }, [sellingMode, step]);
+
+  useEffect(() => {
     if (step !== "bank") return;
     let cancelled = false;
     void Promise.all([
@@ -198,6 +333,35 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
       cancelled = true;
     };
   }, [step]);
+
+  useEffect(() => {
+    void apiFetch<{ id: string; name: string; slug: string }[]>("/categories")
+      .then((items) => setCategories(Array.isArray(items) ? items : []))
+      .catch(() => setCategories([]));
+  }, []);
+
+  useEffect(() => {
+    if (categoryId || !categoryName.trim() || categories.length === 0) return;
+    const norm = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    const query = norm(categoryName);
+    const match =
+      categories.find(
+        (item) =>
+          norm(item.name) === query || item.slug.replace(/-/g, " ") === query,
+      ) ??
+      categories.find((item) => {
+        const name = norm(item.name);
+        return name.includes(query) || query.includes(name);
+      });
+    if (!match) return;
+    setCategoryId(match.id);
+    if (match.name !== categoryName) setCategoryName(match.name);
+  }, [categories, categoryName, categoryId]);
 
   useEffect(() => {
     void listRegions()
@@ -270,21 +434,30 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
       const token = await tokenOrThrow();
       const id = await ensureDraft(token);
       const keys: { key: string; sortOrder: number }[] = [];
+      const hasExisting = photos.some((photo) => photo.existing);
 
       const MOCK_JPEG_URI =
         "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGcP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Bf//Z";
 
       for (let i = 0; i < photos.length; i++) {
         const photo = photos[i];
+        if (photo.existing) continue;
         const isMock = photo.uri.startsWith("mock://");
         const uploaded = await uploadListingPhotoDirect(
           token,
           id,
-          {
-            uri: isMock ? MOCK_JPEG_URI : photo.uri,
-            name: (photo.name || `photo-${i}`).replace(/\.[^.]+$/, "") + ".jpg",
-            type: "image/jpeg",
-          },
+          isMock
+            ? {
+                uri: MOCK_JPEG_URI,
+                name: `photo-${i}.jpg`,
+                type: "image/jpeg",
+              }
+            : {
+                uri: photo.uri,
+                name: photo.name || `photo-${i}.jpg`,
+                type: photo.type || "image/jpeg",
+                file: photo.file,
+              },
           i,
         );
         if (uploaded.status !== "READY") {
@@ -300,13 +473,14 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
       const assist = await assistListing(
         id,
         token,
-        keys.map((k) => k.key),
+        hasExisting ? undefined : keys.map((k) => k.key),
       );
       const refreshed = await getListing(id, token);
       setTitle(assist.draft?.title || refreshed.title);
       setDescription(assist.draft?.description || refreshed.description);
       setBrand(assist.draft?.brand || refreshed.brand || "");
       setCondition(assist.draft?.suggestedCondition || refreshed.condition);
+      setCategoryId("");
       setCategoryName(
         assist.draft?.suggestedCategory || refreshed.category?.name || "",
       );
@@ -340,22 +514,29 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
     await patchListing(listingId, token, {
       title: title.trim(),
       description: description.trim(),
-      brand: brand.trim() || undefined,
-      condition,
-      priceKobo: sellingMode === "GIVE_AWAY" ? 0 : Math.round(naira * 100),
-      quantity: sellingMode === "SELL" ? Math.max(1, Number(units) || 1) : 1,
+      brand: brand.trim() || null,
+      condition: CONDITIONS.some(([value]) => value === condition)
+        ? condition
+        : "GOOD",
+      ...(categoryId ? { categoryId } : {}),
+      categoryName: categoryName.trim() || null,
+      priceKobo: sellingMode === "SELL" ? Math.round(naira * 100) : 0,
+      ...(sellingMode === "SELL" || sellingMode === "GIVE_AWAY"
+        ? { quantity: Math.max(1, Number(units) || 1) }
+        : {}),
       negotiable: sellingMode === "SELL" ? negotiable : false,
-      donateIfUnsoldDays: donateIfUnsold
-        ? Math.min(59, Math.max(7, Number(donateIfUnsoldDays) || 30))
-        : null,
+      donateIfUnsoldDays:
+        sellingMode !== "GIVE_AWAY" && donateIfUnsold
+          ? Math.min(59, Math.max(7, Number(donateIfUnsoldDays) || 30))
+          : null,
       sellingMode,
-      community: community || undefined,
+      community,
       city:
         [...regions, ...FALLBACK_STATES].find((item) => item.city === stateKey)
           ?.displayName || undefined,
-      fulfilmentPickup,
-      fulfilmentMeet,
-      fulfilmentDelivery,
+      fulfilmentPickup: false,
+      fulfilmentMeet: false,
+      fulfilmentDelivery: true,
     });
   }
 
@@ -377,6 +558,14 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
     }
   }
 
+  if (hydrating) {
+    return (
+      <View style={styles.pad}>
+        <ActivityIndicator color="#0E9F6E" />
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       contentContainerStyle={styles.pad}
@@ -394,27 +583,35 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
           </Text>
           <Text style={styles.meta}>{photos.length} / 6 photos</Text>
           {photos.length > 0 ? (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.photoRow}
-            >
-              {photos.map((p) =>
-                p.uri.startsWith("mock://") ? (
-                  <View key={p.uri} style={[styles.photoThumb, styles.photoMock]}>
-                    <Text style={styles.photoMockText}>Photo</Text>
-                  </View>
-                ) : (
-                  <Image
-                    key={p.uri}
-                    source={{ uri: p.uri }}
-                    style={styles.photoThumb}
-                    resizeMode="cover"
-                    accessibilityLabel="Selected photo"
-                  />
-                ),
-              )}
-            </ScrollView>
+            <View style={styles.photoRow}>
+              {photos.map((p) => (
+                <Pressable
+                  key={p.uri}
+                  onPress={() =>
+                    setPhotos((prev) => prev.filter((item) => item.uri !== p.uri))
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove this photo"
+                  style={styles.photoThumb}
+                >
+                  {p.uri.startsWith("mock://") ? (
+                    <View style={[styles.photoFill, styles.photoMock]}>
+                      <Text style={styles.photoMockText}>Photo</Text>
+                    </View>
+                  ) : (
+                    <Image
+                      source={{ uri: p.uri }}
+                      style={styles.photoFill}
+                      resizeMode="cover"
+                      pointerEvents="none"
+                    />
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {photos.length > 0 ? (
+            <Text style={styles.meta}>Tap a photo to remove it.</Text>
           ) : null}
           <Pressable
             style={styles.primaryBtn}
@@ -453,17 +650,69 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
                 onChange={setDescription}
                 multiline
               />
-              <Field
-                label="Category"
-                value={categoryName}
-                onChange={setCategoryName}
-              />
+              <Text style={styles.label}>Category</Text>
+              {categories.length > 0 ? (
+                <View style={styles.chips}>
+                  {categories.map((item) => (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => {
+                        setCategoryId(item.id);
+                        setCategoryName(item.name);
+                      }}
+                      style={[
+                        styles.chip,
+                        categoryId === item.id && styles.chipSelected,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: categoryId === item.id }}
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          categoryId === item.id && styles.chipTextSelected,
+                        ]}
+                      >
+                        {item.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : (
+                <Field
+                  label="Category"
+                  value={categoryName}
+                  onChange={(value) => {
+                    setCategoryId("");
+                    setCategoryName(value);
+                  }}
+                />
+              )}
               <Field label="Brand" value={brand} onChange={setBrand} />
-              <Field
-                label="Condition"
-                value={condition}
-                onChange={setCondition}
-              />
+              <Text style={styles.label}>Condition</Text>
+              <View style={styles.chips}>
+                {CONDITIONS.map(([value, label]) => (
+                  <Pressable
+                    key={value}
+                    onPress={() => setCondition(value)}
+                    style={[
+                      styles.chip,
+                      condition === value && styles.chipSelected,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: condition === value }}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        condition === value && styles.chipTextSelected,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
               <Text style={styles.label}>How are you listing?</Text>
               <View style={styles.chips}>
                 {(
@@ -494,7 +743,7 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
                   </Pressable>
                 ))}
               </View>
-              {sellingMode !== "GIVE_AWAY" ? (
+              {sellingMode === "SELL" ? (
                 <Field
                   label="Price per unit (₦)"
                   value={priceNaira}
@@ -502,33 +751,50 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
                   keyboardType="numeric"
                 />
               ) : null}
-              {sellingMode === "SELL" ? (
-                <>
-                  <Field
-                    label="Units available"
-                    value={units}
-                    onChange={(t) => setUnits(t.replace(/[^\d]/g, ""))}
-                    keyboardType="numeric"
-                  />
-                  <Pressable
-                    style={styles.checkRow}
-                    onPress={() => setNegotiable((v) => !v)}
-                  >
-                    <Text style={styles.copy}>
-                      {negotiable ? "☑" : "☐"} Price is negotiable
-                    </Text>
-                  </Pressable>
-                </>
+              {sellingMode === "GIVE_AWAY" ? (
+                <Text style={styles.copy}>Price is ₦0.</Text>
               ) : null}
+              {sellingMode === "SWAP" ? (
+                <Text style={styles.copy}>
+                  Another user sends a swap proposal for this item.
+                </Text>
+              ) : null}
+              {sellingMode === "SELL" || sellingMode === "GIVE_AWAY" ? (
+                <Field
+                  label={
+                    sellingMode === "GIVE_AWAY"
+                      ? "Units to gift"
+                      : "Units available"
+                  }
+                  value={units}
+                  onChange={(t) => setUnits(t.replace(/[^\d]/g, ""))}
+                  keyboardType="numeric"
+                />
+              ) : null}
+              {sellingMode === "SELL" ? (
+                <Pressable
+                  style={styles.checkRow}
+                  onPress={() => setNegotiable((v) => !v)}
+                >
+                  <Text style={styles.copy}>
+                    {negotiable ? "☑" : "☐"} Price is negotiable
+                  </Text>
+                </Pressable>
+              ) : null}
+              {sellingMode !== "GIVE_AWAY" ? (
               <Pressable
                 style={styles.checkRow}
                 onPress={() => setDonateIfUnsold((v) => !v)}
               >
                 <Text style={styles.copy}>
-                  {donateIfUnsold ? "☑" : "☐"} Donate if unsold
+                  {donateIfUnsold ? "☑" : "☐"}{" "}
+                  {sellingMode === "SWAP"
+                    ? "Donate if no swap offer"
+                    : "Donate if unsold"}
                 </Text>
               </Pressable>
-              {donateIfUnsold ? (
+              ) : null}
+              {sellingMode !== "GIVE_AWAY" && donateIfUnsold ? (
                 <>
                   <Text style={styles.copy}>
                     The listing stays live for 60 days. Choose a shorter wait
@@ -542,7 +808,7 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
                   />
                 </>
               ) : null}
-              {priceIntel && sellingMode !== "GIVE_AWAY" ? (
+              {priceIntel && sellingMode === "SELL" ? (
                 <View style={styles.intel}>
                   <Text style={styles.intelTitle}>Price sense</Text>
                   <Text style={styles.copy}>
@@ -559,7 +825,11 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
               <View style={styles.row}>
                 <Pressable
                   style={[styles.secondaryBtn, styles.flex]}
-                  onPress={() => setStep("photos")}
+                  onPress={() => {
+                    setError(null);
+                    setNibssName(null);
+                    setStep("photos");
+                  }}
                 >
                   <Text style={styles.secondaryBtnText}>Back</Text>
                 </Pressable>
@@ -658,7 +928,11 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
           <View style={styles.row}>
             <Pressable
               style={[styles.secondaryBtn, styles.flex]}
-              onPress={() => setStep("draft")}
+              onPress={() => {
+                setError(null);
+                setNibssName(null);
+                setStep("draft");
+              }}
             >
               <Text style={styles.secondaryBtnText}>Back</Text>
             </Pressable>
@@ -673,8 +947,15 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
                   setError("Select an area in that state");
                   return;
                 }
-                await saveFields();
-                setStep("fulfilment");
+                setBusy(true);
+                try {
+                  await saveFields();
+                  setStep("fulfilment");
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : "Save failed");
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
               <Text style={styles.primaryBtnText}>Continue</Text>
@@ -685,37 +966,38 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
 
       {step === "fulfilment" ? (
         <View>
-          <Check
-            label="Pickup or meet nearby"
-            checked={fulfilmentPickup || fulfilmentMeet}
-            onToggle={() => {
-              const next = !(fulfilmentPickup || fulfilmentMeet);
-              setFulfilmentPickup(next);
-              setFulfilmentMeet(next);
-            }}
-          />
-          <Check
-            label="Delivery (quote at checkout)"
-            checked={fulfilmentDelivery}
-            onToggle={() => setFulfilmentDelivery((v) => !v)}
-          />
+          <Text style={styles.copy}>
+            Buyers receive this by ReWorth delivery. The courier fee is quoted
+            at checkout.
+          </Text>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <View style={styles.row}>
             <Pressable
               style={[styles.secondaryBtn, styles.flex]}
-              onPress={() => setStep("location")}
+              onPress={() => {
+                setError(null);
+                setNibssName(null);
+                setStep("location");
+              }}
             >
               <Text style={styles.secondaryBtnText}>Back</Text>
             </Pressable>
             <Pressable
               style={[styles.primaryBtn, styles.flex]}
               onPress={async () => {
-                if (!fulfilmentPickup && !fulfilmentMeet && !fulfilmentDelivery) {
-                  setError("Pick at least one option");
-                  return;
+                setBusy(true);
+                try {
+                  await saveFields();
+                  setStep(
+                    sellingMode === "GIVE_AWAY" || sellingMode === "SWAP"
+                      ? "publish"
+                      : "bank",
+                  );
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : "Save failed");
+                } finally {
+                  setBusy(false);
                 }
-                await saveFields();
-                setStep("bank");
               }}
             >
               <Text style={styles.primaryBtnText}>Continue</Text>
@@ -820,7 +1102,11 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
           <View style={styles.row}>
             <Pressable
               style={[styles.secondaryBtn, styles.flex]}
-              onPress={() => setStep("fulfilment")}
+              onPress={() => {
+                setError(null);
+                setNibssName(null);
+                setStep("fulfilment");
+              }}
             >
               <Text style={styles.secondaryBtnText}>Back</Text>
             </Pressable>
@@ -861,7 +1147,8 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
                           );
                         } else {
                           setError(
-                            "We could not find that account at the selected bank.",
+                            result.message ||
+                              "We could not find that account at the selected bank.",
                           );
                         }
                         return;
@@ -894,12 +1181,12 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
           <Text style={styles.copy}>
             {community} ·{" "}
             {sellingMode === "GIVE_AWAY"
-              ? "Give away"
+              ? "Give away · ₦0"
               : sellingMode === "SWAP"
                 ? "Swap"
                 : formatNgnFromKobo((Number(priceNaira) || 0) * 100)}
           </Text>
-          {payoutAccount ? (
+          {sellingMode !== "GIVE_AWAY" && payoutAccount ? (
             <Text style={styles.copy}>
               Payout · {payoutAccount.bankName} {payoutAccount.accountNumberMasked}
             </Text>
@@ -913,7 +1200,11 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
           <View style={styles.row}>
             <Pressable
               style={[styles.secondaryBtn, styles.flex]}
-              onPress={() => setStep("bank")}
+              onPress={() => {
+                setError(null);
+                setNibssName(null);
+                setStep(sellingMode === "GIVE_AWAY" ? "fulfilment" : "bank");
+              }}
             >
               <Text style={styles.secondaryBtnText}>Back</Text>
             </Pressable>
@@ -1060,24 +1351,6 @@ function Field({
   );
 }
 
-function Check({
-  label,
-  checked,
-  onToggle,
-}: {
-  label: string;
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <Pressable style={styles.checkRow} onPress={onToggle}>
-      <Text style={styles.copy}>
-        {checked ? "☑" : "☐"} {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   pad: { paddingBottom: 40 },
   brand: {
@@ -1099,13 +1372,20 @@ const styles = StyleSheet.create({
     color: "#5C636A",
   },
   meta: { marginTop: 8, fontSize: 14, color: "#5C636A" },
-  photoRow: { gap: 8, paddingTop: 12 },
+  photoRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingTop: 12,
+  },
   photoThumb: {
     width: 88,
     height: 88,
     borderRadius: 12,
+    overflow: "hidden",
     backgroundColor: "#E5E2DC",
   },
+  photoFill: { width: "100%", height: "100%" },
   photoMock: { alignItems: "center", justifyContent: "center" },
   photoMockText: { fontSize: 12, fontWeight: "600", color: "#5C636A" },
   label: {

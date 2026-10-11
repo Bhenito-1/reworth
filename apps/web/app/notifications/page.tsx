@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
+import { listConversations } from "../../lib/chat";
 import {
   categoryLabel,
   deepLinkToPath,
@@ -70,6 +71,24 @@ export default function NotificationsPage() {
         );
       } catch {
         /* continue */
+      }
+    }
+    const swapListing = n.deepLink?.match(/listings\/([\w-]+)\/swap\b/i);
+    if (swapListing && token) {
+      try {
+        const conversations = await listConversations(token);
+        const match = conversations
+          .filter((conversation) => conversation.listingId === swapListing[1])
+          .sort(
+            (a, b) =>
+              Date.parse(b.lastMessageAt ?? "") - Date.parse(a.lastMessageAt ?? ""),
+          )[0];
+        if (match) {
+          router.push(`/chats/${match.id}`);
+          return;
+        }
+      } catch {
+        /* fall through to the listing */
       }
     }
     const path = deepLinkToPath(n.deepLink);

@@ -117,11 +117,11 @@ export default function MovingSalePage() {
           <div className="space-y-4" aria-busy="true">
             <Skeleton className="h-8 w-64" label="Loading title" />
             <Skeleton className="h-24 w-full" label="Loading details" />
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex flex-wrap gap-3">
               {Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="h-56 rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading listing"
                 />
               ))}
@@ -198,10 +198,11 @@ export default function MovingSalePage() {
                   No live items yet.
                 </p>
               ) : (
-                <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <ul className="mt-4 flex flex-wrap gap-3">
                   {liveItems.map((item) => (
                     <li
                       key={item.id}
+                      className="w-[7.5rem] shrink-0"
                       onClick={() => {
                         const token = getAccessToken();
                         void recordMovingSaleEvent(

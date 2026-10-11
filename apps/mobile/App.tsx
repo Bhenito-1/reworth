@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { createElement, useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
   Modal,
+  Platform,
   Pressable,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { StatusBar } from "expo-status-bar";
 import { subscribeChat } from "./lib/chat-socket";
 import { parseDeepLink, unreadNotificationCount } from "./lib/notifications";
@@ -25,12 +26,14 @@ import {
 import { SellFlow } from "./SellFlow";
 import {
   DiscoveryHome,
+  type HomeAreaFilter,
   FavouritesPanel,
   SearchPanel,
 } from "./DiscoveryScreens";
-import { CartPanel, InventoryPanel } from "./CartScreens";
+import { CartPanel } from "./CartScreens";
 import { UserProfileModal } from "./UserProfileModal";
 import { PrivacySettings } from "./PrivacySettings";
+import { disableNonEssentialNotifications } from "./lib/notifications";
 import { NotificationsModal } from "./NotificationsScreens";
 import { SellerListingsPanel, ListingFixModal } from "./SellerListings";
 import {
@@ -40,13 +43,28 @@ import {
 import { OnboardingFlow } from "./OnboardingFlow";
 import { LandingScreen } from "./LandingScreen";
 import { apiFetch, ApiError } from "./lib/api";
+import { clearHomeCache, type SearchFilters } from "./lib/discovery";
+import { verifyNin } from "./lib/identity";
+import { getPayoutSetup, payoutDisplayName, type PayoutAccountView } from "./lib/payout";
 import {
   clearTokens,
   getAccessToken,
   getRefreshToken,
   setUnauthorizedHandler,
 } from "./lib/auth";
-import { registerDevicePushToken } from "./lib/push";
+import {
+  clearScreenLocation,
+  readScreenLocation,
+  writeScreenLocation,
+  type ScreenView,
+} from "./lib/screen-location";
+import {
+  getPushPromptChoice,
+  isEssentialOnlyApplied,
+  markEssentialOnlyApplied,
+  registerDevicePushToken,
+  setPushPromptChoice,
+} from "./lib/push";
 import {
   areaChoices,
   FALLBACK_AREAS,
@@ -57,13 +75,46 @@ import { getRegion, listRegions, type RegionCity } from "./lib/region";
 import { type MeResponse } from "./lib/types";
 import { colors } from "./theme/tokens";
 
+if (Platform.OS === "web" && typeof document !== "undefined") {
+  const id = "reworth-screen-bounds";
+  let el = document.getElementById(id) as HTMLStyleElement | null;
+  if (!el) {
+    el = document.createElement("style");
+    el.id = id;
+    document.head.appendChild(el);
+  }
+  el.textContent = `
+    html, body, #root {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: hidden;
+      scrollbar-width: none;
+    }
+    #root, #root * {
+      scrollbar-width: none;
+    }
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar,
+    #root::-webkit-scrollbar,
+    #root *::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+      display: none;
+    }
+    #root input, #root textarea {
+      min-width: 0;
+      max-width: 100%;
+    }
+  `;
+}
+
 type Tab = "home" | "discover" | "sell" | "listings" | "chats" | "profile";
 type ProfileSubtab =
   | "account"
   | "saved"
   | "orders"
   | "cart"
-  | "inventory"
   | "updates";
 
 const SIDE_NAV: {
@@ -80,9 +131,46 @@ const SIDE_NAV: {
   { id: "saved", label: "Wishlist", tab: "profile", sub: "saved" },
   { id: "cart", label: "Cart", tab: "profile", sub: "cart" },
   { id: "orders", label: "Orders", tab: "profile", sub: "orders" },
-  { id: "inventory", label: "Stock", tab: "profile", sub: "inventory" },
   { id: "account", label: "Account", tab: "profile", sub: "account" },
 ];
+
+function viewFromNav(tab: Tab, sub: ProfileSubtab): ScreenView {
+  if (tab === "profile") return sub;
+  return tab;
+}
+
+function BellMark() {
+  if (Platform.OS === "web") {
+    return createElement(
+      "svg",
+      {
+        width: 22,
+        height: 22,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "#172A3A",
+        strokeWidth: 1.75,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": true,
+      },
+      createElement("path", {
+        d: "M6 9a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9",
+      }),
+      createElement("path", { d: "M10.3 21a1.7 1.7 0 0 0 3.4 0" }),
+    );
+  }
+  return (
+    <View style={styles.bellMark} accessibilityElementsHidden>
+      <View style={styles.bellKnob} />
+      <View style={styles.bellBody} />
+      <View style={styles.bellLip} />
+      <View style={styles.bellClapper} />
+    </View>
+  );
+}
+
+const restoredScreen = readScreenLocation();
 
 export default function App() {
   const [booting, setBooting] = useState(true);
@@ -91,8 +179,19 @@ export default function App() {
   const [guestMode, setGuestMode] = useState<"landing" | "login" | "register">(
     "landing",
   );
-  const [active, setActive] = useState<Tab>("home");
+  const [active, setActive] = useState<Tab>(
+    restoredScreen
+      ? restoredScreen.view === "saved" ||
+        restoredScreen.view === "orders" ||
+        restoredScreen.view === "cart" ||
+        restoredScreen.view === "updates" ||
+        restoredScreen.view === "account"
+        ? "profile"
+        : restoredScreen.view
+      : "home",
+  );
   const [navOpen, setNavOpen] = useState(false);
+  const [discoverSeed, setDiscoverSeed] = useState<SearchFilters | null>(null);
   const [unreadNotes, setUnreadNotes] = useState(0);
 
   const [displayName, setDisplayName] = useState("");
@@ -104,31 +203,71 @@ export default function App() {
   const [profileAreas, setProfileAreas] = useState<AreaChoice[]>([]);
   const [bio, setBio] = useState("");
   const [me, setMe] = useState<MeResponse | null>(null);
+  const [payout, setPayout] = useState<PayoutAccountView | null>(null);
+  const [nin, setNin] = useState("");
+  const [ninBusy, setNinBusy] = useState(false);
+  const [ninError, setNinError] = useState<string | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
-  const [homeSearchOpen, setHomeSearchOpen] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(
+    restoredScreen?.listingId ?? null,
+  );
+  const [homeSearchOpen, setHomeSearchOpen] = useState(
+    Boolean(restoredScreen?.search && restoredScreen.view === "home"),
+  );
+  const [cartSearch, setCartSearch] = useState(
+    Boolean(restoredScreen?.search && restoredScreen.view === "cart"),
+  );
   const [platformTool, setPlatformTool] = useState<PlatformTool>(null);
   const [cityLabel, setCityLabel] = useState("Lagos");
-  const [profileSubtab, setProfileSubtab] = useState<ProfileSubtab>("account");
+  const [homeArea, setHomeArea] = useState<HomeAreaFilter | null>(null);
+  const [profileSubtab, setProfileSubtab] = useState<ProfileSubtab>(
+    restoredScreen &&
+      (restoredScreen.view === "saved" ||
+        restoredScreen.view === "orders" ||
+        restoredScreen.view === "cart" ||
+        restoredScreen.view === "updates" ||
+        restoredScreen.view === "account")
+      ? restoredScreen.view
+      : "account",
+  );
   const [checkoutParams, setCheckoutParams] = useState<{
     listingId: string;
     offerId?: string;
     orderIntentId?: string;
+    payOrderId?: string;
     quantity?: number;
-  } | null>(null);
-  const [openChatId, setOpenChatId] = useState<string | null>(null);
-  const [orderId, setOrderId] = useState<string | null>(null);
+  } | null>(
+    restoredScreen?.checkoutListingId
+      ? { listingId: restoredScreen.checkoutListingId }
+      : null,
+  );
+  const [openChatId, setOpenChatId] = useState<string | null>(
+    restoredScreen?.chatId ?? null,
+  );
+  const [screenChatId, setScreenChatId] = useState<string | null>(
+    restoredScreen?.chatId ?? null,
+  );
+  const [ordersRefresh, setOrdersRefresh] = useState(0);
+  const [orderId, setOrderId] = useState<string | null>(
+    restoredScreen?.orderId ?? null,
+  );
   const [disputeId, setDisputeId] = useState<string | null>(null);
   const [fixListingId, setFixListingId] = useState<string | null>(null);
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
+  const [resumeListingId, setResumeListingId] = useState<string | null>(null);
   const [sellerReturnListingId, setSellerReturnListingId] = useState<
     string | null
   >(null);
   const [listingReturnSellerId, setListingReturnSellerId] = useState<
     string | null
   >(null);
+  const [savedSync, setSavedSync] = useState<{
+    id: string;
+    saved: boolean;
+    token: number;
+  } | null>(null);
 
   useEffect(() => {
     function handleUrl(url: string | null) {
@@ -138,6 +277,7 @@ export default function App() {
       else if (parsed?.kind === "dispute" && parsed.id) setDisputeId(parsed.id);
       else if (parsed?.kind === "chat" && parsed.id) {
         setOpenChatId(parsed.id);
+        setScreenChatId(parsed.id);
         setActive("chats");
       } else if (parsed?.kind === "listing" && parsed.id) setDetailId(parsed.id);
       else if (parsed?.kind === "selling") {
@@ -156,23 +296,34 @@ export default function App() {
       setAuthed(false);
       setMe(null);
       setGuestMode("landing");
+      setHomeArea(null);
+      void clearHomeCache();
+      clearScreenLocation();
       return;
     }
     try {
       const profile = await apiFetch<MeResponse>("/me", { token });
       setMe(profile);
       setAuthed(true);
-      if (profile.profile?.displayName) {
-        setDisplayName(profile.profile.displayName);
+      setDisplayName(profile.profile?.displayName ?? "");
+      setBio(profile.profile?.bio ?? "");
+      setCommunity(profile.profile?.preferredCommunity?.trim() ?? "");
+      const setup = await getPayoutSetup().catch(() => null);
+      setPayout(setup?.account ?? null);
+    } catch (err) {
+      const expired =
+        err instanceof ApiError && (err.status === 401 || err.status === 403);
+      if (!expired) {
+        setAuthed(true);
+        return;
       }
-      if (profile.profile?.bio) setBio(profile.profile.bio);
-      const pref = profile.profile?.preferredCommunity?.trim() ?? "";
-      if (pref) setCommunity(pref);
-    } catch {
       await clearTokens();
       setAuthed(false);
       setMe(null);
       setGuestMode("landing");
+      setHomeArea(null);
+      void clearHomeCache();
+      clearScreenLocation();
     }
   }, []);
 
@@ -182,6 +333,9 @@ export default function App() {
       setMe(null);
       setGuestMode("landing");
       setError(null);
+      setHomeArea(null);
+      void clearHomeCache();
+      clearScreenLocation();
     });
     return () => setUnauthorizedHandler(null);
   }, []);
@@ -237,18 +391,57 @@ export default function App() {
     };
   }, [profileStateKey]);
 
+  const [pushPromptOpen, setPushPromptOpen] = useState(false);
+
   useEffect(() => {
-    if (!authed) return;
+    if (!authed) {
+      setPushPromptOpen(false);
+      return;
+    }
+    let cancelled = false;
     void (async () => {
       const token = await getAccessToken();
-      if (!token) return;
+      if (!token || cancelled) return;
       try {
-        await registerDevicePushToken(token);
+        const choice = await getPushPromptChoice();
+        if (cancelled) return;
+        if (choice === "allow") {
+          await registerDevicePushToken(token, { requestPermission: true });
+          return;
+        }
+        if (choice === "deny" || choice === "later") {
+          if (choice === "deny" && !(await isEssentialOnlyApplied())) {
+            await disableNonEssentialNotifications(token);
+            await markEssentialOnlyApplied();
+          }
+          return;
+        }
+        setPushPromptOpen(true);
       } catch {
         /* push optional until store credentials exist */
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [authed]);
+
+  async function choosePushPrompt(choice: "allow" | "deny") {
+    setPushPromptOpen(false);
+    await setPushPromptChoice(choice);
+    const token = await getAccessToken();
+    if (!token) return;
+    try {
+      if (choice === "allow") {
+        await registerDevicePushToken(token, { requestPermission: true });
+        return;
+      }
+      await disableNonEssentialNotifications(token);
+      await markEssentialOnlyApplied();
+    } catch {
+      /* the choice is saved, so the prompt stays closed */
+    }
+  }
 
   useEffect(() => {
     if (active !== "home") setHomeSearchOpen(false);
@@ -295,19 +488,58 @@ export default function App() {
     };
   }, [authed, active, profileSubtab]);
 
+  async function submitNin() {
+    setNinError(null);
+    if (me?.verificationLevels.L3_IDENTITY) return;
+    const digits = nin.replace(/\D/g, "");
+    if (!/^\d{11}$/.test(digits)) {
+      setNinError("Enter your 11-digit NIN.");
+      return;
+    }
+    setNinBusy(true);
+    try {
+      const result = await verifyNin(digits);
+      setNin("");
+      if (!result.identityVerifiedBadge) {
+        setNinError("Identity check was not approved.");
+        return;
+      }
+      setMe((current) =>
+        current
+          ? {
+              ...current,
+              identityVerifiedBadge: true,
+              verificationLevels: {
+                ...current.verificationLevels,
+                L3_IDENTITY: true,
+              },
+            }
+          : current,
+      );
+    } catch (err) {
+      setNin("");
+      setNinError(err instanceof ApiError ? err.message : "Identity check failed.");
+    } finally {
+      setNinBusy(false);
+    }
+  }
+
+  const savedName = (me?.profile?.displayName ?? "").trim();
+  const savedBio = (me?.profile?.bio ?? "").trim();
+  const savedCommunity = (me?.profile?.preferredCommunity ?? "").trim();
+  const areaChanged =
+    community.trim().length > 0 && community.trim() !== savedCommunity;
+  const profileDirty =
+    displayName.trim() !== savedName ||
+    bio.trim() !== savedBio ||
+    areaChanged;
+
   async function saveProfile() {
     setError(null);
+    if (!profileDirty) return;
     const name = displayName.trim();
     if (!name) {
       setError("Display name is required");
-      return;
-    }
-    if (!profileStateKey) {
-      setError("Select your state");
-      return;
-    }
-    if (!community || !profileAreas.some((area) => area.value === community)) {
-      setError("Select a preferred area in that state");
       return;
     }
     const token = await getAccessToken();
@@ -319,8 +551,10 @@ export default function App() {
         token,
         body: {
           displayName: name,
-          preferredCommunity: community,
           bio: bio.trim() || null,
+          ...(community.trim()
+            ? { preferredCommunity: community.trim() }
+            : {}),
         },
       });
       await refreshMe();
@@ -346,7 +580,42 @@ export default function App() {
     setMe(null);
     setError(null);
     setGuestMode("landing");
+    setHomeArea(null);
+    void clearHomeCache();
+    clearScreenLocation();
   }
+
+  const onChatActive = useCallback((id: string | null) => {
+    setScreenChatId(id);
+  }, []);
+
+  useEffect(() => {
+    if (!authed || booting) return;
+    writeScreenLocation({
+      view: viewFromNav(active, profileSubtab),
+      listingId: detailId ?? undefined,
+      chatId: active === "chats" ? screenChatId ?? undefined : undefined,
+      orderId: orderId ?? undefined,
+      search:
+        active === "home" && homeSearchOpen
+          ? true
+          : active === "profile" && profileSubtab === "cart" && cartSearch
+            ? true
+            : undefined,
+      checkoutListingId: checkoutParams?.listingId,
+    });
+  }, [
+    authed,
+    booting,
+    active,
+    profileSubtab,
+    detailId,
+    screenChatId,
+    orderId,
+    homeSearchOpen,
+    cartSearch,
+    checkoutParams,
+  ]);
 
   if (booting) {
     return (
@@ -421,7 +690,7 @@ export default function App() {
               }
               style={styles.bellBtn}
             >
-              <Text style={styles.bellGlyph}>{"\u{1F514}"}</Text>
+              <BellMark />
               {unreadNotes > 0 ? (
                 <View style={styles.bellBadge}>
                   <Text style={styles.bellBadgeText}>
@@ -435,21 +704,41 @@ export default function App() {
         {active === "profile" ? (
           <>
             {profileSubtab === "saved" ? (
-              <FavouritesPanel onOpenListing={(id) => setDetailId(id)} />
+              <FavouritesPanel
+                onOpenListing={(id) => setDetailId(id)}
+                savedSync={savedSync}
+                onBrowse={() => {
+                  setDiscoverSeed(null);
+                  setActive("discover");
+                }}
+                onOpenSearch={(filters) => {
+                  setDiscoverSeed(filters ?? null);
+                  setActive("discover");
+                }}
+              />
             ) : profileSubtab === "orders" ? (
               <OrdersPanel
                 meId={me?.id ?? null}
+                refreshKey={ordersRefresh}
                 onOpenOrder={(id) => setOrderId(id)}
               />
             ) : profileSubtab === "cart" ? (
-              <CartPanel
-                onOpenListing={(id) => setDetailId(id)}
-                onCheckedOut={() => {
-                  setProfileSubtab("orders");
-                }}
-              />
-            ) : profileSubtab === "inventory" ? (
-              <InventoryPanel onOpenListing={(id) => setDetailId(id)} />
+              cartSearch ? (
+                <SearchPanel
+                  onOpenListing={(id) => setDetailId(id)}
+                  onBack={() => setCartSearch(false)}
+                  backLabel="← Cart"
+                  meId={me?.id}
+                />
+              ) : (
+                <CartPanel
+                  onOpenListing={(id) => setDetailId(id)}
+                  onCheckedOut={() => {
+                    setProfileSubtab("orders");
+                  }}
+                  onSearch={() => setCartSearch(true)}
+                />
+              )
             ) : profileSubtab === "updates" ? (
               <NotificationsModal
                 embedded
@@ -459,6 +748,7 @@ export default function App() {
                 onOpenDispute={(id) => setDisputeId(id)}
                 onOpenChat={(id) => {
                   setOpenChatId(id);
+                  setScreenChatId(id);
                   setActive("chats");
                 }}
                 onOpenListing={(id) => setDetailId(id)}
@@ -557,10 +847,14 @@ export default function App() {
                   </Text>
                 ) : null}
                 <Pressable
-                  style={[styles.primaryBtn, loading && styles.btnDisabled]}
+                  style={[
+                    styles.primaryBtn,
+                    (loading || !profileDirty) && styles.btnDisabled,
+                  ]}
                   onPress={() => void saveProfile()}
-                  disabled={loading}
+                  disabled={loading || !profileDirty}
                   accessibilityRole="button"
+                  accessibilityState={{ disabled: loading || !profileDirty }}
                 >
                   <Text style={styles.primaryBtnText}>
                     {loading ? "Saving…" : "Save profile"}
@@ -586,6 +880,64 @@ export default function App() {
                     ok={Boolean(me?.verificationLevels.L3_IDENTITY)}
                   />
                 </View>
+                {me?.verificationLevels.L3_IDENTITY ? (
+                  <Text style={styles.copy}>
+                    Your NIN is verified. You are an L3 member.
+                  </Text>
+                ) : (
+                  <>
+                    <Text style={styles.label}>National Identification Number (NIN)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={nin}
+                      onChangeText={(value) =>
+                        setNin(value.replace(/\D/g, "").slice(0, 11))
+                      }
+                      keyboardType="number-pad"
+                      maxLength={11}
+                      editable={!ninBusy}
+                      autoComplete="off"
+                      textContentType="none"
+                      secureTextEntry
+                      accessibilityLabel="National Identification Number"
+                    />
+                    <Text style={styles.hint}>
+                      11 digits. ReWorth keeps a hash of this number, not the number itself.
+                    </Text>
+                    {ninError ? (
+                      <Text style={styles.error} accessibilityRole="alert">
+                        {ninError}
+                      </Text>
+                    ) : null}
+                    <Pressable
+                      style={[
+                        styles.primaryBtn,
+                        (ninBusy || nin.length !== 11) && styles.btnDisabled,
+                      ]}
+                      onPress={() => void submitNin()}
+                      disabled={ninBusy || nin.length !== 11}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.primaryBtnText}>
+                        {ninBusy ? "Checking…" : "Verify identity"}
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
+
+                <Text style={styles.sectionLabel}>Bank details</Text>
+                {payout ? (
+                  <View style={styles.panel}>
+                    <Text style={styles.copy}>{payoutDisplayName(payout)}</Text>
+                    <Text style={styles.copy}>
+                      {payout.bankName} · {payout.accountNumberMasked}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.copy}>
+                    Bank details appear here after you verify a payout account while selling.
+                  </Text>
+                )}
 
                 <PrivacySettings
                   onDeleted={() => {
@@ -606,37 +958,58 @@ export default function App() {
           </>
         ) : active === "sell" ? (
           <SellFlow
+            resumeId={resumeListingId}
             onOpenListing={(id) => setDetailId(id)}
-            onPublished={() => setActive("listings")}
+            onPublished={() => {
+              setResumeListingId(null);
+              setActive("listings");
+            }}
           />
         ) : active === "home" ? (
           homeSearchOpen ? (
             <SearchPanel
               onOpenListing={(id) => setDetailId(id)}
               onBack={() => setHomeSearchOpen(false)}
+              meId={me?.id}
             />
           ) : (
             <DiscoveryHome
-              community={
-                me?.profile?.preferredCommunity || community || undefined
-              }
+              meId={me?.id}
+              areaFilter={homeArea}
+              onApplyAreaFilter={setHomeArea}
+              onClearAreaFilter={() => setHomeArea(null)}
               cityLabel={cityLabel}
               onOpenSearch={() => setHomeSearchOpen(true)}
               onOpenListing={(id) => setDetailId(id)}
               onOpenTool={(tool) => setPlatformTool(tool)}
+              onSell={() => {
+                setResumeListingId(null);
+                setHomeSearchOpen(false);
+                setActive("sell");
+              }}
             />
           )
         ) : active === "discover" ? (
-          <SearchPanel onOpenListing={(id) => setDetailId(id)} />
+          <SearchPanel
+            key={discoverSeed ? JSON.stringify(discoverSeed) : "discover"}
+            onOpenListing={(id) => setDetailId(id)}
+            initialFilters={discoverSeed}
+            meId={me?.id}
+          />
         ) : active === "chats" ? (
           <ChatsPanel
             meId={me?.id ?? ""}
             openConversationId={openChatId}
             onConversationOpened={() => setOpenChatId(null)}
+            onActiveChange={onChatActive}
             onCheckout={(params) => setCheckoutParams(params)}
+            onOpenOrder={(id) => setOrderId(id)}
           />
         ) : (
-          <SellerListingsPanel onFixRejected={(id) => setFixListingId(id)} />
+          <SellerListingsPanel
+            onFixRejected={(id) => setFixListingId(id)}
+            onOpenListing={(id) => setDetailId(id)}
+          />
         )}
       </View>
 
@@ -660,45 +1033,53 @@ export default function App() {
                 <View style={[styles.drawerCloseBar, styles.drawerCloseBarB]} />
               </Pressable>
             </View>
-            {SIDE_NAV.map((item) => {
-              const selected =
-                item.tab === "profile"
-                  ? active === "profile" && profileSubtab === item.sub
-                  : active === item.tab;
-              return (
-                <Pressable
-                  key={item.id}
-                  accessibilityRole="menuitem"
-                  accessibilityState={{ selected }}
-                  onPress={() => {
-                    setActive(item.tab);
-                    if (item.sub) setProfileSubtab(item.sub);
-                    setNavOpen(false);
-                  }}
-                  style={[styles.drawerItem, selected && styles.drawerItemOn]}
-                >
-                  <Text
-                    style={[
-                      styles.drawerItemText,
-                      selected && styles.drawerItemTextOn,
-                    ]}
-                  >
-                    {item.label}
-                  </Text>
-                </Pressable>
-              );
-            })}
-            <Pressable
-              onPress={() => {
-                setNavOpen(false);
-                void signOut();
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Sign out"
-              style={styles.drawerItem}
+            <ScrollView
+              style={styles.drawerScroll}
+              contentContainerStyle={styles.drawerScrollContent}
+              showsVerticalScrollIndicator
             >
-              <Text style={styles.drawerSignOut}>Sign out</Text>
-            </Pressable>
+              {SIDE_NAV.map((item) => {
+                const selected =
+                  item.tab === "profile"
+                    ? active === "profile" && profileSubtab === item.sub
+                    : active === item.tab;
+                return (
+                  <Pressable
+                    key={item.id}
+                    accessibilityRole="menuitem"
+                    accessibilityState={{ selected }}
+                    onPress={() => {
+                      if (item.tab === "sell") setResumeListingId(null);
+                      if (item.tab === "discover") setDiscoverSeed(null);
+                      setActive(item.tab);
+                      if (item.sub) setProfileSubtab(item.sub);
+                      setNavOpen(false);
+                    }}
+                    style={[styles.drawerItem, selected && styles.drawerItemOn]}
+                  >
+                    <Text
+                      style={[
+                        styles.drawerItemText,
+                        selected && styles.drawerItemTextOn,
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+              <Pressable
+                onPress={() => {
+                  setNavOpen(false);
+                  void signOut();
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Sign out"
+                style={styles.drawerItem}
+              >
+                <Text style={styles.drawerSignOut}>Sign out</Text>
+              </Pressable>
+            </ScrollView>
           </View>
           <Pressable
             style={styles.drawerBackdrop}
@@ -726,6 +1107,7 @@ export default function App() {
         onOpenChat={(conversationId) => {
           setDetailId(null);
           setOpenChatId(conversationId);
+          setScreenChatId(conversationId);
           setActive("chats");
         }}
         onBuyNow={(listingId, quantity) => {
@@ -743,6 +1125,16 @@ export default function App() {
           setActive("profile");
           setProfileSubtab("cart");
         }}
+        onContinueDraft={(id) => {
+          setDetailId(null);
+          setResumeListingId(id);
+          setActive("sell");
+        }}
+        onDraftDeleted={() => setDetailId(null)}
+        onSavedChange={(id, saved) =>
+          setSavedSync({ id, saved, token: Date.now() })
+        }
+        onOpenListing={(id) => setDetailId(id)}
       />
 
       <PlatformToolsModal
@@ -789,7 +1181,11 @@ export default function App() {
       <OrderDetailModal
         orderId={orderId}
         meId={me?.id ?? null}
-        onClose={() => setOrderId(null)}
+        onClose={() => {
+          setOrderId(null);
+          setOrdersRefresh((n) => n + 1);
+        }}
+        onChanged={() => setOrdersRefresh((n) => n + 1)}
         onOpenDispute={(id) => {
           setOrderId(null);
           setDisputeId(id);
@@ -801,6 +1197,38 @@ export default function App() {
         meId={me?.id ?? null}
         onClose={() => setDisputeId(null)}
       />
+
+      <Modal
+        visible={pushPromptOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => void choosePushPrompt("deny")}
+      >
+        <View style={styles.pushBackdrop}>
+          <View style={styles.pushCard}>
+            <Text style={styles.pushTitle}>Notifications</Text>
+            <Text style={styles.pushBody}>
+              Allow messages, offers, and price drops. Orders, payments, and
+              delivery stay on either way. You can change this anytime from
+              the notification bell.
+            </Text>
+            <Pressable
+              style={styles.pushAllow}
+              onPress={() => void choosePushPrompt("allow")}
+              accessibilityRole="button"
+            >
+              <Text style={styles.pushAllowText}>Allow</Text>
+            </Pressable>
+            <Pressable
+              style={styles.pushLater}
+              onPress={() => void choosePushPrompt("deny")}
+              accessibilityRole="button"
+            >
+              <Text style={styles.pushLaterText}>No</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -819,6 +1247,10 @@ function Badge({ label, ok }: { label: string; ok: boolean }) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    overflow: "hidden",
     backgroundColor: "#FAF9F7",
   },
   center: {
@@ -833,6 +1265,10 @@ const styles = StyleSheet.create({
   },
   screen: {
     flex: 1,
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    overflow: "hidden",
     paddingHorizontal: 24,
     paddingTop: 12,
   },
@@ -854,7 +1290,49 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  bellGlyph: { fontSize: 20 },
+  bellMark: {
+    width: 22,
+    height: 22,
+    alignItems: "center",
+  },
+  bellKnob: {
+    width: 4,
+    height: 3,
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
+    borderWidth: 1.6,
+    borderBottomWidth: 0,
+    borderColor: "#172A3A",
+  },
+  bellBody: {
+    width: 16,
+    height: 12,
+    marginTop: -1,
+    borderWidth: 1.6,
+    borderColor: "#172A3A",
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderBottomLeftRadius: 3,
+    borderBottomRightRadius: 3,
+    backgroundColor: "transparent",
+  },
+  bellLip: {
+    width: 18,
+    height: 1.6,
+    marginTop: -1,
+    borderRadius: 1,
+    backgroundColor: "#172A3A",
+  },
+  bellClapper: {
+    width: 6,
+    height: 3.5,
+    marginTop: 1,
+    borderWidth: 1.6,
+    borderTopWidth: 0,
+    borderColor: "#172A3A",
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
+  },
   bellBadge: {
     position: "absolute",
     top: 2,
@@ -876,6 +1354,7 @@ const styles = StyleSheet.create({
   },
   drawerRoot: {
     flex: 1,
+    height: "100%",
     flexDirection: "row",
   },
   drawerBackdrop: {
@@ -885,10 +1364,16 @@ const styles = StyleSheet.create({
   drawer: {
     width: 280,
     maxWidth: "85%",
+    height: "100%",
     backgroundColor: "#FFFFFF",
     paddingTop: 56,
     paddingHorizontal: 16,
-    paddingBottom: 24,
+  },
+  drawerScroll: {
+    flex: 1,
+  },
+  drawerScrollContent: {
+    paddingBottom: 32,
   },
   drawerHead: {
     flexDirection: "row",
@@ -1036,6 +1521,68 @@ const styles = StyleSheet.create({
   },
   chipTextSelected: {
     color: "#FFFFFF",
+  },
+  hint: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#5C636A",
+  },
+  panel: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: "#E5E2DC",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: "#FFFFFF",
+  },
+  pushBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(23, 42, 58, 0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  pushCard: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: colors.surface,
+    borderRadius: 20,
+    padding: 24,
+  },
+  pushTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: colors.ink,
+  },
+  pushBody: {
+    marginTop: 8,
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.muted,
+  },
+  pushAllow: {
+    marginTop: 20,
+    backgroundColor: colors.orange,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  pushAllowText: {
+    color: colors.onAccent,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  pushLater: {
+    marginTop: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  pushLaterText: {
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "600",
   },
   primaryBtn: {
     marginTop: 28,

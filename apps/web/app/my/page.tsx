@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button, Chip, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListingCard";
 import { ApiError } from "../../lib/api";
+import { CONDITION_LABELS } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
 import { addToCart } from "../../lib/cart";
 import {
@@ -13,6 +14,8 @@ import {
   compactFilters,
   deleteSavedSearch,
   getMeFavourites,
+  savedListingCanCart,
+  savedListingNote,
   unfollowSeller,
   unfavouriteListing,
   updateSavedSearch,
@@ -228,11 +231,11 @@ export default function MyPage() {
 
         <div className="mt-8" role="tabpanel">
           {loading ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="flex flex-wrap gap-3">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="aspect-[3/4] rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading"
                 />
               ))}
@@ -298,21 +301,26 @@ function ItemsTab({
         description="Tap the heart on a listing to keep it here, then add it to the cart when you want to order."
         action={
           <Link href="/search">
-            <Button variant="primary">Browse</Button>
+            <Button variant="primary">Search for favorites</Button>
           </Link>
         }
       />
     );
   }
   return (
-    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+    <ul className="flex flex-wrap gap-3">
       {items.map((row) => (
-        <li key={row.favouriteId}>
+        <li key={row.favouriteId} className="w-[7.5rem] shrink-0">
           <DiscoveryListingCard
             listing={row.listing}
             favourited
+            note={savedListingNote(row.listing)}
             onToggleFavourite={(l) => void onToggle(l)}
-            onAddToCart={(l) => void onAddToCart(l)}
+            onAddToCart={
+              savedListingCanCart(row.listing)
+                ? (l) => void onAddToCart(l)
+                : undefined
+            }
           />
         </li>
       ))}
@@ -386,7 +394,7 @@ function SearchesTab({
         description="Save filters from the search page to get match alerts here."
         action={
           <Link href="/search">
-            <Button variant="primary">Search</Button>
+            <Button variant="primary">Open search</Button>
           </Link>
         }
       />
@@ -458,7 +466,8 @@ function summarizeFilters(filters: Record<string, unknown>): string {
   if (typeof filters.community === "string" && filters.community)
     parts.push(filters.community);
   if (filters.radiusKm != null) parts.push(`${filters.radiusKm} km`);
-  if (typeof filters.condition === "string" && filters.condition)
-    parts.push(filters.condition);
+  if (typeof filters.condition === "string" && filters.condition) {
+    parts.push(CONDITION_LABELS[filters.condition] ?? filters.condition);
+  }
   return parts.join(" · ") || "Custom filters";
 }

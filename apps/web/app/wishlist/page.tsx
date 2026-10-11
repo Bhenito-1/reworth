@@ -8,7 +8,12 @@ import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListin
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import { addToCart } from "../../lib/cart";
-import { getMeFavourites, unfavouriteListing } from "../../lib/discovery";
+import {
+  getMeFavourites,
+  savedListingCanCart,
+  savedListingNote,
+  unfavouriteListing,
+} from "../../lib/discovery";
 import type { FavouriteItem, PublicListing } from "../../lib/types";
 
 export default function WishlistPage() {
@@ -99,11 +104,11 @@ export default function WishlistPage() {
 
         <div className="mt-8">
           {items === null && !error ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="flex flex-wrap gap-3">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="aspect-[3/4] rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading wishlist"
                 />
               ))}
@@ -124,19 +129,24 @@ export default function WishlistPage() {
               description="Tap the heart on a listing to keep it here."
               action={
                 <Link href="/search">
-                  <Button variant="primary">Browse</Button>
+                  <Button variant="primary">Search for favorites</Button>
                 </Link>
               }
             />
           ) : (
-            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <ul className="flex flex-wrap gap-3">
               {(items ?? []).map((row) => (
-                <li key={row.favouriteId}>
+                <li key={row.favouriteId} className="w-[7.5rem] shrink-0">
                   <DiscoveryListingCard
                     listing={row.listing}
                     favourited
+                    note={savedListingNote(row.listing)}
                     onToggleFavourite={(listing) => void remove(listing)}
-                    onAddToCart={(listing) => void addListingToCart(listing)}
+                    onAddToCart={
+                      savedListingCanCart(row.listing)
+                        ? (listing) => void addListingToCart(listing)
+                        : undefined
+                    }
                   />
                 </li>
               ))}

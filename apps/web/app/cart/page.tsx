@@ -76,7 +76,7 @@ export default function CartPage() {
     if (!token) return;
     setCheckingOut(true);
     try {
-      const res = await checkoutCart(token, { fulfilmentMethod: "PICKUP" });
+      const res = await checkoutCart(token, { fulfilmentMethod: "DELIVERY" });
       const n = res.orders.length;
       setToast(
         n === 1
@@ -101,7 +101,15 @@ export default function CartPage() {
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] px-4 py-8 text-[var(--rw-ink)] sm:px-8">
       <div className="mx-auto max-w-2xl">
-        <h1 className="mb-6 text-2xl font-semibold tracking-tight">Cart</h1>
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <h1 className="text-2xl font-semibold tracking-tight">Cart</h1>
+          <Link
+            href="/search"
+            className="inline-flex min-h-11 items-center rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 text-sm font-semibold text-[var(--rw-ink)]"
+          >
+            Search
+          </Link>
+        </div>
         <p className="mb-6 text-sm text-[var(--rw-ink-muted)]">
           Saving an item here does not place an order or hold the units. Checkout
           asks each seller to confirm before you pay.
@@ -136,7 +144,7 @@ export default function CartPage() {
             return (
               <li
                 key={item.id}
-                className="flex gap-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
+                className="flex min-w-0 gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-3 sm:gap-4 sm:p-4"
               >
                 <div className="h-20 w-20 shrink-0 overflow-hidden rounded-[var(--rw-radius)] bg-[var(--rw-border)]">
                   {thumb ? (
@@ -179,24 +187,24 @@ export default function CartPage() {
                     </button>
                     <button
                       type="button"
-                      className="ml-2 text-sm text-red-600 hover:underline"
+                      className="text-sm text-red-600 hover:underline"
                       disabled={busyId === item.listing.id}
                       onClick={() => void remove(item)}
                     >
                       Remove
                     </button>
+                    <p className="ml-auto text-sm font-semibold">
+                      {formatNgn({ amountKobo: item.listing.priceKobo * item.quantity })}
+                    </p>
                   </div>
                 </div>
-                <p className="text-sm font-semibold">
-                  {formatNgn({ amountKobo: item.listing.priceKobo * item.quantity })}
-                </p>
               </li>
             );
           })}
         </ul>
 
         {ready.length > 0 ? (
-          <div className="mt-6 flex items-center justify-between gap-4">
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-[var(--rw-ink-muted)]">
               {ready.length} item{ready.length === 1 ? "" : "s"} ·{" "}
               {formatNgn({ amountKobo: totalKobo })} before fees

@@ -79,6 +79,7 @@ export default function SearchPageClient() {
     tone?: "info" | "success" | "warn" | "error";
   } | null>(null);
   const [savingSearch, setSavingSearch] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
   const [meId, setMeId] = useState<string | null>(null);
   const [cities, setCities] = useState<RegionCity[]>([]);
 
@@ -194,9 +195,23 @@ export default function SearchPageClient() {
     router.push(filtersToUrl(compact, nl ?? useNl));
   }
 
+  function priceRangeInvalid(): boolean {
+    return (
+      draft.priceMinKobo != null &&
+      draft.priceMaxKobo != null &&
+      draft.priceMaxKobo < draft.priceMinKobo
+    );
+  }
+
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     const q = query.trim();
+    if (!q) return;
+    if (priceRangeInvalid()) {
+      setPriceError("Maximum must be higher than the minimum.");
+      return;
+    }
+    setPriceError(null);
     const nl = useNl || looksLikeNaturalLanguage(q);
     applyAndNavigate({ ...draft, q: q || undefined }, nl);
   }
@@ -263,6 +278,7 @@ export default function SearchPageClient() {
   }
 
   async function saveCurrentSearch() {
+    if (!query.trim() || !result || result.items.length === 0) return;
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to save searches", tone: "warn" });
@@ -320,7 +336,7 @@ export default function SearchPageClient() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search or ask in plain English…"
+              placeholder="Search items"
               aria-label="Search"
               className="min-w-0 flex-1 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
             />
@@ -333,8 +349,13 @@ export default function SearchPageClient() {
               />
               NL
             </label>
-            <Button type="submit" variant="primary" size="sm">
-              Search
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              disabled={!query.trim()}
+            >
+              Search items
             </Button>
           </form>
         </div>
@@ -345,7 +366,7 @@ export default function SearchPageClient() {
           aria-label="Filters"
           className="h-fit space-y-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/80 p-4"
         >
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--rw-ink-muted)]">
+          <h2 className="text-sm font-semibold text-[var(--rw-ink-muted)]">
             Filters
           </h2>
 
@@ -440,27 +461,37 @@ export default function SearchPageClient() {
               inputMode="numeric"
               value={priceMinNaira}
               onChange={(e) => {
-                const n = Number(e.target.value.replace(/\D/g, ""));
-                updateDraft(
-                  "priceMinKobo",
-                  e.target.value === "" || !Number.isFinite(n)
-                    ? undefined
-                    : nairaToKobo(n),
-                );
+                setPriceError(null);
+                const raw = e.target.value.replace(/\D/g, "");
+                if (!raw) {
+                  updateDraft("priceMinKobo", undefined);
+                  return;
+                }
+                updateDraft("priceMinKobo", nairaToKobo(Number(raw)));
               }}
             />
             <Input
               label="Max ₦"
               inputMode="numeric"
               value={priceMaxNaira}
+              error={priceError ?? undefined}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                if (priceRangeInvalid()) {
+                  e.preventDefault();
+                  setPriceError("Maximum must be higher than the minimum.");
+                } else {
+                  setPriceError(null);
+                }
+              }}
               onChange={(e) => {
-                const n = Number(e.target.value.replace(/\D/g, ""));
-                updateDraft(
-                  "priceMaxKobo",
-                  e.target.value === "" || !Number.isFinite(n)
-                    ? undefined
-                    : nairaToKobo(n),
-                );
+                setPriceError(null);
+                const raw = e.target.value.replace(/\D/g, "");
+                if (!raw) {
+                  updateDraft("priceMaxKobo", undefined);
+                  return;
+                }
+                updateDraft("priceMaxKobo", nairaToKobo(Number(raw)));
               }}
             />
           </div>
@@ -542,19 +573,31 @@ export default function SearchPageClient() {
           <Button
             variant="primary"
             className="w-full"
-            onClick={() =>
+            disabled={!query.trim()}
+            onClick={() => {
+              if (priceRangeInvalid()) {
+                setPriceError("Maximum must be higher than the minimum.");
+                return;
+              }
+              setPriceError(null);
               applyAndNavigate({
                 ...draft,
                 q: query.trim() || undefined,
-              })
-            }
+              });
+            }}
           >
             Apply filters
           </Button>
           <Button
             variant="secondary"
             className="w-full"
-            disabled={savingSearch}
+            disabled={
+              savingSearch ||
+              !query.trim() ||
+              query.trim() !== (searchParams.get("q") ?? "").trim() ||
+              !result ||
+              result.items.length === 0
+            }
             onClick={() => void saveCurrentSearch()}
           >
             {savingSearch ? "Saving…" : "Save this search"}
@@ -583,11 +626,11 @@ export default function SearchPageClient() {
           ) : null}
 
           {loading ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="flex flex-wrap gap-3">
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="aspect-[3/4] w-full rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading result"
                 />
               ))}
@@ -626,11 +669,11 @@ export default function SearchPageClient() {
                 {result.total} result{result.total === 1 ? "" : "s"}
                 {result.tookMs != null ? ` · ${result.tookMs}ms` : ""}
               </p>
-              <ul className="grid grid-cols-2 items-stretch gap-3 sm:grid-cols-3">
+              <ul className="flex flex-wrap gap-3">
                 {result.items.map((item) => {
                   const own = meId != null && item.seller.id === meId;
                   return (
-                    <li key={item.id} className="h-full">
+                    <li key={item.id} className="w-[7.5rem] shrink-0">
                       <DiscoveryListingCard
                         listing={item}
                         favourited={favourites.has(item.id)}

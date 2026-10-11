@@ -171,7 +171,7 @@ export default function OrdersListPage() {
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
           Orders
         </h1>
-        <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Order roles">
+        <div className="mt-4 flex gap-1.5" role="tablist" aria-label="Order roles">
           {(
             [
               ["selling", "Customer orders"],
@@ -185,7 +185,7 @@ export default function OrdersListPage() {
               role="tab"
               aria-selected={tab === id}
               className={[
-                "rounded-full px-4 py-2 text-sm font-semibold",
+                "min-w-0 flex-1 rounded-full px-2 py-2 text-center text-xs font-semibold whitespace-nowrap sm:text-sm",
                 tab === id
                   ? "bg-[var(--rw-accent)] text-white"
                   : "border border-[var(--rw-border)] text-[var(--rw-ink)]",
@@ -224,7 +224,7 @@ export default function OrdersListPage() {
             {sections.map((section) => (
               <section key={section.id}>
                 {section.title ? (
-                  <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--rw-ink-muted)]">
+                  <h2 className="mb-2 text-xs font-semibold text-[var(--rw-ink-muted)]">
                     {section.title}
                   </h2>
                 ) : null}

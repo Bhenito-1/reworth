@@ -289,7 +289,14 @@ export class RiskEngineService {
 
     const score = sumFiredWeights(fired);
     const level = levelFromScore(score, thresholds) as RiskLevel;
-    const flags = fired.map((f) => f.code);
+    const flags = Array.from(
+      new Set([
+        ...fired.map((f) => f.code),
+        ...(listing.riskFlags.includes('swap-response')
+          ? ['swap-response']
+          : []),
+      ]),
+    );
     const forceUnderReview = level === 'HIGH';
 
     await this.prisma.riskAssessment.create({

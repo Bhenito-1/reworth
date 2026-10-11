@@ -3,9 +3,49 @@
  * Uses expo-notifications when available; otherwise registers a mock token in __DEV__.
  */
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { apiFetch } from "./api";
 import { parseDeepLink } from "./notifications";
+
+const PUSH_PROMPT_KEY = "reworth_push_prompt";
+const ESSENTIAL_ONLY_KEY = "reworth_notifications_essential_only";
+
+export type PushPromptChoice = "allow" | "deny" | "later";
+
+export async function getPushPromptChoice(): Promise<PushPromptChoice | null> {
+  try {
+    const value = await AsyncStorage.getItem(PUSH_PROMPT_KEY);
+    if (value === "allow" || value === "deny" || value === "later") return value;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function isEssentialOnlyApplied(): Promise<boolean> {
+  try {
+    return (await AsyncStorage.getItem(ESSENTIAL_ONLY_KEY)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export async function markEssentialOnlyApplied(): Promise<void> {
+  try {
+    await AsyncStorage.setItem(ESSENTIAL_ONLY_KEY, "1");
+  } catch {
+    /* the next launch can apply the preference again */
+  }
+}
+
+export async function setPushPromptChoice(choice: PushPromptChoice): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PUSH_PROMPT_KEY, choice);
+  } catch {
+    /* the prompt can show again next visit */
+  }
+}
 
 export type PushRoute =
   | { kind: "order" | "dispute" | "chat" | "listing"; id: string }
@@ -49,9 +89,25 @@ export function routeFromPushData(data: unknown): PushRoute | null {
 /**
  * Register for permission + persist Expo push token on the API.
  */
-export async function registerDevicePushToken(token: string): Promise<void> {
+export async function registerDevicePushToken(
+  token: string,
+  opts?: { requestPermission?: boolean },
+): Promise<void> {
   let pushToken: string | null = null;
   let platform = Platform.OS;
+  const requestPermission = opts?.requestPermission === true;
+
+  if (!requestPermission) return;
+
+  if (Platform.OS === "web") {
+    pushToken = "ExponentPushToken[web-in-app]";
+    await apiFetch("/devices/push-token", {
+      method: "POST",
+      token,
+      body: { token: pushToken, platform },
+    });
+    return;
+  }
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports

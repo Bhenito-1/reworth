@@ -48,23 +48,23 @@ export function orderStatusLabel(status: string): string {
     case "PAYMENT_PENDING":
       return "Awaiting payment";
     case "FUNDED":
-      return "Payment confirmed (in escrow)";
+      return "Paid — held in escrow";
     case "IN_AUTHENTICATION":
       return "In authentication";
     case "SHIPPED":
-      return "Shipped / out for delivery";
+      return "Out for delivery";
     case "HANDED_OVER":
       return "Handed over";
     case "DELIVERED":
-      return "Delivered — confirm receipt";
+      return "Delivered";
     case "RECEIVED":
-      return "Buyer confirmed receipt";
+      return "Receipt confirmed";
     case "COMPLETED":
       return "Completed — funds released";
     case "CANCELLED":
       return "Cancelled";
     case "DISPUTE_HOLD":
-      return "Dispute hold";
+      return "On hold — dispute";
     case "REFUND_REQUESTED":
       return "Refund requested";
     case "REFUND_ISSUED":

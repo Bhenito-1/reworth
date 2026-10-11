@@ -104,6 +104,10 @@ export function referralStatusLabel(status: string): string {
     case "PENDING":
       return "Pending";
     default:
-      return status.replace(/_/g, " ");
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
   }
 }

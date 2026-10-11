@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ListingCard } from "@reworth/ui-web";
 import { CartIcon } from "../AppNav";
@@ -11,6 +12,7 @@ type Props = {
   listing: PublicListing;
   href?: string;
   favourited?: boolean;
+  note?: string | null;
   onToggleFavourite?: (listing: PublicListing) => void;
   onAddToCart?: (listing: PublicListing) => void;
   className?: string;
@@ -20,12 +22,21 @@ export function DiscoveryListingCard({
   listing,
   href,
   favourited,
+  note,
   onToggleFavourite,
   onAddToCart,
   className = "",
 }: Props) {
   const images = [...listing.images].sort((a, b) => a.sortOrder - b.sortOrder);
-  const src = listingImageUrl(images[0]) ?? "/brand/illustrations/listing-placeholder.png";
+  const photo = listingImageUrl(images[0]);
+  const [photoFailed, setPhotoFailed] = useState(false);
+  useEffect(() => {
+    setPhotoFailed(false);
+  }, [photo]);
+  const src =
+    photo && !photoFailed
+      ? photo
+      : "/brand/illustrations/listing-placeholder.png";
 
   return (
     <div className={`relative h-full ${className}`}>
@@ -39,9 +50,15 @@ export function DiscoveryListingCard({
           community={listing.community || undefined}
           imageSrc={src}
           imageAlt=""
+          onImageError={photo ? () => setPhotoFailed(true) : undefined}
           verified={listing.seller.verificationBadge}
         />
       </Link>
+      {note ? (
+        <span className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-[var(--rw-bg-elevated)]/95 px-2.5 py-1 text-xs font-semibold text-[var(--rw-ink)] shadow-sm">
+          {note}
+        </span>
+      ) : null}
       {onToggleFavourite ? (
         <button
           type="button"
@@ -52,7 +69,7 @@ export function DiscoveryListingCard({
             e.stopPropagation();
             onToggleFavourite(listing);
           }}
-          className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-[var(--rw-bg-elevated)]/95 text-lg shadow-sm border border-[var(--rw-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+          className="absolute right-1.5 top-1.5 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 text-base shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
         >
           <span aria-hidden style={{ color: favourited ? "#DC2626" : "#5C636A" }}>
             {favourited ? "♥" : "♡"}
@@ -68,9 +85,9 @@ export function DiscoveryListingCard({
             e.stopPropagation();
             onAddToCart(listing);
           }}
-          className="absolute right-14 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-[var(--rw-bg-elevated)]/95 text-[var(--rw-ink)] shadow-sm border border-[var(--rw-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+          className="absolute right-1.5 top-11 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 text-[var(--rw-ink)] shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
         >
-          <CartIcon />
+          <CartIcon className="h-4 w-4" />
         </button>
       ) : null}
     </div>

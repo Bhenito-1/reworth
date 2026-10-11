@@ -31,16 +31,22 @@ function fold(value: string): string {
   return value
     .trim()
     .toLowerCase()
-    .replace(/['’.-]/g, '')
-    .replace(/\s+/g, ' ');
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
+/**
+ * Each field is compared only with the same field.
+ * A blank middle name does not match an account that has one.
+ */
 export function namesMatch(entered: LegalName, nibss: LegalName): boolean {
+  const first = fold(entered.firstName);
+  const last = fold(entered.lastName);
+  if (!first || !last) return false;
   return (
-    fold(entered.firstName) === fold(nibss.firstName) &&
+    first === fold(nibss.firstName) &&
     fold(entered.middleName) === fold(nibss.middleName) &&
-    fold(entered.lastName) === fold(nibss.lastName) &&
-    fold(entered.firstName).length > 0 &&
-    fold(entered.lastName).length > 0
+    last === fold(nibss.lastName)
   );
 }

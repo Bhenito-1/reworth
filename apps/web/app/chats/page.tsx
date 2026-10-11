@@ -1,16 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
-import { Chip, EmptyState, Skeleton } from "@reworth/ui-web";
+import { Button, Chip, EmptyState, Modal, Skeleton } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
   conversationThumbUrl,
+  deleteConversation,
   listConversations,
   offerStatusLabel,
+  safeChatPreview,
   type ConversationListItem,
 } from "../../lib/chat";
 import { subscribeChat, type InboxUpdate } from "../../lib/chat-socket";
@@ -20,6 +22,11 @@ export default function ChatsPage() {
   const [items, setItems] = useState<ConversationListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ConversationListItem | null>(
+    null,
+  );
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = getAccessToken();
@@ -116,6 +123,33 @@ export default function ChatsPage() {
     };
   }, []);
 
+  function askDelete(item: ConversationListItem) {
+    setDeleteError(null);
+    setPendingDelete(item);
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const token = getAccessToken();
+    if (!token) {
+      router.replace("/");
+      return;
+    }
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteConversation(token, pendingDelete.id);
+      setItems((prev) => prev.filter((row) => row.id !== pendingDelete.id));
+      setPendingDelete(null);
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError ? err.message : "Could not delete this chat",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div
@@ -177,10 +211,7 @@ export default function ChatsPage() {
               const thumb = conversationThumbUrl(c.listingThumb);
               return (
                 <li key={c.id}>
-                  <Link
-                    href={`/chats/${c.id}`}
-                    className="flex gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-3 transition-colors hover:border-[var(--rw-accent)]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-                  >
+                  <ConversationLink item={c} onLongPress={askDelete}>
                     <div className="h-14 w-14 shrink-0 overflow-hidden rounded-[var(--rw-radius)] bg-[var(--rw-border)]">
                       {thumb ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -216,7 +247,7 @@ export default function ChatsPage() {
                       <p className="mt-0.5 truncate text-sm text-[var(--rw-ink-muted)]">
                         {c.counterpart.displayName}
                         {c.lastMessagePreview
-                          ? ` · ${c.lastMessagePreview}`
+                          ? ` · ${safeChatPreview(c.lastMessagePreview)}`
                           : " · No messages yet"}
                       </p>
                       {c.activeOffer ? (
@@ -233,13 +264,101 @@ export default function ChatsPage() {
                         </div>
                       ) : null}
                     </div>
-                  </Link>
+                  </ConversationLink>
                 </li>
               );
             })}
           </ul>
         )}
       </div>
+
+      <Modal
+        open={Boolean(pendingDelete)}
+        onClose={() => {
+          if (!deleting) setPendingDelete(null);
+        }}
+        title="Delete chat"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-[var(--rw-ink-muted)]">
+            Delete this chat with{" "}
+            {pendingDelete?.counterpart.displayName ?? "this member"} on your
+            side? They still have their messages.
+          </p>
+          {deleteError ? (
+            <p className="text-sm text-[var(--rw-error)]" role="alert">
+              {deleteError}
+            </p>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              disabled={deleting}
+              onClick={() => setPendingDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={deleting}
+              onClick={() => void confirmDelete()}
+            >
+              {deleting ? "Deleting…" : "Delete chat"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </main>
+  );
+}
+
+function ConversationLink({
+  item: c,
+  onLongPress,
+  children,
+}: {
+  item: ConversationListItem;
+  onLongPress: (item: ConversationListItem) => void;
+  children: ReactNode;
+}) {
+  const holdTimer = useRef<number | null>(null);
+  const held = useRef(false);
+
+  function clearHold() {
+    if (holdTimer.current != null) {
+      window.clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  }
+
+  return (
+    <Link
+      href={`/chats/${c.id}`}
+      onPointerDown={() => {
+        held.current = false;
+        clearHold();
+        holdTimer.current = window.setTimeout(() => {
+          held.current = true;
+          onLongPress(c);
+        }, 500);
+      }}
+      onPointerUp={clearHold}
+      onPointerLeave={clearHold}
+      onPointerCancel={clearHold}
+      onClick={(event) => {
+        if (held.current) {
+          event.preventDefault();
+          held.current = false;
+        }
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        clearHold();
+        onLongPress(c);
+      }}
+      className="flex select-none gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-3 transition-colors hover:border-[var(--rw-accent)]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+    >
+      {children}
+    </Link>
   );
 }

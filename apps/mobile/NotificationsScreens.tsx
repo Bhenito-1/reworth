@@ -4,20 +4,20 @@ import {
   FlatList,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { screenBounds, ScrollView } from "./components/BoundScroll";
 import { ApiError, apiFetch } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import {
-  CRITICAL_CATEGORIES,
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_CHANNELS,
   categoryLabel,
+  channelLabel,
   getNotificationPreferences,
   isCriticalCategory,
   clearNotifications,
@@ -25,10 +25,12 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   parseDeepLink,
+  swapListingIdFromDeepLink,
   patchNotificationPreference,
   type AppNotification,
   type NotificationChannel,
 } from "./lib/notifications";
+import { registerDevicePushToken } from "./lib/push";
 import { useColors } from "./theme/ThemeProvider";
 import { colors } from "./theme/tokens";
 
@@ -165,10 +167,32 @@ export function NotificationsModal({
     }
     const parsed = parseDeepLink(n.deepLink);
     if (parsed?.kind === "order" && parsed.id) onOpenOrder?.(parsed.id);
+    const swapListingId = swapListingIdFromDeepLink(n.deepLink);
+    if (parsed?.kind === "order" && parsed.id) onOpenOrder?.(parsed.id);
     else if (parsed?.kind === "dispute" && parsed.id) onOpenDispute?.(parsed.id);
     else if (parsed?.kind === "chat" && parsed.id) onOpenChat?.(parsed.id);
-    else if (parsed?.kind === "listing" && parsed.id) onOpenListing?.(parsed.id);
-    else if (parsed?.kind === "selling") onOpenSelling?.(parsed.id);
+    else if (swapListingId) {
+      const access = token ?? (await getAccessToken());
+      if (access) {
+        try {
+          const conversations = await listConversations(access);
+          const match = conversations
+            .filter((conversation) => conversation.listingId === swapListingId)
+            .sort(
+              (a, b) =>
+                Date.parse(b.lastMessageAt ?? "") -
+                Date.parse(a.lastMessageAt ?? ""),
+            )[0];
+          if (match) {
+            onOpenChat?.(match.id);
+            return;
+          }
+        } catch {
+          /* open the listing if the chat cannot be found */
+        }
+      }
+      onOpenListing?.(swapListingId);
+    } else if (parsed?.kind === "listing" && parsed.id) onOpenListing?.(parsed.id);
   }
 
   async function togglePref(
@@ -186,6 +210,9 @@ export function NotificationsModal({
     setPrefs((p) => ({ ...p, [key]: enabled }));
     try {
       await patchNotificationPreference(token, { category, channel, enabled });
+      if (channel === "PUSH" && enabled) {
+        await registerDevicePushToken(token, { requestPermission: true });
+      }
     } catch (err) {
       setPrefs((p) => ({ ...p, [key]: !enabled }));
       setToast(err instanceof ApiError ? err.message : "Save failed");
@@ -307,6 +334,7 @@ export function NotificationsModal({
             <FlatList
               data={items}
               keyExtractor={(n) => n.id}
+              style={screenBounds}
               contentContainerStyle={styles.pad}
               ListEmptyComponent={
                 <Text style={[styles.muted, { color: theme.muted }]}>
@@ -373,8 +401,8 @@ export function NotificationsModal({
               Categories × channels
             </Text>
             <Text style={styles.muted}>
-              Critical: {Array.from(CRITICAL_CATEGORIES).join(", ")} — in-app
-              always on.
+              Orders, payments, delivery, and disputes stay on in the app.
+              Turn the other categories back on here whenever you want.
             </Text>
             {NOTIFICATION_CATEGORIES.map((cat) => (
               <View key={cat} style={styles.prefBlock}>
@@ -385,7 +413,7 @@ export function NotificationsModal({
                     ch === "IN_APP" && isCriticalCategory(cat);
                   return (
                     <View key={key} style={styles.prefRow}>
-                      <Text style={styles.prefCh}>{ch}</Text>
+                      <Text style={styles.prefCh}>{channelLabel(ch)}</Text>
                       <Switch
                         value={prefs[key] !== false}
                         disabled={locked}

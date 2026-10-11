@@ -6,9 +6,9 @@ export type SwapProposal = {
   listingId: string;
   proposerId: string;
   offeredListingId: string;
-  cashComponentKobo: number;
   note?: string | null;
   status: string;
+  conversationId?: string | null;
   expiresAt: string;
   offeredListing?: PublicListing;
   listing?: PublicListing;
@@ -25,10 +25,25 @@ export type GiveawayClaim = {
   claimant?: { id: string; profile?: { displayName?: string } };
 };
 
+export async function startSwapOffer(
+  token: string,
+  listingId: string,
+): Promise<{ listingId: string }> {
+  return apiFetch(`/listings/${listingId}/swap-offer`, {
+    method: "POST",
+    token,
+  });
+}
+
 export async function createSwapProposal(
   token: string,
   listingId: string,
-  body: { offeredListingId: string; cashComponentKobo?: number; note?: string },
+  body: {
+    offeredListingId: string;
+    title?: string;
+    description?: string;
+    note?: string;
+  },
 ): Promise<SwapProposal> {
   return apiFetch(`/listings/${listingId}/swap-proposals`, {
     method: "POST",
@@ -44,6 +59,68 @@ export async function listSwapProposals(
   return apiFetch(`/listings/${listingId}/swap-proposals`, { token });
 }
 
+export type SwapCardItem = {
+  title: string;
+  imageUrl?: string | null;
+};
+
+export type SwapCardOrder = {
+  payerId: string;
+  orderId: string;
+  deliveryFeeKobo?: number;
+  receive?: SwapCardItem;
+  send?: SwapCardItem;
+};
+
+export function parseSwapProposalCard(body: string | null): {
+  swapProposalId: string;
+  kind?: string;
+  title?: string;
+  description?: string;
+  imageUrls: string[];
+  orders: SwapCardOrder[];
+} | null {
+  if (!body) return null;
+  try {
+    const raw = JSON.parse(body) as Record<string, unknown>;
+    const id = String(raw.swapProposalId ?? "");
+    if (!id) return null;
+    const imageUrls = Array.isArray(raw.imageUrls)
+      ? raw.imageUrls.filter((url): url is string => typeof url === "string")
+      : [];
+    const orders = Array.isArray(raw.orders)
+      ? raw.orders.flatMap((row) => {
+          if (!row || typeof row !== "object") return [];
+          const item = row as Record<string, unknown>;
+          if (typeof item.orderId !== "string" || typeof item.payerId !== "string") {
+            return [];
+          }
+          return [
+            {
+              payerId: item.payerId,
+              orderId: item.orderId,
+              deliveryFeeKobo:
+                typeof item.deliveryFeeKobo === "number"
+                  ? item.deliveryFeeKobo
+                  : undefined,
+            },
+          ];
+        })
+      : [];
+    return {
+      swapProposalId: id,
+      kind: typeof raw.kind === "string" ? raw.kind : undefined,
+      title: typeof raw.title === "string" ? raw.title : undefined,
+      description:
+        typeof raw.description === "string" ? raw.description : undefined,
+      imageUrls,
+      orders,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function acceptSwapProposal(token: string, id: string) {
   return apiFetch(`/swap-proposals/${id}/accept`, { method: "POST", token });
 }
@@ -52,11 +129,36 @@ export async function rejectSwapProposal(token: string, id: string) {
   return apiFetch(`/swap-proposals/${id}/reject`, { method: "POST", token });
 }
 
+export async function cancelSwapProposal(token: string, id: string) {
+  return apiFetch(`/swap-proposals/${id}/cancel`, { method: "POST", token });
+}
+
+export type GiftDeliveryQuote = {
+  deliveryFeeKobo: number;
+  distanceKm: number;
+  area: string;
+};
+
+export function getGiftDeliveryQuote(
+  token: string,
+  listingId: string,
+): Promise<GiftDeliveryQuote> {
+  return apiFetch(`/listings/${listingId}/gift-delivery-quote`, { token });
+}
+
 export async function createGiveawayClaim(
   token: string,
   listingId: string,
   note?: string,
-): Promise<GiveawayClaim> {
+): Promise<{
+  claim: GiveawayClaim;
+  order: {
+    id: string;
+    deliveryFeeKobo: number;
+    swapFeeKobo: number;
+    totalKobo: number;
+  };
+}> {
   return apiFetch(`/listings/${listingId}/giveaway-claims`, {
     method: "POST",
     token,

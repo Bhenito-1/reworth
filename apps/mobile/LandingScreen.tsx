@@ -2,7 +2,8 @@
  * Guest entry. Paper on top, ink panel below.
  */
 
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { colors, radius, space, tap, type as typeScale } from "./theme/tokens";
 
 const WAYS = [

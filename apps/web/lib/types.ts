@@ -64,7 +64,7 @@ export type PublicListingSeller = {
   responseMinutes?: number | null;
 };
 
-export type SellingModeValue = "SELL" | "SWAP" | "SWAP_CASH" | "GIVE_AWAY";
+export type SellingModeValue = "SELL" | "SWAP" | "GIVE_AWAY";
 
 export type ItemConditionValue =
   | "NEW"
@@ -147,8 +147,6 @@ export type PublicListing = {
   authenticationStatus?: AuthenticationStatusValue | null;
   certificateId?: string | null;
   authenticatedAt?: string | null;
-  /** Phase 3.1 — Instant Buy (platform-fulfilled BIN). */
-  instantBuyEligible?: boolean;
   /** Phase 3.2 — schedule circular hand-off after N unsold days. */
   donateIfUnsoldDays?: number | null;
   /** Phase 3.3 — monetization badges */
@@ -275,8 +273,9 @@ export type CreateListingBody = {
   title?: string;
   description?: string;
   categoryId?: string;
+  categoryName?: string | null;
   subcategoryId?: string;
-  brand?: string;
+  brand?: string | null;
   model?: string;
   condition?: ItemConditionValue | string;
   ageText?: string;
@@ -595,31 +594,6 @@ export type ValuationResponse = {
   listingId?: string | null;
   result: ValuationCard;
   createdAt?: string;
-};
-
-export type InstantBuyFulfilmentStatusValue =
-  | "PENDING_PICKUP"
-  | "PICKED_UP"
-  | "IN_TRANSIT"
-  | "DELIVERED"
-  | "CONFIRMED"
-  | "SLA_BREACHED"
-  | "REFUNDED"
-  | "CANCELLED"
-  | string;
-
-export type InstantBuyFulfilment = {
-  id: string;
-  orderId: string;
-  listingId: string;
-  status: InstantBuyFulfilmentStatusValue;
-  slaDeadlineAt: string;
-  pickedUpAt?: string | null;
-  deliveredAt?: string | null;
-  confirmedAt?: string | null;
-  refundedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
 };
 
 export type ConsignmentStatusValue =

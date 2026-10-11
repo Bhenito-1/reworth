@@ -62,6 +62,7 @@ export class SavedSearchAlertsService {
         where: {
           status: 'LIVE',
           quantityAvailable: { gt: 0 },
+          NOT: { riskFlags: { has: 'swap-response' } },
           city,
           OR: [
             { publishedAt: { gte: since } },

@@ -25,6 +25,7 @@ export type VerifyPayoutResult =
       ok: false;
       reason: "ACCOUNT_NOT_FOUND" | "NAME_MISMATCH";
       nibssName?: LegalName;
+      message?: string;
     };
 
 export const FALLBACK_BANKS: PayoutBank[] = [

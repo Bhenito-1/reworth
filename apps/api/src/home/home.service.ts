@@ -150,8 +150,16 @@ export class HomeService {
       where: {
         ...liveWhereBase,
         quantityAvailable: { gt: 0 },
+        NOT: { riskFlags: { has: 'swap-response' } },
         seller: { status: 'ACTIVE' },
-        ...(query.community ? { community: query.community } : {}),
+        ...(query.community
+          ? {
+              community: {
+                equals: query.community,
+                mode: 'insensitive' as const,
+              },
+            }
+          : {}),
       },
       include: {
         ...listingInclude,
@@ -163,22 +171,6 @@ export class HomeService {
       orderBy: { publishedAt: 'desc' },
       take: 60,
     });
-
-    // Empty preferred community → show city-wide so Home never looks dead.
-    if (query.community && live.length === 0) {
-      live = await this.prisma.listing.findMany({
-        where: liveWhereBase,
-        include: {
-          ...listingInclude,
-          events: {
-            where: { type: { in: ['VIEWED', 'SAVED', 'PRICE_CHANGED'] } },
-            select: { type: true, payload: true },
-          },
-        },
-        orderBy: { publishedAt: 'desc' },
-        take: 60,
-      });
-    }
 
     type Row = (typeof live)[number] & { distanceKm?: number | null };
 
@@ -272,10 +264,18 @@ export class HomeService {
         .slice(0, 12);
     }
 
+    if (query.community) {
+      const wanted = query.community.trim().toLowerCase();
+      recommended = recommended.filter(
+        (item) => (item.community ?? '').trim().toLowerCase() === wanted,
+      );
+    }
+
     const movingSaleItems = await this.movingSales.topForHome({
       lat: query.lat,
       lng: query.lng,
       radiusKm: query.radiusKm,
+      community: query.community,
       limit: 12,
     });
 

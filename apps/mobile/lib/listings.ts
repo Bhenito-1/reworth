@@ -1,9 +1,44 @@
+import { Platform } from "react-native";
 import { apiFetch } from "./api";
 import type { PriceIntelligence, PublicListing } from "./types";
 
-/** Companion web URL for share sheets / WhatsApp (opens in app via deep link). */
+function configuredWebOrigin(): string {
+  const raw = (
+    process.env.EXPO_PUBLIC_WEB_URL ??
+    process.env.NEXT_PUBLIC_WEB_URL ??
+    ""
+  ).trim();
+  return raw.replace(/\/$/, "");
+}
+
+/**
+ * Public listing page. Uses EXPO_PUBLIC_WEB_URL when set (the deployed site).
+ * On the website itself, uses that site's address. Local app builds use the
+ * local web app until the public address is configured.
+ */
 export function listingShareUrl(id: string): string {
-  return `https://reworth.ng/listings/${encodeURIComponent(id)}`;
+  const path = `/listings/${encodeURIComponent(id)}`;
+  const configured = configuredWebOrigin();
+  if (configured) return `${configured}${path}`;
+  if (typeof window !== "undefined" && window.location?.origin) {
+    const origin = window.location.origin.replace(/\/$/, "");
+    const localApp = /localhost:8081|127\.0\.0\.1:8081/.test(origin);
+    if (!localApp) return `${origin}${path}`;
+  }
+  return `http://localhost:3000${path}`;
+}
+
+export function listingShareLinks(id: string, title: string) {
+  const url = listingShareUrl(id);
+  const text = `${title} on ReWorth`;
+  const encoded = encodeURIComponent(`${text} ${url}`);
+  return {
+    url,
+    message: `${text}\n${url}`,
+    whatsapp: `https://wa.me/?text=${encoded}`,
+    facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`,
+    x: `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`,
+  };
 }
 
 export function listingDeepLink(id: string): string {
@@ -37,12 +72,18 @@ export type MineListing = {
   reviewState: string;
   reviewLabel: string;
   reviewNote: string | null;
+  canRemove?: boolean;
+  hasAcceptedOrder?: boolean;
 };
 
 export async function listMine(
   token: string,
 ): Promise<{ items: MineListing[] }> {
   return apiFetch<{ items: MineListing[] }>("/listings/mine", { token });
+}
+
+export async function removeListing(token: string, id: string) {
+  return apiFetch(`/listings/${id}`, { method: "DELETE", token });
 }
 
 export async function browseListings(
@@ -132,15 +173,24 @@ export async function uploadListingPhotoDirect(
     uri: string;
     name: string;
     type: string;
+    /** Real file from the web photo picker. A `{ uri, name, type }` object is not a file in the browser. */
+    file?: Blob;
   },
   sortOrder: number,
 ): Promise<{ key: string; status: string }> {
   const form = new FormData();
-  form.append("file", {
-    uri: file.uri,
-    name: file.name || "photo.jpg",
-    type: file.type || "image/jpeg",
-  } as unknown as Blob);
+  const name = file.name || "photo.jpg";
+  if (Platform.OS === "web") {
+    const blob =
+      file.file && file.file.size > 0 ? file.file : await blobFromUri(file.uri);
+    form.append("file", namedFile(blob, name));
+  } else {
+    form.append("file", {
+      uri: file.uri,
+      name,
+      type: file.type || "image/jpeg",
+    } as unknown as Blob);
+  }
   form.append("listingId", listingId);
   form.append("sortOrder", String(sortOrder));
 
@@ -153,6 +203,36 @@ export async function uploadListingPhotoDirect(
     },
   );
   return { key: image.originalKey, status: image.status };
+}
+
+function namedFile(blob: Blob, name: string): Blob {
+  const FileCtor = (
+    globalThis as {
+      File?: new (
+        bits: Blob[],
+        filename: string,
+        options?: { type?: string },
+      ) => Blob;
+    }
+  ).File;
+  if (!FileCtor) return blob;
+  return new FileCtor([blob], name, {
+    type: blob.type && blob.type !== "application/octet-stream"
+      ? blob.type
+      : "image/jpeg",
+  });
+}
+
+async function blobFromUri(uri: string): Promise<Blob> {
+  const response = await fetch(uri);
+  if (!response.ok) {
+    throw new Error("Could not read that photo. Add it again.");
+  }
+  const blob = await response.blob();
+  if (!blob.size) {
+    throw new Error("That photo was empty. Add it again.");
+  }
+  return blob;
 }
 
 export async function presignMedia(

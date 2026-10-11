@@ -13,6 +13,12 @@ import {
 } from "../../lib/auth";
 import { areaChoices, FALLBACK_AREAS, type AreaChoice } from "../../lib/areas";
 import { brandPublic } from "../../lib/brand";
+import { verifyNin } from "../../lib/identity";
+import {
+  getPayoutSetup,
+  payoutDisplayName,
+  type PayoutAccountView,
+} from "../../lib/payout";
 import { getRegion, listRegions, type RegionCity } from "../../lib/region";
 import type { DeviceRow, MeResponse } from "../../lib/types";
 
@@ -24,10 +30,8 @@ const ACCOUNT_LINKS: {
   { href: "/ask", label: "Ask ReWorth", icon: "actionChat" },
   { href: "/worth", label: "Worth", icon: "actionOffer" },
   { href: "/consign", label: "Consign", icon: "actionDelivery" },
-  { href: "/pickup", label: "Pickup", icon: "actionLocation" },
   { href: "/account/communities", label: "Communities", icon: "invite" },
   { href: "/sell/analytics", label: "Seller analytics", icon: "actionSell" },
-  { href: "/inventory", label: "Inventory", icon: "actionSell" },
   { href: "/pro", label: "Pro seller", icon: "verifiedSeller" },
   { href: "/corporate", label: "Corporate", icon: "movingSale" },
   { href: "/partner", label: "Partner", icon: "identityChecked" },
@@ -89,6 +93,10 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [payout, setPayout] = useState<PayoutAccountView | null>(null);
+  const [nin, setNin] = useState("");
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = getAccessToken();
@@ -99,12 +107,17 @@ export default function AccountPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [profile, deviceRes, regions] = await Promise.all([
+      const [profile, deviceRes, regions, payoutSetup] = await Promise.all([
         apiFetch<MeResponse>("/me", { token }),
         apiFetch<{ devices: DeviceRow[] }>("/me/devices", { token }),
         listRegions().catch(() => [] as RegionCity[]),
+        getPayoutSetup(token).catch(() => ({
+          account: null,
+          nameEnquiryMode: "mock" as const,
+        })),
       ]);
       setMe(profile);
+      setPayout(payoutSetup.account);
       setDisplayName(profile.profile?.displayName ?? "");
       const pref = profile.profile?.preferredCommunity?.trim() ?? "";
       setCommunity(pref);
@@ -159,6 +172,52 @@ export default function AccountPage() {
     };
   }, [city]);
 
+  const savedName = (me?.profile?.displayName ?? "").trim();
+  const savedCommunity = (me?.profile?.preferredCommunity ?? "").trim();
+  const areaChanged =
+    community.trim().length > 0 && community.trim() !== savedCommunity;
+  const profileDirty = displayName.trim() !== savedName || areaChanged;
+
+  async function onVerifyNin(e: FormEvent) {
+    e.preventDefault();
+    setVerifyError(null);
+    const token = getAccessToken();
+    if (!token || me?.verificationLevels.L3_IDENTITY) return;
+    const digits = nin.replace(/\D/g, "");
+    if (!/^\d{11}$/.test(digits)) {
+      setVerifyError("Enter your 11-digit NIN.");
+      return;
+    }
+    setVerifyBusy(true);
+    try {
+      const result = await verifyNin(token, digits);
+      setNin("");
+      if (!result.identityVerifiedBadge) {
+        setVerifyError("Identity check was not approved.");
+        return;
+      }
+      setMe((current) =>
+        current
+          ? {
+              ...current,
+              identityVerifiedBadge: true,
+              verificationLevels: {
+                ...current.verificationLevels,
+                L3_IDENTITY: true,
+              },
+            }
+          : current,
+      );
+    } catch (err) {
+      setNin("");
+      setVerifyError(
+        err instanceof ApiError ? err.message : "Identity check failed.",
+      );
+    } finally {
+      setVerifyBusy(false);
+    }
+  }
+
   async function onSave(e: FormEvent) {
     e.preventDefault();
     setSaveError(null);
@@ -166,17 +225,10 @@ export default function AccountPage() {
     const token = getAccessToken();
     if (!token) return;
 
+    if (!profileDirty) return;
     const name = displayName.trim();
     if (!name) {
       setSaveError("Display name is required");
-      return;
-    }
-    if (!city) {
-      setSaveError("Select your state");
-      return;
-    }
-    if (!community || !areas.some((area) => area.value === community)) {
-      setSaveError("Select a preferred area in that state");
       return;
     }
 
@@ -187,7 +239,9 @@ export default function AccountPage() {
         token,
         body: {
           displayName: name,
-          preferredCommunity: community,
+          ...(community.trim()
+            ? { preferredCommunity: community.trim() }
+            : {}),
         },
       });
       setMe(updated);
@@ -321,31 +375,18 @@ export default function AccountPage() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className="flex items-center gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-3 text-sm font-semibold text-[var(--rw-ink)] transition hover:border-[var(--rw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                  className="flex min-w-0 items-center gap-2 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-3 text-sm font-semibold leading-tight text-[var(--rw-ink)] transition hover:border-[var(--rw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={brandPublic[item.icon]}
                     alt=""
-                    className="h-7 w-7 object-contain"
+                    className="h-7 w-7 shrink-0 object-contain"
                   />
-                  <span>{item.label}</span>
+                  <span className="min-w-0">{item.label}</span>
                 </Link>
               ))}
             </nav>
-
-            <section aria-labelledby="verify-heading">
-              <h2
-                id="verify-heading"
-                className="mb-3 text-lg font-semibold tracking-tight"
-              >
-                Verification
-              </h2>
-              <VerificationBadges
-                levels={me.verificationLevels}
-                identityBadge={me.identityVerifiedBadge}
-              />
-            </section>
 
             <section aria-labelledby="profile-heading">
               <h2
@@ -417,12 +458,92 @@ export default function AccountPage() {
                 <Button
                   type="submit"
                   variant="primary"
-                  disabled={saving}
+                  disabled={saving || !profileDirty}
                   aria-busy={saving}
                 >
                   {saving ? "Saving…" : "Save changes"}
                 </Button>
               </form>
+            </section>
+
+            <section aria-labelledby="verify-heading">
+              <h2
+                id="verify-heading"
+                className="mb-3 text-lg font-semibold tracking-tight"
+              >
+                Verification
+              </h2>
+              <VerificationBadges
+                levels={me.verificationLevels}
+                identityBadge={me.identityVerifiedBadge}
+              />
+              <div className="mt-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6">
+                {me.verificationLevels.L3_IDENTITY ? (
+                  <p className="text-sm text-[var(--rw-ink)]">
+                    Your NIN is verified. You are an L3 member.
+                  </p>
+                ) : (
+                  <form onSubmit={onVerifyNin} className="flex flex-col gap-4" noValidate>
+                    <Input
+                      label="National Identification Number (NIN)"
+                      name="nin"
+                      type="password"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      maxLength={11}
+                      value={nin}
+                      onChange={(e) => setNin(e.target.value.replace(/\D/g, "").slice(0, 11))}
+                      disabled={verifyBusy}
+                      hint="11 digits. ReWorth keeps a hash of this number, not the number itself."
+                    />
+                    {verifyError ? (
+                      <p className="text-sm text-[var(--rw-error)]" role="alert">
+                        {verifyError}
+                      </p>
+                    ) : null}
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      disabled={verifyBusy || nin.length !== 11}
+                      aria-busy={verifyBusy}
+                    >
+                      {verifyBusy ? "Checking…" : "Verify identity"}
+                    </Button>
+                  </form>
+                )}
+              </div>
+            </section>
+
+            <section aria-labelledby="bank-heading">
+              <h2
+                id="bank-heading"
+                className="mb-4 text-lg font-semibold tracking-tight"
+              >
+                Bank details
+              </h2>
+              {payout ? (
+                <dl className="grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6 text-sm">
+                  <div>
+                    <dt className="text-[var(--rw-ink-muted)]">Name on account</dt>
+                    <dd className="mt-0.5 font-medium">{payoutDisplayName(payout)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[var(--rw-ink-muted)]">Bank</dt>
+                    <dd className="mt-0.5 font-medium">{payout.bankName}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[var(--rw-ink-muted)]">Account number</dt>
+                    <dd className="mt-0.5 font-medium tracking-wide">
+                      {payout.accountNumberMasked}
+                    </dd>
+                  </div>
+                </dl>
+              ) : (
+                <EmptyState
+                  title="No bank account yet"
+                  description="Bank details appear here after you verify a payout account while selling."
+                />
+              )}
             </section>
 
             <section aria-labelledby="devices-heading">
