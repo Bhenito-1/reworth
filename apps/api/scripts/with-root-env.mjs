@@ -89,17 +89,21 @@ function resolveSpawn(command, commandArgs) {
   return { file: command, args: commandArgs, shell: false };
 }
 
-if (!loadEnvFile(rootEnv)) {
+if (loadEnvFile(rootEnv)) {
+  try {
+    copyFileSync(rootEnv, apiEnv);
+  } catch (err) {
+    console.warn(`[with-root-env] Could not mirror .env to apps/api: ${err.message}`);
+  }
+} else if (!process.env.DATABASE_URL) {
   console.error(
     `[with-root-env] Missing ${rootEnv}\nCopy .env.example → .env at the monorepo root (reworth/).`,
   );
   process.exit(1);
-}
-
-try {
-  copyFileSync(rootEnv, apiEnv);
-} catch (err) {
-  console.warn(`[with-root-env] Could not mirror .env to apps/api: ${err.message}`);
+} else {
+  console.log(
+    '[with-root-env] No root .env file; using environment variables already set.',
+  );
 }
 
 const args = process.argv.slice(2);
