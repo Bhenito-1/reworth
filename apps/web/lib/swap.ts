@@ -43,6 +43,7 @@ export async function createSwapProposal(
     title?: string;
     description?: string;
     note?: string;
+    deliveryOn?: string;
   },
 ): Promise<SwapProposal> {
   return apiFetch(`/listings/${listingId}/swap-proposals`, {
@@ -77,6 +78,7 @@ export function parseSwapProposalCard(body: string | null): {
   kind?: string;
   title?: string;
   description?: string;
+  deliveryOn?: string;
   imageUrls: string[];
   orders: SwapCardOrder[];
 } | null {
@@ -113,6 +115,8 @@ export function parseSwapProposalCard(body: string | null): {
       title: typeof raw.title === "string" ? raw.title : undefined,
       description:
         typeof raw.description === "string" ? raw.description : undefined,
+      deliveryOn:
+        typeof raw.deliveryOn === "string" ? raw.deliveryOn : undefined,
       imageUrls,
       orders,
     };

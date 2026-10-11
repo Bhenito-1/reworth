@@ -134,14 +134,35 @@ export function SwapProposalModal({
           <input
             type="date"
             value={deliveryOn}
-              min={todayIso()}
+            min={todayIso()}
             onChange={(event) => setDeliveryOn(event.target.value)}
-                alt=""
-                className="h-full w-full object-cover"
-              />
-            </button>
-          ))}
-        </div>
+            className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 font-normal"
+          />
+        </label>
+        {photos.length > 0 ? (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              {photos.map((photo) => (
+                <button
+                  key={photo.id}
+                  type="button"
+                  onClick={() => removePhoto(photo.id)}
+                  className="relative aspect-square overflow-hidden rounded-[var(--rw-radius)]"
+                  aria-label="Remove photo"
+                >
+                  <img
+                    src={photo.previewUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-[var(--rw-ink-muted)]">
+              Tap a photo to remove it.
+            </p>
+          </>
+        ) : null}
         <input
           ref={fileRef}
           type="file"
