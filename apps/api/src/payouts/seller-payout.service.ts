@@ -1,12 +1,7 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { findBank } from './banks';
-import { namesMatch, splitAccountName, type LegalName } from './name-match';
-import {
-  ACCOUNT_NAME_ENQUIRY,
-  type AccountNameEnquiry,
-} from './nibss-name-enquiry.provider';
+import type { LegalName } from './name-match';
 import type { VerifyPayoutAccountDto } from './dto/verify-payout-account.dto';
 
 export type PayoutAccountView = {
@@ -19,14 +14,7 @@ export type PayoutAccountView = {
   verifiedAt: string;
 };
 
-export type VerifyPayoutResponse =
-  | { ok: true; account: PayoutAccountView }
-  | {
-      ok: false;
-      reason: 'ACCOUNT_NOT_FOUND' | 'NAME_MISMATCH';
-      nibssName?: LegalName;
-      message?: string;
-    };
+export type VerifyPayoutResponse = { ok: true; account: PayoutAccountView };
 
 function maskAccount(accountNumber: string): string {
   const digits = accountNumber.replace(/\D/g, '');
@@ -35,20 +23,7 @@ function maskAccount(accountNumber: string): string {
 
 @Injectable()
 export class SellerPayoutService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-    @Inject(ACCOUNT_NAME_ENQUIRY)
-    private readonly accountNames: AccountNameEnquiry,
-  ) {}
-
-  nameEnquiryMode(): 'mock' | 'paystack' {
-    const mode =
-      this.config.get<string>('ACCOUNT_NAME_PROVIDER') ??
-      this.config.get<string>('NIBSS_NAME_ENQUIRY_PROVIDER') ??
-      'mock';
-    return mode === 'paystack' ? 'paystack' : 'mock';
-  }
+  constructor(private readonly prisma: PrismaService) {}
 
   async current(userId: string): Promise<PayoutAccountView | null> {
     const row = await this.prisma.sellerPayoutAccount.findUnique({
@@ -95,22 +70,9 @@ export class SellerPayoutService {
       throw new BadRequestException('Enter your first and last name.');
     }
 
-    const enquiry = await this.accountNames.enquire({
-      accountNumber: dto.accountNumber,
-      institutionCode: dto.bankCode,
-    });
-    if (!enquiry.found) {
-      return {
-        ok: false,
-        reason: 'ACCOUNT_NOT_FOUND',
-        message: enquiry.message,
-      };
-    }
-
-    const nibssName = splitAccountName(enquiry.accountName);
-    if (!namesMatch(entered, nibssName)) {
-      return { ok: false, reason: 'NAME_MISMATCH', nibssName };
-    }
+    const enteredName = [entered.firstName, entered.middleName, entered.lastName]
+      .filter(Boolean)
+      .join(' ');
 
     const saved = await this.prisma.sellerPayoutAccount.upsert({
       where: { userId },
@@ -122,7 +84,7 @@ export class SellerPayoutService {
         firstName: entered.firstName,
         middleName: entered.middleName,
         lastName: entered.lastName,
-        nibssAccountName: enquiry.accountName,
+        nibssAccountName: enteredName,
         verifiedAt: new Date(),
       },
       update: {
@@ -132,7 +94,7 @@ export class SellerPayoutService {
         firstName: entered.firstName,
         middleName: entered.middleName,
         lastName: entered.lastName,
-        nibssAccountName: enquiry.accountName,
+        nibssAccountName: enteredName,
         verifiedAt: new Date(),
       },
     });

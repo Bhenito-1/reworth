@@ -111,10 +111,7 @@ export default function AccountPage() {
         apiFetch<MeResponse>("/me", { token }),
         apiFetch<{ devices: DeviceRow[] }>("/me/devices", { token }),
         listRegions().catch(() => [] as RegionCity[]),
-        getPayoutSetup(token).catch(() => ({
-          account: null,
-          nameEnquiryMode: "mock" as const,
-        })),
+        getPayoutSetup(token).catch(() => ({ account: null })),
       ]);
       setMe(profile);
       setPayout(payoutSetup.account);
@@ -541,7 +538,7 @@ export default function AccountPage() {
               ) : (
                 <EmptyState
                   title="No bank account yet"
-                  description="Bank details appear here after you verify a payout account while selling."
+                  description="Bank details appear here after you save a payout account while selling."
                 />
               )}
             </section>

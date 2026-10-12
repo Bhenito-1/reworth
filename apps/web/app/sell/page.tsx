@@ -23,7 +23,6 @@ import {
   verifyPayoutAccount,
   type PayoutAccountView,
   type PayoutBank,
-  type LegalName,
 } from "../../lib/payout";
 import {
   areaChoices,
@@ -150,16 +149,12 @@ export default function SellPage() {
   const [payoutBanks, setPayoutBanks] = useState<PayoutBank[]>([
     ...FALLBACK_BANKS,
   ]);
-  const [nameEnquiryMode, setNameEnquiryMode] = useState<"mock" | "paystack">(
-    "mock",
-  );
   const [bankEditing, setBankEditing] = useState(false);
   const [bankCode, setBankCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [legalFirst, setLegalFirst] = useState("");
   const [legalMiddle, setLegalMiddle] = useState("");
   const [legalLast, setLegalLast] = useState("");
-  const [nibssName, setNibssName] = useState<LegalName | null>(null);
   const [cities, setCities] = useState<RegionCity[]>([]);
   const [city, setCity] = useState("");
 
@@ -584,15 +579,11 @@ export default function SellPage() {
     if (!token) return;
     let cancelled = false;
     void Promise.all([
-      getPayoutSetup(token).catch(() => ({
-        account: null,
-        nameEnquiryMode: "mock" as const,
-      })),
+      getPayoutSetup(token).catch(() => ({ account: null })),
       listPayoutBanks(token).catch(() => [...FALLBACK_BANKS]),
     ]).then(([setup, banks]) => {
       if (cancelled) return;
       setPayoutAccount(setup.account);
-      setNameEnquiryMode(setup.nameEnquiryMode);
       setPayoutBanks(banks);
       setBankEditing(!setup.account);
     });
@@ -603,13 +594,11 @@ export default function SellPage() {
 
   function goBack(next: SellStep) {
     setError(null);
-    setNibssName(null);
     setStep(next);
   }
 
-  async function verifyBank() {
+  async function saveBank() {
     setError(null);
-    setNibssName(null);
     if (!/^\d{10}$/.test(accountNumber)) {
       setError("Enter a 10-digit account number.");
       return;
@@ -632,23 +621,11 @@ export default function SellPage() {
         middleName: legalMiddle.trim(),
         lastName: legalLast.trim(),
       });
-      if (!result.ok) {
-        if (result.reason === "NAME_MISMATCH" && result.nibssName) {
-          setNibssName(result.nibssName);
-          setError("The name on this account does not match the name you entered.");
-        } else {
-          setError(
-            result.message ||
-              "We could not find that account at the selected bank.",
-          );
-        }
-        return;
-      }
       setPayoutAccount(result.account);
       setBankEditing(false);
       setStep("publish");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not verify the account");
+      setError(err instanceof ApiError ? err.message : "Could not save the account");
     } finally {
       setBusy(false);
     }
@@ -1275,14 +1252,12 @@ export default function SellPage() {
                 Where should we pay you?
               </h1>
               <p className="mt-3 text-[var(--rw-ink-muted)]">
-                We check the account with Paystack and read the name on it.
-                That name has to match the legal name you enter, in this
-                order: first, middle, last.
+                Add the bank account we should pay you into.
               </p>
               {payoutAccount && !bankEditing ? (
                 <div className="mt-8 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-5">
                   <p className="text-sm font-medium text-[var(--rw-ink-muted)]">
-                    Verified account
+                    Saved account
                   </p>
                   <p className="mt-2 text-lg font-semibold">
                     {payoutDisplayName(payoutAccount)}
@@ -1302,7 +1277,6 @@ export default function SellPage() {
                       variant="secondary"
                       className="w-full"
                       onClick={() => {
-                        setNibssName(null);
                         setError(null);
                         setBankEditing(true);
                       }}
@@ -1313,12 +1287,6 @@ export default function SellPage() {
                 </div>
               ) : (
                 <div className="mt-8 flex flex-col gap-5">
-                  {nameEnquiryMode === "mock" ? (
-                    <p className="rounded-[var(--rw-radius)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm text-[var(--rw-ink-muted)]">
-                      Local check without Paystack: GTBank account 0123456789 is
-                      Adewale Chinedu Okonkwo.
-                    </p>
-                  ) : null}
                   <label className="block text-sm font-medium">
                     Bank name
                     <select
@@ -1353,7 +1321,7 @@ export default function SellPage() {
                     label="Middle name"
                     value={legalMiddle}
                     onChange={(e) => setLegalMiddle(e.target.value)}
-                    hint="Leave blank if the account has no middle name"
+                    hint="Optional"
                     autoComplete="additional-name"
                   />
                   <Input
@@ -1362,11 +1330,6 @@ export default function SellPage() {
                     onChange={(e) => setLegalLast(e.target.value)}
                     autoComplete="family-name"
                   />
-                  {nibssName ? (
-                    <p className="text-sm text-[var(--rw-ink-muted)]" role="status">
-                      Name on the account: {payoutDisplayName(nibssName)}
-                    </p>
-                  ) : null}
                 </div>
               )}
               {error ? (
@@ -1388,9 +1351,9 @@ export default function SellPage() {
                     variant="primary"
                     className="flex-1"
                     disabled={busy}
-                    onClick={() => void verifyBank()}
+                    onClick={() => void saveBank()}
                   >
-                    {busy ? "Checking…" : "Check account"}
+                    {busy ? "Saving…" : "Save"}
                   </Button>
                 ) : null}
               </div>

@@ -13,20 +13,7 @@ export type PayoutAccountView = {
   verifiedAt: string;
 };
 
-export type LegalName = {
-  firstName: string;
-  middleName: string;
-  lastName: string;
-};
-
-export type VerifyPayoutResult =
-  | { ok: true; account: PayoutAccountView }
-  | {
-      ok: false;
-      reason: "ACCOUNT_NOT_FOUND" | "NAME_MISMATCH";
-      nibssName?: LegalName;
-      message?: string;
-    };
+export type VerifyPayoutResult = { ok: true; account: PayoutAccountView };
 
 export const FALLBACK_BANKS: PayoutBank[] = [
   { code: "058", name: "GTBank" },
@@ -55,10 +42,10 @@ async function tokenOrNull() {
 export async function getPayoutSetup() {
   const token = await tokenOrNull();
   if (!token) throw new Error("Not signed in");
-  return apiFetch<{
-    account: PayoutAccountView | null;
-    nameEnquiryMode: "mock" | "paystack";
-  }>("/sellers/payout-account", { token });
+  return apiFetch<{ account: PayoutAccountView | null }>(
+    "/sellers/payout-account",
+    { token },
+  );
 }
 
 export async function listPayoutBanks() {

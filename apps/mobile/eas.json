@@ -12,10 +12,18 @@
     },
     "preview": {
       "distribution": "internal",
-      "android": { "buildType": "apk" }
+      "android": { "buildType": "apk" },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://reworth-y9gr.onrender.com/api/v1",
+        "EXPO_PUBLIC_WEB_URL": "https://YOUR-WEBSITE.vercel.app"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://reworth-y9gr.onrender.com/api/v1",
+        "EXPO_PUBLIC_WEB_URL": "https://YOUR-WEBSITE.vercel.app"
+      }
     }
   },
   "submit": {

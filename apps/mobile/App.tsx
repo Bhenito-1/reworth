@@ -935,7 +935,7 @@ export default function App() {
                   </View>
                 ) : (
                   <Text style={styles.copy}>
-                    Bank details appear here after you verify a payout account while selling.
+                    Bank details appear here after you save a payout account while selling.
                   </Text>
                 )}
 

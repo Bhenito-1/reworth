@@ -26,7 +26,7 @@ Companion column notes web’s intended role when mobile is primary.
 | Search | **full** | **full** | `SearchPanel` vs `/search`. Query required before search or save alert. Empty results cannot be saved. Price min cannot exceed max. Conditions show in sentence case. Marketplace search omits the signed-in seller's own listings |
 | Favourites / wishlist | **full** | **full** | Heart saves for later. Empty wishlist opens search. A listing with no units left is removed from every wishlist. Profile → Wishlist and web `/wishlist` can add remaining items to the cart |
 | Listing detail (PDP) | **full** | **full** | Modal vs `/listings/[id]` — companion OK |
-| Sell / publish | **full** | **full** | `SellFlow` vs `/sell` — camera + gallery filmstrip on mobile |
+| Sell / publish | **full** | **full** | `SellFlow` vs `/sell` — camera + gallery filmstrip on mobile. Payout bank details are saved as entered |
 | Chat / messaging | **full** | **full** | `ChatScreens` vs `/chats`. Mute hides badges. A blocked person replaces the message bar with Unblock, and Safety shows Unblock user |
 | Checkout (mock Paystack) | **full** | **full** | `CheckoutModal` vs `/checkout` |
 | Orders list + detail | **full** | **full** | Profile orders vs `/orders`. Pay and cancel are separate actions. A cancelled order shows Cancelled and moves to the Cancelled tab. Unpaid orders show Awaiting payment |

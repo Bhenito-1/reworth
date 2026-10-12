@@ -34,7 +34,6 @@ import {
   listPayoutBanks,
   payoutDisplayName,
   verifyPayoutAccount,
-  type LegalName,
   type PayoutAccountView,
   type PayoutBank,
 } from "./lib/payout";
@@ -191,9 +190,6 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
   const [payoutBanks, setPayoutBanks] = useState<PayoutBank[]>([
     ...FALLBACK_BANKS,
   ]);
-  const [nameEnquiryMode, setNameEnquiryMode] = useState<"mock" | "paystack">(
-    "mock",
-  );
   const [bankEditing, setBankEditing] = useState(false);
   const [bankQuery, setBankQuery] = useState("");
   const [bankCode, setBankCode] = useState("");
@@ -201,7 +197,6 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
   const [legalFirst, setLegalFirst] = useState("");
   const [legalMiddle, setLegalMiddle] = useState("");
   const [legalLast, setLegalLast] = useState("");
-  const [nibssName, setNibssName] = useState<LegalName | null>(null);
 
   const tokenOrThrow = useCallback(async () => {
     const token = await getAccessToken();
@@ -317,15 +312,11 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
     if (step !== "bank") return;
     let cancelled = false;
     void Promise.all([
-      getPayoutSetup().catch(() => ({
-        account: null,
-        nameEnquiryMode: "mock" as const,
-      })),
+      getPayoutSetup().catch(() => ({ account: null })),
       listPayoutBanks(),
     ]).then(([setup, banks]) => {
       if (cancelled) return;
       setPayoutAccount(setup.account);
-      setNameEnquiryMode(setup.nameEnquiryMode);
       setPayoutBanks(banks);
       setBankEditing(!setup.account);
     });
@@ -1009,12 +1000,11 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
       {step === "bank" ? (
         <View>
           <Text style={styles.copy}>
-            Paystack checks the account and returns the name on it. Enter
-            your legal name as first, middle, then last.
+            Add the bank account we should pay you into.
           </Text>
           {payoutAccount && !bankEditing ? (
             <View style={styles.intel}>
-              <Text style={styles.intelTitle}>Verified account</Text>
+              <Text style={styles.intelTitle}>Saved account</Text>
               <Text style={styles.copy}>{payoutDisplayName(payoutAccount)}</Text>
               <Text style={styles.copy}>
                 {payoutAccount.bankName} · {payoutAccount.accountNumberMasked}
@@ -1028,7 +1018,6 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
               <Pressable
                 style={styles.secondaryBtn}
                 onPress={() => {
-                  setNibssName(null);
                   setError(null);
                   setBankEditing(true);
                 }}
@@ -1038,12 +1027,6 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
             </View>
           ) : (
             <>
-              {nameEnquiryMode === "mock" ? (
-                <Text style={styles.copy}>
-                  Local check without Paystack: GTBank account 0123456789 is
-                  Adewale Chinedu Okonkwo.
-                </Text>
-              ) : null}
               <Field
                 label="Search bank name"
                 value={bankQuery}
@@ -1091,11 +1074,6 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
                 onChange={setLegalMiddle}
               />
               <Field label="Last name" value={legalLast} onChange={setLegalLast} />
-              {nibssName ? (
-                <Text style={styles.copy}>
-                  Name on the account: {payoutDisplayName(nibssName)}
-                </Text>
-              ) : null}
             </>
           )}
           {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -1104,7 +1082,6 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
               style={[styles.secondaryBtn, styles.flex]}
               onPress={() => {
                 setError(null);
-                setNibssName(null);
                 setStep("fulfilment");
               }}
             >
@@ -1117,7 +1094,6 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
                 onPress={() => {
                   void (async () => {
                     setError(null);
-                    setNibssName(null);
                     if (!/^\d{10}$/.test(accountNumber)) {
                       setError("Enter a 10-digit account number.");
                       return;
@@ -1139,26 +1115,12 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
                         middleName: legalMiddle.trim(),
                         lastName: legalLast.trim(),
                       });
-                      if (!result.ok) {
-                        if (result.reason === "NAME_MISMATCH" && result.nibssName) {
-                          setNibssName(result.nibssName);
-                          setError(
-                            "The name on this account does not match the name you entered.",
-                          );
-                        } else {
-                          setError(
-                            result.message ||
-                              "We could not find that account at the selected bank.",
-                          );
-                        }
-                        return;
-                      }
                       setPayoutAccount(result.account);
                       setBankEditing(false);
                       setStep("publish");
                     } catch (err) {
                       setError(
-                        err instanceof ApiError ? err.message : "Could not verify the account",
+                        err instanceof ApiError ? err.message : "Could not save the account",
                       );
                     } finally {
                       setBusy(false);
@@ -1167,7 +1129,7 @@ export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
                 }}
               >
                 <Text style={styles.primaryBtnText}>
-                  {busy ? "Checking…" : "Check account"}
+                  {busy ? "Saving…" : "Save"}
                 </Text>
               </Pressable>
             ) : null}

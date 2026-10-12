@@ -21,10 +21,7 @@ export class SellerPayoutController {
   @Get('payout-account')
   async current(@CurrentUser() user: AuthUser) {
     const account = await this.payouts.current(user.id);
-    return {
-      account,
-      nameEnquiryMode: this.payouts.nameEnquiryMode(),
-    };
+    return { account };
   }
 
   @Post('payout-account/verify')
