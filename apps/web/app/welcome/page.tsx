@@ -1,16 +1,8 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { Plus_Jakarta_Sans } from "next/font/google";
 import { brandPublic } from "../../lib/brand";
 import "./welcome.css";
-
-const display = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  weight: ["500", "600", "700", "800"],
-  variable: "--font-welcome",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "ReWorth — Lagos, your unused things are worth something",
@@ -25,7 +17,7 @@ export const metadata: Metadata = {
 
 export default function WelcomePage() {
   return (
-    <div className={`${display.variable} welcome-root`}>
+    <div className="welcome-root">
       <a href="#how" className="welcome-skip">
         Skip to content
       </a>
