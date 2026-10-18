@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Image,
   Pressable,
@@ -9,7 +10,7 @@ import {
 } from "react-native";
 import { brandAssets } from "../lib/brandAssets";
 import { useColors } from "../theme/ThemeProvider";
-import { radius, space, tap, type } from "../theme/tokens";
+import { radius, space, tap } from "../theme/tokens";
 import { hapticLight } from "../theme/haptics";
 
 export type ListingCardProps = {
@@ -43,6 +44,11 @@ export function ListingCard({
 }: ListingCardProps) {
   const c = useColors();
   const meta = [community, distanceLabel].filter(Boolean).join(" · ");
+  const [photoFailed, setPhotoFailed] = useState(false);
+  useEffect(() => {
+    setPhotoFailed(false);
+  }, [imageUri]);
+  const showPhoto = Boolean(imageUri) && !photoFailed;
 
   return (
     <Pressable
@@ -67,14 +73,16 @@ export function ListingCard({
       ]}
     >
       <View style={[styles.image, { backgroundColor: c.surfaceWarm }]}>
+        <View style={styles.imageFrame} />
         <Image
           source={
-            imageUri
+            showPhoto && imageUri
               ? { uri: imageUri }
               : brandAssets.listingPlaceholder
           }
           style={styles.imageFill}
-          resizeMode={imageUri ? "cover" : "contain"}
+          resizeMode={showPhoto ? "cover" : "contain"}
+          onError={() => setPhotoFailed(true)}
         />
         {verified ? (
           <View
@@ -122,11 +130,9 @@ export function ListingCard({
         <Text style={[styles.title, { color: c.ink }]} numberOfLines={1}>
           {title}
         </Text>
-        {meta ? (
-          <Text style={[styles.meta, { color: c.muted }]} numberOfLines={1}>
-            {meta}
-          </Text>
-        ) : null}
+        <Text style={[styles.meta, { color: c.muted }]} numberOfLines={1}>
+          {meta || " "}
+        </Text>
       </View>
     </Pressable>
   );
@@ -134,20 +140,22 @@ export function ListingCard({
 
 const styles = StyleSheet.create({
   card: {
-    width: 160,
+    width: 120,
+    flexShrink: 0,
     borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
   image: {
+    width: "100%",
+    overflow: "hidden",
+  },
+  imageFrame: {
+    width: "100%",
     aspectRatio: 3 / 4,
-    alignItems: "center",
-    justifyContent: "center",
   },
   imageFill: {
     ...StyleSheet.absoluteFillObject,
-    width: "100%",
-    height: "100%",
   },
   badge: {
     position: "absolute",
@@ -177,18 +185,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   body: {
-    padding: space.md,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.sm,
     gap: 2,
   },
   price: {
-    fontSize: type.titleSm,
+    fontSize: 15,
     fontWeight: "700",
   },
   title: {
-    fontSize: type.bodySm,
+    fontSize: 13,
     fontWeight: "500",
   },
   meta: {
-    fontSize: type.meta,
+    fontSize: 12,
+    lineHeight: 16,
   },
 });

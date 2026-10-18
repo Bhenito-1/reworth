@@ -6,6 +6,7 @@ import { CommunitiesModule } from '../communities/communities.module';
 import { FavouritesModule } from '../favourites/favourites.module';
 import { IntelligenceModule } from '../intelligence/intelligence.module';
 import { ModerationModule } from '../moderation/moderation.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { RiskModule } from '../risk/risk.module';
 import {
   AI_LISTING_PROVIDER,
@@ -21,6 +22,9 @@ import { AnalyticsService } from './analytics.service';
 import { FraudRulesService } from './fraud-rules.service';
 import { ListingAssistService } from './listing-assist.service';
 import { ListingExpiryScheduler } from './listing-expiry.scheduler';
+import { AdminAlertsModule } from '../admin/admin-alerts.module';
+import { InventoryModule } from '../inventory/inventory.module';
+import { PayoutsModule } from '../payouts/payouts.module';
 import { ListingsController } from './listings.controller';
 import { ListingsService } from './listings.service';
 import { PriceIntelligenceService } from './price-intelligence.service';
@@ -35,6 +39,10 @@ import { PriceIntelligenceService } from './price-intelligence.service';
     forwardRef(() => IntelligenceModule),
     forwardRef(() => RiskModule),
     ModerationModule,
+    NotificationsModule,
+    AdminAlertsModule,
+    InventoryModule,
+    PayoutsModule,
   ],
   controllers: [ListingsController],
   providers: [

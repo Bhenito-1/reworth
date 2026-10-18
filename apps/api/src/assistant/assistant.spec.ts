@@ -1,6 +1,7 @@
 import {
   ASSISTANT_INTENT_FIXTURES,
   MockAssistantProvider,
+  parseBudgetKobo,
   routeIntent,
 } from './mock-assistant.provider';
 import { MUTATION_TOOLS } from './assistant.provider';
@@ -78,5 +79,37 @@ describe('Assistant (Phase 3.1)', () => {
     const ans = answerFromHelpDocs('what is the USD exchange rate today?');
     expect(ans.docKey).toBe('out_of_scope');
     expect(ans.grounded).toBe(true);
+  });
+
+  it('reads ₦1.5m as 1.5 million naira and filters search words', async () => {
+    expect(parseBudgetKobo('Furnish a one-bed in Lekki with ₦1.5m')).toBe(
+      150_000_000,
+    );
+    const turn = await provider.routeAndRun({
+      sessionId: 'sess-1',
+      userId: 'user-1',
+      city: 'Lagos',
+      content: 'Find a sofa in Lekki',
+      listingCatalog: [
+        {
+          id: 'sofa',
+          title: 'Leather sofa',
+          priceKobo: 80_000_00,
+          city: 'Lagos',
+          categoryId: null,
+        },
+        {
+          id: 'tv',
+          title: 'Samsung TV',
+          priceKobo: 90_000_00,
+          city: 'Lagos',
+          categoryId: null,
+        },
+      ],
+    });
+    const results = (
+      turn.toolResult.payload as { results: { id: string }[] }
+    ).results;
+    expect(results.map((row) => row.id)).toEqual(['sofa']);
   });
 });

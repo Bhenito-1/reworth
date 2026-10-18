@@ -4,18 +4,19 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { AppButton } from "./components/AppButton";
 import { EmptyState } from "./components/EmptyState";
 import { ListingCard } from "./components/ListingCard";
 import { ApiError } from "./lib/api";
 import { ensureAccessToken } from "./lib/auth";
 import { brandAssets } from "./lib/brandAssets";
+import { sentenceCaseLabel } from "./lib/discovery";
 import {
   getEstateCommunity,
   listCommunityListings,
@@ -239,7 +240,7 @@ export function CommunitiesModal({
               {detail.name}
             </Text>
             <Text style={[styles.meta, { color: c.muted }]}>
-              {detail.type.replace(/_/g, " ")} · {detail.privacy.replace(/_/g, " ")}
+              {sentenceCaseLabel(detail.type)} · {sentenceCaseLabel(detail.privacy)}
               {detail.verified ? " · Verified" : ""}
             </Text>
             {detail.about ? (
@@ -247,7 +248,7 @@ export function CommunitiesModal({
             ) : null}
             <Text style={[styles.meta, { color: c.muted }]}>
               {detail.isMember
-                ? `Member · ${detail.membershipStatus ?? "ACTIVE"}`
+                ? `Member · ${sentenceCaseLabel(detail.membershipStatus ?? "ACTIVE")}`
                 : "Not a member yet"}
             </Text>
             {!detail.isMember ? (

@@ -13,11 +13,16 @@ export type RegionCity = {
   communities?: string[];
   enabled?: boolean;
   status?: string;
-  smsEnabled?: boolean;
   pspEnabled?: boolean;
 };
 
+export type RegionArea = {
+  key: string;
+  label: string;
+};
+
 export type RegionDetail = RegionCity & {
+  areas?: RegionArea[];
   logistics?: {
     baseFeeKobo?: number;
     perKmKobo?: number;

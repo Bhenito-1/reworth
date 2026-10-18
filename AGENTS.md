@@ -26,7 +26,7 @@ Functional · UX · **mobile behaviour verified on iOS + Android; web parity del
 
 | Field | Value |
 | --- | --- |
-| Phase | **Design elevation** `v1.0.3-design-elevation` (completion pass) |
+| Phase | **Design elevation** `v1.0.3-design-elevation` (+ email register; SMS removed ADR-010) |
 | Last completed (post-launch) | **3.3** (`v2.2-monetization`) |
 | MVP Admin | **`v0.8-admin`** (+ harden) |
 | MVP Risk / Security | **`v0.9-risk-security`** (+ harden) |
@@ -43,6 +43,7 @@ Post-launch through `v2.2-monetization`: swap → communities → intelligence �
 - Real device Maestro ≤60s recording still open (`e2e/mobile/00_demo_60s.yaml` + `scripts/record-maestro-demo.ps1`; testIDs include listing-card-0 / chats-title / locate / meetup)
 - Staging k6 p95 certification; pen-test / NDPR / store sign-offs
 - Cross-border: ADR-007 design only; consumer pilot = SW + Edo + Abuja + PH + Kano (`config/regions`, `status=pilot`)
+- Web companion for Boost / Featured / Seller Plus (mobile full — see `docs/MOBILE_PARITY.md`)
 - Promoted search self-serve later (ADR-009 admin-assigned)
 - Payments still mock-default in local (Paystack adapter present)
 - Termii live SMS/WhatsApp keys still pending (dual-channel mock verified)

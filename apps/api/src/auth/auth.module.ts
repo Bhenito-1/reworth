@@ -1,17 +1,16 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { ConsoleSmsMock } from '../providers/console-sms.mock';
-import { ConsoleWhatsAppMock } from '../providers/console-whatsapp.mock';
-import { SMS_PROVIDER } from '../providers/sms.provider';
-import { TermiiSmsProvider } from '../providers/termii-sms.provider';
-import { TermiiWhatsAppProvider } from '../providers/termii-whatsapp.provider';
-import { WHATSAPP_PROVIDER } from '../providers/whatsapp.provider';
-import { ReferralsModule } from '../referrals/referrals.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
+import { EMAIL_PROVIDER } from '../providers/email.provider';
+import { ResendEmailProvider } from '../providers/resend-email.provider';
+import {
+  MailhogEmailProvider,
+  MockEmailProvider,
+} from '../providers/mock-email.provider';
 
 @Module({
   imports: [
@@ -27,54 +26,42 @@ import { JwtStrategy } from './jwt.strategy';
         },
       }),
     }),
-    forwardRef(() => ReferralsModule),
   ],
   controllers: [AuthController],
   providers: [
     AuthService,
     JwtStrategy,
     {
-      provide: SMS_PROVIDER,
-      useFactory: (config: ConfigService) => {
-        const provider = (config.get<string>('SMS_PROVIDER') ?? 'mock').toLowerCase();
-        if (provider === 'termii') {
-          const apiKey = config.get<string>('TERMII_API_KEY') ?? '';
-          const senderId = config.get<string>('TERMII_SENDER_ID') ?? 'ReWorth';
-          const baseUrl =
-            config.get<string>('TERMII_BASE_URL') ??
-            'https://api.ng.termii.com';
-          if (!apiKey) {
-            return new ConsoleSmsMock();
-          }
-          return new TermiiSmsProvider(apiKey, senderId, baseUrl);
-        }
-        return new ConsoleSmsMock();
-      },
-      inject: [ConfigService],
-    },
-    {
-      provide: WHATSAPP_PROVIDER,
+      provide: EMAIL_PROVIDER,
       useFactory: (config: ConfigService) => {
         const provider = (
-          config.get<string>('WHATSAPP_PROVIDER') ??
-          config.get<string>('SMS_PROVIDER') ??
-          'mock'
+          config.get<string>('EMAIL_PROVIDER') ?? 'mock'
         ).toLowerCase();
-        if (provider === 'termii') {
-          const apiKey = config.get<string>('TERMII_API_KEY') ?? '';
-          const deviceId =
-            config.get<string>('TERMII_WHATSAPP_DEVICE_ID') ??
-            config.get<string>('TERMII_SENDER_ID') ??
-            'ReWorth';
-          const baseUrl =
-            config.get<string>('TERMII_BASE_URL') ??
-            'https://api.ng.termii.com';
-          if (!apiKey) {
-            return new ConsoleWhatsAppMock();
-          }
-          return new TermiiWhatsAppProvider(apiKey, deviceId, baseUrl);
+
+        const from =
+          config.get<string>('EMAIL_FROM') ?? 'noreply@reworth.local';
+
+        if (provider === 'resend') {
+          return new ResendEmailProvider(
+            config.get<string>('RESEND_API_KEY') ?? '',
+            from,
+            {
+              replyTo:
+                config.get<string>('EMAIL_REPLY_TO') ??
+                undefined,
+            },
+          );
         }
-        return new ConsoleWhatsAppMock();
+
+        if (provider === 'mailhog') {
+          return new MailhogEmailProvider(
+            config.get<string>('SMTP_HOST') ?? 'localhost',
+            Number(config.get('SMTP_PORT') ?? 1025),
+            from,
+          );
+        }
+
+        return new MockEmailProvider();
       },
       inject: [ConfigService],
     },

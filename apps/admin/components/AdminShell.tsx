@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Button } from "@reworth/ui-web";
+import { AdminAlertsBell } from "./AdminAlertsBell";
 import {
-  clearSession,
-  getEmail,
-  getRoles,
+  forceLoginRedirect,
   hasAnyRole,
   NAV_ROLES,
+  useAdminEmail,
+  useAdminRoles,
 } from "../lib/auth";
 
 const NAV: { href: string; label: string; roles: readonly string[] }[] = [
@@ -42,13 +43,11 @@ const NAV: { href: string; label: string; roles: readonly string[] }[] = [
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const roles = getRoles();
-  const email = getEmail();
+  const roles = useAdminRoles();
+  const email = useAdminEmail();
 
   function signOut() {
-    clearSession();
-    router.replace("/login");
+    forceLoginRedirect();
   }
 
   if (pathname === "/login") {
@@ -56,14 +55,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
+    <div className="flex h-dvh overflow-hidden bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <aside
-        className="hidden w-56 shrink-0 flex-col border-r border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-6 md:flex"
+        className="hidden h-dvh w-56 shrink-0 flex-col overflow-hidden border-r border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-6 md:flex"
         aria-label="Admin navigation"
       >
         <p className="px-2 text-lg font-semibold tracking-tight">ReWorth</p>
-        <p className="mb-8 px-2 text-xs text-[var(--rw-ink-muted)]">Ops</p>
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto">
+        <p className="mb-6 px-2 text-xs text-[var(--rw-ink-muted)]">Ops</p>
+        <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
           {NAV.map((item) => {
             if (!hasAnyRole(roles, item.roles)) return null;
             const active =
@@ -85,7 +84,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="mt-auto space-y-2 border-t border-[var(--rw-border)] pt-4">
+        <div className="mt-4 shrink-0 space-y-2 border-t border-[var(--rw-border)] pt-4">
           {email ? (
             <p className="truncate px-2 text-xs text-[var(--rw-ink-muted)]">
               {email}
@@ -97,14 +96,17 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-3 md:hidden">
-          <p className="font-semibold">ReWorth Ops</p>
-          <Button variant="ghost" size="sm" onClick={signOut}>
-            Sign out
-          </Button>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-center justify-between border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-3">
+          <p className="font-semibold md:sr-only">ReWorth Ops</p>
+          <div className="ml-auto flex items-center gap-1">
+            <AdminAlertsBell />
+            <Button variant="ghost" size="sm" className="md:hidden" onClick={signOut}>
+              Sign out
+            </Button>
+          </div>
         </header>
-        <div className="flex-1 overflow-auto p-6 sm:p-8">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-6 sm:p-8">{children}</div>
       </div>
     </div>
   );

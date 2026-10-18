@@ -4,12 +4,12 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { ApiError } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import {
@@ -35,6 +35,7 @@ type Props = {
   userId: string | null;
   meId: string | null;
   onClose: () => void;
+  dismissLabel?: string;
   onOpenListing?: (listingId: string) => void;
 };
 
@@ -42,6 +43,7 @@ export function UserProfileModal({
   userId,
   meId,
   onClose,
+  dismissLabel = "Close",
   onOpenListing,
 }: Props) {
   const [profile, setProfile] = useState<PublicProfile | null>(null);
@@ -144,8 +146,12 @@ export function UserProfileModal({
     >
       <View style={styles.safe}>
         <View style={styles.header}>
-          <Pressable onPress={onClose} accessibilityRole="button">
-            <Text style={styles.close}>Close</Text>
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel={dismissLabel}
+          >
+            <Text style={styles.close}>{dismissLabel}</Text>
           </Pressable>
           <Image
             source={brandAssets.logo}
@@ -456,6 +462,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 12,
+    overflow: "hidden",
     backgroundColor: colors.border,
   },
   thumbEmpty: {},
@@ -486,7 +493,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: colors.muted,
-    textTransform: "uppercase",
   },
   replyForm: { marginTop: 10, gap: 8 },
   input: {

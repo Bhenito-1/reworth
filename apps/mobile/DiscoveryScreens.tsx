@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { EmptyState } from "./components/EmptyState";
 import { ListingCard } from "./components/ListingCard";
 import { HomeSkeleton } from "./components/Skeleton";
@@ -21,14 +21,17 @@ import {
 import { brandAssets, HOME_CATEGORIES } from "./lib/brandAssets";
 import {
   cacheHome,
+  conditionLabel,
   fetchHome,
   loadCachedHome,
+  savedListingCanCart,
+  savedListingNote,
   type HomeRail,
   type SavedSearch,
   type SearchFilters,
 } from "./lib/discovery";
 import { fetchRecommendations } from "./lib/intelligence";
-import { ensureAccessToken } from "./lib/auth";
+import { ensureAccessToken, getAccessToken } from "./lib/auth";
 import {
   communityLabelsForCity,
   type RegionCity,
@@ -40,8 +43,16 @@ import { hapticLight } from "./theme/haptics";
 import { colors } from "./theme/tokens";
 import { ApiError } from "./lib/api";
 
+export type HomeAreaFilter = {
+  stateKey: string;
+  stateLabel: string;
+  area: string;
+};
+
 type Props = {
-  community?: string;
+  areaFilter?: HomeAreaFilter | null;
+  onApplyAreaFilter?: (filter: HomeAreaFilter) => void;
+  onClearAreaFilter?: () => void;
   cityLabel?: string;
   cityKey?: string;
   cities?: RegionCity[];
@@ -55,20 +66,116 @@ type Props = {
   onSell?: () => void;
   onOpenMovingSales?: (id?: string) => void;
   onOpenCommunities?: (slugOrId?: string) => void;
+  meId?: string | null;
 };
 
+function CancelCircle({ color }: { color: string }) {
+  const size = 26;
+  const stroke = 1.6;
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        borderWidth: stroke,
+        borderColor: color,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <View
+        style={{
+          position: "absolute",
+          width: 12,
+          height: stroke,
+          borderRadius: stroke,
+          backgroundColor: color,
+          transform: [{ rotate: "45deg" }],
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          width: 12,
+          height: stroke,
+          borderRadius: stroke,
+          backgroundColor: color,
+          transform: [{ rotate: "-45deg" }],
+        }}
+      />
+    </View>
+  );
+}
+
+/** Home chips are shorter than the catalogue names. Match the parent slug. */
+const HOME_CHIP_SLUGS: Record<string, string[]> = {
+  Home: ["home-furniture", "garden"],
+  Electronics: ["electronics", "computers"],
+  Phones: ["phones-tablets"],
+  Fashion: ["fashion"],
+  Kids: ["children-baby"],
+  Sports: ["sports-fitness"],
+  Furniture: ["home-furniture"],
+  Appliances: ["home-appliances"],
+  Vehicles: ["vehicles"],
+  Luxury: ["luxury"],
+};
+
+function categoryKeys(item: {
+  category?: { slug?: string; name?: string } | null;
+}): string[] {
+  const slug = (item.category?.slug ?? "").toLowerCase();
+  if (!slug) return [];
+  const parent = slug.split("--")[0];
+  return parent === slug ? [slug] : [slug, parent];
+}
+
+function claimedByNamedChip(item: {
+  category?: { slug?: string; name?: string } | null;
+}): boolean {
+  const keys = categoryKeys(item);
+  if (keys.length === 0) return false;
+  return Object.values(HOME_CHIP_SLUGS).some((slugs) =>
+    slugs.some((slug) => keys.includes(slug)),
+  );
+}
+
+function listingMatchesHomeCategory(
+  item: { category?: { slug?: string; name?: string } | null },
+  label: string,
+): boolean {
+  // Other is whatever the named chips do not already cover.
+  if (label === "Other") return !claimedByNamedChip(item);
+  const slugs = HOME_CHIP_SLUGS[label] ?? [];
+  return categoryKeys(item).some((key) => slugs.includes(key));
+}
+
+function sellerCatalogue(rails: HomeRail[], meId?: string | null): HomeRail[] {
+  return rails
+    .filter((rail) => rail.id !== "my_listed_products")
+    .map((rail) => ({
+      ...rail,
+      items: meId
+        ? rail.items.filter((item) => item.seller?.id !== meId)
+        : rail.items,
+    }));
+}
+
 export function DiscoveryHome({
-  community,
+  areaFilter = null,
+  onApplyAreaFilter,
+  onClearAreaFilter,
   cityLabel = "Lagos",
-  cityKey = "lagos",
-  cities = [],
-  onChangeCity,
   onOpenSearch,
   onOpenListing,
   onOpenTool,
   onSell,
   onOpenMovingSales,
   onOpenCommunities,
+  meId,
 }: Props) {
   const [rails, setRails] = useState<HomeRail[]>([]);
   const [forYou, setForYou] = useState<PublicListing[]>([]);
@@ -84,26 +191,41 @@ export function DiscoveryHome({
 
   const load = useCallback(
     async (opts?: { soft?: boolean }) => {
-      if (!opts?.soft) setLoading(true);
+      if (!opts?.soft) {
+        setLoading(true);
+        setRails([]);
+        setForYou([]);
+      }
       setError(null);
       try {
-        const data = await fetchHome({
-          community: community || undefined,
-        });
-        setRails(data.rails ?? []);
+        const data = await fetchHome(
+          areaFilter
+            ? { community: areaFilter.area, city: areaFilter.stateLabel }
+            : {},
+          await getAccessToken(),
+        );
+        const rails = sellerCatalogue(data.rails ?? [], meId);
+        setRails(rails);
         setFromCache(false);
-        await cacheHome(data);
+        if (!areaFilter) await cacheHome({ ...data, rails });
         try {
           const token = await ensureAccessToken();
           const recs = await fetchRecommendations(
             {
               surface: "home",
-              city: cityLabel || "Lagos",
+              city: areaFilter?.stateLabel || cityLabel || "Lagos",
               limit: 8,
             },
             token,
           );
-          setForYou(recs.items ?? []);
+          const wanted = areaFilter?.area.trim().toLowerCase();
+          setForYou(
+            (recs.items ?? []).filter((item) => {
+              if (meId && item.seller?.id === meId) return false;
+              if (!wanted) return true;
+              return (item.community ?? "").trim().toLowerCase() === wanted;
+            }),
+          );
         } catch {
           setForYou([]);
         }
@@ -114,15 +236,80 @@ export function DiscoveryHome({
         setRefreshing(false);
       }
     },
-    [community, cityLabel],
+    [areaFilter, cityLabel, meId],
   );
+
+  useEffect(() => {
+    if (!draftState) {
+      setAreaOptions([]);
+      return;
+    }
+    let cancelled = false;
+    void getRegion(draftState)
+      .then((detail) => {
+        if (cancelled) return;
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[draftState] ?? []);
+        setAreaOptions(areaChoices(draftState, source));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAreaOptions(areaChoices(draftState, FALLBACK_AREAS[draftState] ?? []));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftState]);
+
+  function openLocation() {
+    setDraftState(areaFilter?.stateKey ?? "");
+    setDraftArea(areaFilter?.area ?? "");
+    setLocationOpen(true);
+    void listRegions()
+      .then((items) => {
+        setRegions(
+          items.length > 0
+            ? items
+            : FALLBACK_STATES.map((item) => ({
+                city: item.city,
+                key: item.city,
+                displayName: item.displayName,
+              })),
+        );
+      })
+      .catch(() => {
+        setRegions(
+          FALLBACK_STATES.map((item) => ({
+            city: item.city,
+            key: item.city,
+            displayName: item.displayName,
+          })),
+        );
+      });
+  }
+
+  const locationLabel = areaFilter
+    ? `${areaFilter.area}, ${areaFilter.stateLabel} · Change`
+    : "Filter items by location";
+
+  const stateChoices =
+    regions.length > 0
+      ? regions
+      : FALLBACK_STATES.map((item) => ({
+          city: item.city,
+          key: item.city,
+          displayName: item.displayName,
+        }));
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const cached = await loadCachedHome();
+      const cached = areaFilter ? null : await loadCachedHome();
       if (!cancelled && cached?.rails?.length) {
-        setRails(cached.rails);
+        setRails(sellerCatalogue(cached.rails, meId));
         setFromCache(true);
         setLoading(false);
       }
@@ -132,6 +319,26 @@ export function DiscoveryHome({
       cancelled = true;
     };
   }, [load]);
+
+  const visibleForYou = useMemo(
+    () =>
+      categoryLabel
+        ? forYou.filter((item) => listingMatchesHomeCategory(item, categoryLabel))
+        : forYou,
+    [forYou, categoryLabel],
+  );
+  const visibleRails = useMemo(() => {
+    if (!categoryLabel) return rails;
+    return rails
+      .filter((rail) => rail.id !== "moving_sales")
+      .map((rail) => ({
+        ...rail,
+        items: rail.items.filter((item) =>
+          listingMatchesHomeCategory(item, categoryLabel),
+        ),
+      }))
+      .filter((rail) => rail.items.length > 0);
+  }, [rails, categoryLabel]);
 
   const c = useColors();
 
@@ -143,6 +350,7 @@ export function DiscoveryHome({
         <RefreshControl
           refreshing={refreshing}
           onRefresh={() => {
+            setCategoryLabel(null);
             setRefreshing(true);
             void load({ soft: true });
           }}
@@ -203,73 +411,17 @@ export function DiscoveryHome({
         </View>
       </View>
 
-      <Pressable
-        style={({ pressed }) => [
-          styles.locationPill,
-          {
-            backgroundColor: pressed ? c.surfaceWarm : c.surface,
-            borderColor: c.border,
-          },
-        ]}
-        onPress={() => {
-          void hapticLight();
-          if (cities.length > 1 && onChangeCity) setCitySheetOpen(true);
-          else onOpenSearch();
-        }}
-        accessibilityRole="button"
-        accessibilityLabel={`City ${cityLabel}. Change pilot city or open search.`}
-      >
-        <Image
-          source={brandAssets.actionLocation}
-          style={styles.locIcon}
-          resizeMode="contain"
-        />
-        <Text style={[styles.locationText, { color: c.ink }]} numberOfLines={1}>
-          {community || cityLabel} · All {cityLabel} ▾
-        </Text>
-      </Pressable>
-
-      <Pressable
-        style={({ pressed }) => [
-          styles.searchBar,
-          {
-            backgroundColor: pressed ? c.surfaceWarm : c.surface,
-            borderColor: c.border,
-          },
-        ]}
-        onPress={() => {
-          void hapticLight();
-          onOpenSearch();
-        }}
-        accessibilityRole="search"
-        accessibilityLabel="Open search"
-      >
-        <Text style={[styles.searchPlaceholder, { color: c.muted }]}>
-          Search {cityLabel}…
-        </Text>
-      </Pressable>
-      <Text style={[styles.nlHint, { color: c.muted }]}>
-        Try: sofas under ₦500k in Lekki
-      </Text>
-
-      <Pressable
-        onPress={() => {
-          void hapticLight();
-          if (onOpenMovingSales) onOpenMovingSales();
-          else onSell?.();
-        }}
-        accessibilityRole="button"
-        accessibilityLabel="Browse Moving Sales"
-        style={({ pressed }) => [
+      <View
+        style={[
           styles.promoCard,
-          {
-            opacity: pressed ? 0.92 : 1,
-            borderColor: c.border,
-            backgroundColor: c.surfaceWarm,
-          },
+          { borderColor: c.border, backgroundColor: c.surfaceWarm },
         ]}
       >
-        <View style={[styles.promoImageWrap, { backgroundColor: c.surfaceWarm }]}>
+        <View
+          style={[styles.promoImageWrap, { backgroundColor: c.surfaceWarm }]}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
           <Image
             source={brandAssets.movingSale}
             style={styles.promoImage}
@@ -281,11 +433,23 @@ export function DiscoveryHome({
           <Text style={[styles.promoBody, { color: c.muted }]}>
             Clear a room in one weekend — follow sales or start yours.
           </Text>
-          <Text style={[styles.promoCta, { color: c.orange }]}>
-            Moving sales →
-          </Text>
+          <Pressable
+            onPress={() => {
+              void hapticLight();
+              if (onOpenMovingSales) onOpenMovingSales();
+              else onSell?.();
+            }}
+            accessibilityRole="link"
+            accessibilityLabel="Moving sales"
+            hitSlop={8}
+            style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
+          >
+            <Text style={[styles.promoCta, { color: c.orange }]}>
+              Moving sales →
+            </Text>
+          </Pressable>
         </View>
-      </Pressable>
+      </View>
 
       <Pressable
         onPress={() => {
@@ -325,31 +489,56 @@ export function DiscoveryHome({
         contentContainerStyle={styles.catRow}
         decelerationRate="fast"
       >
-        {HOME_CATEGORIES.map(({ label, icon }) => (
+        {HOME_CATEGORIES.map(({ label, icon }) => {
+          const selected = categoryLabel === label;
+          return (
+            <Pressable
+              key={label}
+              style={({ pressed }) => [
+                styles.catChip,
+                {
+                  backgroundColor: selected
+                    ? c.beige
+                    : pressed
+                      ? c.beige
+                      : c.surfaceWarm,
+                  borderColor: selected ? c.orange : c.border,
+                },
+              ]}
+              onPress={() => {
+                void hapticLight();
+                setCategoryLabel(selected ? null : label);
+              }}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              accessibilityLabel={`Category ${label}`}
+            >
+              <Image
+                source={brandAssets[icon]}
+                style={styles.catIcon}
+                resizeMode="contain"
+              />
+              <Text style={[styles.catChipText, { color: c.ink }]}>{label}</Text>
+            </Pressable>
+          );
+        })}
+        {categoryLabel ? (
           <Pressable
-            key={label}
-            style={({ pressed }) => [
-              styles.catChip,
-              {
-                backgroundColor: pressed ? c.beige : c.surfaceWarm,
-                borderColor: c.border,
-              },
-            ]}
             onPress={() => {
               void hapticLight();
-              onOpenSearch();
+              setCategoryLabel(null);
             }}
             accessibilityRole="button"
-            accessibilityLabel={`Category ${label}`}
+            accessibilityLabel="Clear category filter"
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.catClear,
+              { opacity: pressed ? 0.6 : 1 },
+            ]}
           >
-            <Image
-              source={brandAssets[icon]}
-              style={styles.catIcon}
-              resizeMode="contain"
-            />
-            <Text style={[styles.catChipText, { color: c.ink }]}>{label}</Text>
+            <CancelCircle color={c.ink} />
           </Pressable>
-        ))}
+        ) : null}
       </ScrollView>
 
       <View style={styles.trustRow} accessibilityLabel="Trust signals">
@@ -357,7 +546,7 @@ export function DiscoveryHome({
           [
             ["Buyer protection", brandAssets.trustBuyerProtection],
             ["Secure payment", brandAssets.trustSecurePayment],
-            ["Safe meetup", brandAssets.trustSafeMeetup],
+            ["ReWorth delivery", brandAssets.trustSafeMeetup],
             ["Verified sellers", brandAssets.verifiedSeller],
           ] as const
         ).map(([label, icon]) => (
@@ -377,7 +566,6 @@ export function DiscoveryHome({
             ["worth", "Worth", brandAssets.actionOffer],
             ["scan", "Scan", brandAssets.actionBuy],
             ["consign", "Consign", brandAssets.actionDelivery],
-            ["pickup", "Pickup", brandAssets.actionLocation],
           ] as const
         ).map(([id, label, icon]) => (
           <Pressable
@@ -404,6 +592,31 @@ export function DiscoveryHome({
         ))}
       </View>
 
+      <Pressable
+        style={({ pressed }) => [
+          styles.locationPill,
+          {
+            backgroundColor: pressed ? c.surfaceWarm : c.surface,
+            borderColor: c.border,
+          },
+        ]}
+        onPress={() => {
+          void hapticLight();
+          openLocation();
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={locationLabel}
+      >
+        <Image
+          source={brandAssets.actionLocation}
+          style={styles.locIcon}
+          resizeMode="contain"
+        />
+        <Text style={[styles.locationText, { color: c.ink }]} numberOfLines={1}>
+          {locationLabel} ▾
+        </Text>
+      </Pressable>
+
       {fromCache ? (
         <Text style={[styles.cacheHint, { color: c.muted }]}>
           Showing last home · refreshing…
@@ -422,7 +635,20 @@ export function DiscoveryHome({
         />
       ) : null}
 
-      {forYou.length > 0 ? (
+      {categoryLabel &&
+      !loading &&
+      visibleForYou.length === 0 &&
+      visibleRails.length === 0 ? (
+        <EmptyState
+          title={`No ${categoryLabel} items`}
+          body="Nothing in this category is on the homepage right now."
+          ctaLabel="Show all items"
+          onCta={() => setCategoryLabel(null)}
+          illustration="listings"
+        />
+      ) : null}
+
+      {visibleForYou.length > 0 ? (
         <View style={styles.rail}>
           <View style={styles.railHeader}>
             <Text style={[styles.railTitle, { color: c.ink }]}>For you</Text>
@@ -446,8 +672,7 @@ export function DiscoveryHome({
               const price =
                 item.sellingMode === "GIVE_AWAY"
                   ? "Free"
-                  : item.sellingMode === "SWAP" ||
-                      item.sellingMode === "SWAP_CASH"
+                  : item.sellingMode === "SWAP"
                     ? "Swap"
                     : formatNgnFromKobo(item.priceKobo);
               return (
@@ -459,6 +684,7 @@ export function DiscoveryHome({
                     item.communityChip?.name || item.community || undefined
                   }
                   verified={Boolean(item.seller?.verificationBadge)}
+                  imageUri={listingCoverUrl(item) ?? undefined}
                   onPress={() => onOpenListing(item.id)}
                   testID={index === 0 ? "listing-card-0" : undefined}
                 />
@@ -468,7 +694,7 @@ export function DiscoveryHome({
         </View>
       ) : null}
 
-      {rails.map((rail) => (
+      {visibleRails.map((rail) => (
         <View key={rail.id} style={styles.rail}>
           <View style={styles.railHeader}>
             <Text style={[styles.railTitle, { color: c.ink }]}>{rail.title}</Text>
@@ -550,8 +776,7 @@ export function DiscoveryHome({
                 const price =
                   item.sellingMode === "GIVE_AWAY"
                     ? "Free"
-                    : item.sellingMode === "SWAP" ||
-                        item.sellingMode === "SWAP_CASH"
+                    : item.sellingMode === "SWAP"
                       ? "Swap"
                       : formatNgnFromKobo(item.priceKobo);
                 return (
@@ -563,6 +788,7 @@ export function DiscoveryHome({
                       item.communityChip?.name || item.community || undefined
                     }
                     verified={Boolean(item.seller?.verificationBadge)}
+                    imageUri={listingCoverUrl(item) ?? undefined}
                     onPress={() => onOpenListing(item.id)}
                     testID={
                       rail === rails[0] && index === 0
@@ -579,9 +805,9 @@ export function DiscoveryHome({
     </ScrollView>
 
     <BottomSheet
-      visible={citySheetOpen}
-      title="Choose your city"
-      onClose={() => setCitySheetOpen(false)}
+      visible={locationOpen}
+      title="Choose a location"
+      onClose={() => setLocationOpen(false)}
     >
       <Text style={[styles.nlHint, { color: c.muted, marginBottom: 8 }]}>
         Pilot cities across SW, Edo, Abuja, PH, and Kano. Use your location to
@@ -702,27 +928,88 @@ export function DiscoveryHome({
               >
                 {selected ? "Current" : "Select"}
               </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {draftState ? (
+        <>
+          <Text style={[styles.railTitle, { color: c.ink, marginTop: 14, marginBottom: 8 }]}>
+            Area
+          </Text>
+          {areaOptions.length === 0 ? (
+            <Text style={[styles.nlHint, { color: c.muted, marginTop: 0 }]}>
+              No areas are available for this state yet.
+            </Text>
+          ) : (
+            <View style={styles.locChips}>
+              {areaOptions.map((area) => {
+                const selected = draftArea === area.value;
+                return (
+                  <Pressable
+                    key={area.value}
+                    onPress={() => {
+                      void hapticLight();
+                      setDraftArea(area.value);
+                    }}
+                    style={[
+                      styles.locChip,
+                      {
+                        borderColor: selected ? c.orange : c.border,
+                        backgroundColor: selected ? c.surfaceWarm : c.surface,
+                      },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                  >
+                    <Text style={{ color: selected ? c.orange : c.ink, fontWeight: "600" }}>
+                      {area.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
-            <Text style={[styles.cityAreas, { color: c.muted }]}>
-              {areas.join(" · ")}
-            </Text>
-            <Text style={[styles.cityMeta, { color: c.muted }]}>
-              City-wide browse · community chips on Profile
-            </Text>
-          </Pressable>
-        );
-      })}
+          )}
+        </>
+      ) : (
+        <Text style={[styles.nlHint, { color: c.muted, marginTop: 8 }]}>
+          Select a state to see its areas.
+        </Text>
+      )}
       <Pressable
         onPress={() => {
-          setCitySheetOpen(false);
-          onOpenSearch();
+          const state = stateChoices.find((item) => item.city === draftState);
+          if (!state || !draftArea) return;
+          void hapticLight();
+          onApplyAreaFilter?.({
+            stateKey: state.city,
+            stateLabel: state.displayName,
+            area: draftArea,
+          });
+          setLocationOpen(false);
         }}
-        style={{ marginTop: 8, paddingVertical: 10 }}
+        disabled={!draftState || !draftArea}
+        style={[
+          styles.locApply,
+          {
+            backgroundColor: draftState && draftArea ? c.orange : c.border,
+          },
+        ]}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !draftState || !draftArea }}
+      >
+        <Text style={styles.locApplyText}>Show this area</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => {
+          void hapticLight();
+          onClearAreaFilter?.();
+          setLocationOpen(false);
+        }}
+        style={styles.locClear}
         accessibilityRole="button"
       >
-        <Text style={{ color: c.orange, fontWeight: "600" }}>
-          Open search & radius →
-        </Text>
+        <Text style={{ color: c.orange, fontWeight: "600" }}>Show all areas</Text>
       </Pressable>
       {mapPayload ? (
         <Pressable
@@ -746,17 +1033,28 @@ export function DiscoveryHome({
   );
 }
 
+function listingCoverUrl(listing: PublicListing): string | null {
+  const images = [...(listing.images ?? [])].sort(
+    (a, b) => a.sortOrder - b.sortOrder,
+  );
+  return listingImageUrl(images[0]);
+}
+
 /** Lightweight search panel used from Discover tab */
 export function SearchPanel({
   onOpenListing,
   onBack,
+  backLabel = "← Home",
   initialFilters,
   onNeedAuth,
+  meId,
 }: {
   onOpenListing: (id: string) => void;
   onBack?: () => void;
+  backLabel?: string;
   initialFilters?: SearchFilters | null;
   onNeedAuth?: () => void;
+  meId?: string | null;
 }) {
   const c = useColors();
   const [q, setQ] = useState("");
@@ -776,6 +1074,9 @@ export function SearchPanel({
   const [cursor, setCursor] = useState<string | undefined>();
   const [total, setTotal] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [resultQuery, setResultQuery] = useState<string | null>(null);
+  const [priceError, setPriceError] = useState<string | null>(null);
   const seededRef = useRef<string | null>(null);
 
   function applySeed(seed: SearchFilters) {
@@ -802,42 +1103,92 @@ export function SearchPanel({
     }
   }
 
+  function nairaField(value: string): number | undefined {
+    const cleaned = value.replace(/[^\d]/g, "");
+    if (!cleaned) return undefined;
+    const naira = Number(cleaned);
+    if (!Number.isFinite(naira)) return undefined;
+    return Math.round(naira * 100);
+  }
+
   function currentFilters(): SearchFilters {
-    const minKobo = priceMin
-      ? Math.round(Number(priceMin.replace(/,/g, "")) * 100)
-      : undefined;
-    const maxKobo = priceMax
-      ? Math.round(Number(priceMax.replace(/,/g, "")) * 100)
-      : undefined;
+    const minKobo = nairaField(priceMin);
+    const maxKobo = nairaField(priceMax);
     return {
       q: q.trim() || undefined,
-      community: community || undefined,
+      community: community.trim() || undefined,
       condition: condition || undefined,
-      priceMinKobo: Number.isFinite(minKobo) ? minKobo : undefined,
-      priceMaxKobo: Number.isFinite(maxKobo) ? maxKobo : undefined,
+      priceMinKobo: minKobo,
+      priceMaxKobo: maxKobo,
       verifiedOnly: verifiedOnly || undefined,
       sort,
     };
   }
 
+  function priceRangeError(): string | null {
+    if (!priceMin || !priceMax) return null;
+    const min = Number(priceMin);
+    const max = Number(priceMax);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+    if (max < min) return "Maximum must be higher than the minimum.";
+    return null;
+  }
+
+  function setMinPrice(text: string) {
+    setPriceError(null);
+    setPriceMin(text.replace(/[^\d]/g, ""));
+  }
+
+  function setMaxPrice(text: string) {
+    setPriceError(null);
+    setPriceMax(text.replace(/[^\d]/g, ""));
+  }
+
+  function confirmPriceRange(): boolean {
+    const message = priceRangeError();
+    setPriceError(message);
+    return message == null;
+  }
+
   async function run(append = false, override?: SearchFilters) {
+    const basePreview = override ?? currentFilters();
+    if (!append && !(basePreview.q ?? "").trim()) return;
+    if (
+      !append &&
+      !override &&
+      priceMin &&
+      priceMax &&
+      Number(priceMax) < Number(priceMin)
+    ) {
+      setPriceError("Maximum must be higher than the minimum.");
+      setFiltersOpen(true);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const { searchListings } = await import("./lib/discovery");
+      const { getAccessToken } = await import("./lib/auth");
       const base = override ?? currentFilters();
-      const res = await searchListings({
-        ...base,
-        cursor: append ? cursor : undefined,
-        limit: 20,
-      });
-      let next = res.items;
+      const res = await searchListings(
+        {
+          ...base,
+          cursor: append ? cursor : undefined,
+          limit: 20,
+        },
+        await getAccessToken(),
+      );
+      let next = res.items.filter((item) => !meId || item.seller?.id !== meId);
       if (base.verifiedOnly) {
         next = next.filter((i) => i.seller?.verificationBadge);
       }
       setItems((prev) => (append ? [...prev, ...next] : next));
       setCursor(res.nextCursor);
       setTotal(res.total);
+      if (!append) {
+        setHasSearched(true);
+        setResultQuery((base.q ?? "").trim());
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
       if (!append) setItems([]);
@@ -857,6 +1208,7 @@ export function SearchPanel({
   }, [initialFilters]);
 
   async function saveAlert() {
+    if (!q.trim() || items.length === 0) return;
     setError(null);
     setToast(null);
     setSaving(true);
@@ -888,7 +1240,15 @@ export function SearchPanel({
     }
   }
 
-  const conditions = ["", "LIKE_NEW", "GOOD", "FAIR"];
+  const conditions = ["", "NEW", "LIKE_NEW", "VERY_GOOD", "GOOD", "FAIR", "FOR_PARTS"];
+  const queryReady = q.trim().length > 0;
+  const canSaveAlert =
+    queryReady &&
+    !loading &&
+    !saving &&
+    hasSearched &&
+    resultQuery === q.trim() &&
+    items.length > 0;
 
   return (
     <>
@@ -899,14 +1259,14 @@ export function SearchPanel({
         <View style={styles.searchHeader}>
           {onBack ? (
             <Pressable onPress={onBack} accessibilityRole="button" hitSlop={8}>
-              <Text style={[styles.back, { color: c.orange }]}>← Home</Text>
+              <Text style={[styles.back, { color: c.orange }]}>{backLabel}</Text>
             </Pressable>
           ) : null}
           <Text
             style={[styles.brand, { color: c.ink }]}
             accessibilityRole="header"
           >
-            Search
+            Search items
           </Text>
         </View>
 
@@ -944,14 +1304,20 @@ export function SearchPanel({
           <Pressable
             style={[
               styles.primaryBtn,
-              { flex: 1, marginTop: 0, backgroundColor: c.orange },
+              {
+                flex: 1,
+                marginTop: 0,
+                backgroundColor: c.orange,
+                opacity: queryReady && !loading ? 1 : 0.45,
+              },
             ]}
             onPress={() => void run(false)}
-            disabled={loading}
+            disabled={!queryReady || loading}
             accessibilityRole="button"
+            accessibilityState={{ disabled: !queryReady || loading }}
           >
             <Text style={styles.primaryBtnText}>
-              {loading ? "…" : "Search"}
+              {loading ? "…" : "Search items"}
             </Text>
           </Pressable>
         </View>
@@ -959,12 +1325,13 @@ export function SearchPanel({
         <Pressable
           style={[
             styles.secondaryBtn,
-            { borderColor: c.border, opacity: saving ? 0.5 : 1 },
+            { borderColor: c.border, opacity: canSaveAlert ? 1 : 0.45 },
           ]}
           onPress={() => void saveAlert()}
-          disabled={saving || loading}
+          disabled={!canSaveAlert}
           accessibilityRole="button"
           accessibilityLabel="Save search alert"
+          accessibilityState={{ disabled: !canSaveAlert }}
         >
           <Text style={[styles.secondaryBtnText, { color: c.ink }]}>
             {saving ? "Saving…" : "Save alert"}
@@ -979,11 +1346,11 @@ export function SearchPanel({
           <Text style={[styles.error, { color: c.error }]}>{error}</Text>
         ) : null}
 
-        {!loading && items.length === 0 && !error ? (
+        {hasSearched && !loading && items.length === 0 && !error ? (
           <EmptyState
             title="No search results"
-            body="Try a keyword or open Filters."
-            ctaLabel="Search Lagos"
+            body="Nothing matched that search. Try a different keyword or open Filters."
+            ctaLabel="Search items"
             onCta={() => void run(false)}
             illustration="search"
           />
@@ -1008,8 +1375,8 @@ export function SearchPanel({
                 priceLabel={price}
                 community={item.community || undefined}
                 verified={Boolean(item.seller?.verificationBadge)}
+                imageUri={listingCoverUrl(item) ?? undefined}
                 onPress={() => onOpenListing(item.id)}
-                style={{ width: "48%", marginBottom: 12 }}
               />
             );
           })}
@@ -1048,7 +1415,7 @@ export function SearchPanel({
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {conditions.map((cond) => {
             const selected = condition === cond;
-            const label = cond || "Any";
+            const label = cond ? conditionLabel(cond) : "Any";
             return (
               <Pressable
                 key={label}
@@ -1115,7 +1482,7 @@ export function SearchPanel({
               },
             ]}
             value={priceMin}
-            onChangeText={setPriceMin}
+            onChangeText={setMinPrice}
             placeholder="Min"
             placeholderTextColor={c.muted}
             keyboardType="numeric"
@@ -1131,12 +1498,21 @@ export function SearchPanel({
               },
             ]}
             value={priceMax}
-            onChangeText={setPriceMax}
+            onChangeText={setMaxPrice}
+            onSubmitEditing={() => {
+              confirmPriceRange();
+            }}
             placeholder="Max"
             placeholderTextColor={c.muted}
             keyboardType="numeric"
+            returnKeyType="done"
           />
         </View>
+        {priceError ? (
+          <Text style={{ color: c.error, marginTop: 8 }} accessibilityRole="alert">
+            {priceError}
+          </Text>
+        ) : null}
         <Text style={[styles.label, { color: c.muted }]}>Sort</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {(
@@ -1178,6 +1554,7 @@ export function SearchPanel({
             setVerifiedOnly(false);
             setPriceMin("");
             setPriceMax("");
+            setPriceError(null);
             setSort("newest");
           }}
         >
@@ -1186,12 +1563,21 @@ export function SearchPanel({
           </Text>
         </Pressable>
         <Pressable
-          style={[styles.primaryBtn, { backgroundColor: c.orange }]}
+          style={[
+            styles.primaryBtn,
+            {
+              backgroundColor: c.orange,
+              opacity: queryReady ? 1 : 0.45,
+            },
+          ]}
           onPress={() => {
+            if (!confirmPriceRange()) return;
             setFiltersOpen(false);
             void run(false);
           }}
+          disabled={!queryReady}
           accessibilityRole="button"
+          accessibilityState={{ disabled: !queryReady }}
         >
           <Text style={styles.primaryBtnText}>Apply</Text>
         </Pressable>
@@ -1204,10 +1590,12 @@ export function FavouritesPanel({
   onOpenListing,
   onBrowse,
   onOpenSearch,
+  savedSync,
 }: {
   onOpenListing: (id: string) => void;
   onBrowse?: () => void;
   onOpenSearch?: (filters?: SearchFilters) => void;
+  savedSync?: { id: string; saved: boolean; token: number } | null;
 }) {
   const c = useColors();
   const [tab, setTab] = useState<"items" | "searches">("items");
@@ -1216,6 +1604,8 @@ export function FavouritesPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const removedIds = useRef(new Set<string>());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1231,7 +1621,11 @@ export function FavouritesPanel({
       }
       const { getMeFavourites } = await import("./lib/discovery");
       const res = await getMeFavourites(token);
-      setItems(res.items.map((i) => i.listing));
+      setItems(
+        res.items
+          .map((i) => i.listing)
+          .filter((listing) => !removedIds.current.has(listing.id)),
+      );
       setSearches(res.searches ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
@@ -1243,6 +1637,64 @@ export function FavouritesPanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!savedSync) return;
+    if (!savedSync.saved) {
+      removedIds.current.add(savedSync.id);
+      setItems((prev) => prev.filter((item) => item.id !== savedSync.id));
+      return;
+    }
+    removedIds.current.delete(savedSync.id);
+    void load();
+  }, [savedSync, load]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 2800);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  async function removeSaved(listingId: string) {
+    removedIds.current.add(listingId);
+    setItems((prev) => prev.filter((item) => item.id !== listingId));
+    try {
+      const { getAccessToken } = await import("./lib/auth");
+      const token = await getAccessToken();
+      if (!token) {
+        removedIds.current.delete(listingId);
+        setError("Sign in to update your wishlist");
+        void load();
+        return;
+      }
+      const { unfavouriteListing } = await import("./lib/discovery");
+      await unfavouriteListing(listingId, token);
+    } catch (err) {
+      removedIds.current.delete(listingId);
+      setError(err instanceof Error ? err.message : "Could not update wishlist");
+      void load();
+    }
+  }
+
+  async function addListingToCart(listingId: string) {
+    setBusyId(listingId);
+    setError(null);
+    try {
+      const { getAccessToken } = await import("./lib/auth");
+      const token = await getAccessToken();
+      if (!token) {
+        setError("Sign in to use the cart");
+        return;
+      }
+      const { addToCart } = await import("./lib/cart");
+      await addToCart(token, listingId);
+      setToast("Added to cart");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add to cart");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function patchSearch(
     search: SavedSearch,
@@ -1366,24 +1818,76 @@ export function FavouritesPanel({
           <EmptyState
             title="No saved items"
             body="Heart a listing to keep it here."
-            ctaLabel="Browse Lagos"
+            ctaLabel="Search for favorites"
             onCta={() => onBrowse?.()}
             illustration="saved"
           />
         ) : (
-          items.map((item) => (
-            <Pressable
-              key={item.id}
-              style={styles.listingRow}
-              onPress={() => onOpenListing(item.id)}
-            >
-              <Text style={styles.tileTitle}>{item.title || "Untitled"}</Text>
-              <Text style={styles.tileMeta}>
-                {formatNgnFromKobo(item.priceKobo)}
-                {item.community ? ` · ${item.community}` : ""}
-              </Text>
-            </Pressable>
-          ))
+          items.map((item) => {
+            const photo = listingCoverUrl(item);
+            const note = savedListingNote(item);
+            return (
+              <View key={item.id}>
+                <View
+                  style={[
+                    styles.listingRow,
+                    { flexDirection: "row", alignItems: "center", gap: 12 },
+                  ]}
+                >
+                  <Pressable
+                    style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 12 }}
+                    onPress={() => onOpenListing(item.id)}
+                    accessibilityRole="button"
+                  >
+                    {photo ? (
+                      <Image
+                        source={{ uri: photo }}
+                        style={styles.rowThumb}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.rowThumb} />
+                    )}
+                    <View style={styles.rowCopy}>
+                      <Text style={styles.tileTitle}>{item.title || "Untitled"}</Text>
+                      <Text style={styles.tileMeta}>
+                        {formatNgnFromKobo(item.priceKobo)}
+                        {item.community ? ` · ${item.community}` : ""}
+                        {note ? ` · ${note}` : ""}
+                      </Text>
+                    </View>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void removeSaved(item.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${item.title || "listing"} from wishlist`}
+                    hitSlop={8}
+                    style={{
+                      minWidth: 44,
+                      minHeight: 44,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ color: c.orange, fontSize: 18 }}>♥</Text>
+                  </Pressable>
+                </View>
+                {savedListingCanCart(item) ? (
+                  <Pressable
+                    style={styles.secondaryBtn}
+                    disabled={busyId === item.id}
+                    onPress={() => void addListingToCart(item.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add ${item.title || "listing"} to cart`}
+                  >
+                    <Text style={styles.secondaryBtnText}>
+                      {busyId === item.id ? "Adding…" : "Add to cart"}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })
         )
       ) : searches.length === 0 ? (
         <EmptyState
@@ -1465,7 +1969,7 @@ function summarizeSavedFiltersInline(filters: Record<string, unknown>): string {
     parts.push(filters.community);
   if (filters.radiusKm != null) parts.push(`${filters.radiusKm} km`);
   if (typeof filters.condition === "string" && filters.condition)
-    parts.push(String(filters.condition).replace(/_/g, " "));
+    parts.push(conditionLabel(filters.condition));
   if (filters.verifiedOnly) parts.push("Verified");
   return parts.join(" · ") || "Custom filters";
 }
@@ -1519,8 +2023,6 @@ const styles = StyleSheet.create({
     color: "#D96A32",
     fontSize: 11,
     fontWeight: "700",
-    letterSpacing: 1.2,
-    textTransform: "uppercase",
   },
   brandHeroTitle: {
     color: "#FCFAF6",
@@ -1548,6 +2050,8 @@ const styles = StyleSheet.create({
   },
   locationPill: {
     alignSelf: "flex-start",
+    maxWidth: "100%",
+    marginTop: 16,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
@@ -1583,7 +2087,25 @@ const styles = StyleSheet.create({
   cityAreas: { fontSize: 13, lineHeight: 18 },
   cityMeta: { fontSize: 12, marginTop: 2 },
   locIcon: { width: 18, height: 18 },
-  locationText: { fontSize: 15, fontWeight: "600", maxWidth: 240 },
+  locationText: { fontSize: 15, fontWeight: "600", flexShrink: 1 },
+  locChips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  locChip: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minHeight: 36,
+    justifyContent: "center",
+  },
+  locApply: {
+    marginTop: 16,
+    minHeight: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  locApplyText: { color: colors.onAccent, fontWeight: "700" },
+  locClear: { marginTop: 8, paddingVertical: 10, alignItems: "center" },
   searchBar: {
     marginTop: 12,
     borderWidth: StyleSheet.hairlineWidth,
@@ -1596,15 +2118,15 @@ const styles = StyleSheet.create({
   nlHint: { marginTop: 8, fontSize: 13 },
   promoCard: {
     marginTop: 16,
+    width: "78%",
+    alignSelf: "center",
     borderRadius: 16,
     overflow: "hidden",
     borderWidth: StyleSheet.hairlineWidth,
   },
   promoImageWrap: {
     width: "100%",
-    aspectRatio: 4 / 5,
-    alignItems: "center",
-    justifyContent: "center",
+    aspectRatio: 4 / 3,
   },
   promoImage: {
     width: "100%",
@@ -1631,7 +2153,13 @@ const styles = StyleSheet.create({
   },
   communityBannerIcon: { width: 44, height: 44 },
   communityBannerTitle: { fontSize: 15, fontWeight: "700", marginBottom: 2 },
-  catRow: { gap: 8, paddingVertical: 16 },
+  catRow: { gap: 8, paddingVertical: 16, alignItems: "center" },
+  catClear: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   movingCard: {
     width: 168,
     borderRadius: 14,
@@ -1761,6 +2289,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.surface,
   },
+  rowThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: colors.border,
+  },
+  rowCopy: { flex: 1 },
   tileTitle: { fontSize: 15, fontWeight: "500", color: colors.ink },
   tileMeta: { marginTop: 4, fontSize: 13, color: colors.muted },
   tile: {},
@@ -1769,6 +2305,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
     flexDirection: "row",
     flexWrap: "wrap",
-    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "flex-start",
   },
 });

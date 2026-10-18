@@ -49,12 +49,39 @@ export function looksLikeNaturalLanguage(query: string): boolean {
   return words.length >= 3 && nlHints.test(q);
 }
 
+/** Why a saved listing cannot be ordered, if it cannot. */
+export function savedListingNote(listing: {
+  status: string;
+  sellingMode?: string;
+  quantityAvailable?: number;
+}): string | null {
+  if (listing.status === "SOLD") return "Sold";
+  if (listing.status === "RESERVED") return "Reserved";
+  if (listing.status === "EXPIRED") return "No longer listed";
+  if (
+    listing.sellingMode === "SELL" &&
+    (listing.quantityAvailable ?? 0) < 1
+  ) {
+    return "No units left";
+  }
+  return null;
+}
+
+export function savedListingCanCart(listing: {
+  status: string;
+  sellingMode?: string;
+  quantityAvailable?: number;
+}): boolean {
+  return (
+    listing.status === "LIVE" &&
+    listing.sellingMode === "SELL" &&
+    (listing.quantityAvailable ?? 0) > 0
+  );
+}
+
 export function listingPriceLabel(listing: PublicListing): string {
   if (listing.sellingMode === "GIVE_AWAY") return "Free";
-  if (
-    listing.sellingMode === "SWAP" ||
-    listing.sellingMode === "SWAP_CASH"
-  ) {
+  if (listing.sellingMode === "SWAP") {
     return "Swap";
   }
   return formatNgn({ amountKobo: listing.priceKobo });

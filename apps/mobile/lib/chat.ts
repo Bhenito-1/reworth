@@ -32,11 +32,13 @@ export type ConversationListItem = {
   lastMessagePreview: string | null;
   unreadCount: number;
   muted?: boolean;
+  blockedByMe?: boolean;
   activeOffer: {
     id: string;
     amountKobo: number;
     status: OfferStatus | string;
   } | null;
+  deletedAt?: string | null;
   createdAt: string;
 };
 
@@ -96,6 +98,21 @@ export function conversationThumbUrl(thumb: string | null): string | null {
   return null;
 }
 
+/** Chat list line. Hides card JSON and ids. */
+export function safeChatPreview(preview: string | null | undefined): string {
+  const trimmed = preview?.trim() ?? "";
+  if (!trimmed) return "";
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    if (/swap-accepted/i.test(trimmed)) return "Swap accepted";
+    if (/swap-rejected/i.test(trimmed)) return "Swap rejected";
+    if (/swap-cancelled/i.test(trimmed)) return "Swap cancelled";
+    if (/swapProposalId/i.test(trimmed)) return "Swap proposal";
+    if (/offerId/i.test(trimmed)) return "Offer";
+    return "New message";
+  }
+  return trimmed;
+}
+
 export function offerStatusLabel(status: string): string {
   switch (status) {
     case "PENDING":
@@ -119,6 +136,16 @@ export function listConversations(
   token: string,
 ): Promise<ConversationListItem[]> {
   return apiFetch<ConversationListItem[]>("/conversations", { token });
+}
+
+export function deleteConversation(
+  token: string,
+  conversationId: string,
+): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(`/conversations/${conversationId}`, {
+    method: "DELETE",
+    token,
+  });
 }
 
 export function createConversation(
@@ -261,6 +288,10 @@ export function unmuteConversation(
 
 export function blockUser(token: string, userId: string): Promise<unknown> {
   return apiFetch(`/users/${userId}/block`, { method: "POST", token });
+}
+
+export function unblockUser(token: string, userId: string): Promise<unknown> {
+  return apiFetch(`/users/${userId}/block`, { method: "DELETE", token });
 }
 
 export function reportUser(

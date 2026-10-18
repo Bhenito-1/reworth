@@ -121,7 +121,11 @@ test.describe('golden-03 checkout review', () => {
       `${API_BASE}/orders/${order.id}/reviews`,
       { headers: buyerHeaders, data: reviewPayload },
     );
-    expect(buyerReview.ok(), await buyerReview.text()).toBeTruthy();
+    const published = await jsonOrThrow<{ status: string }>(
+      buyerReview,
+      'buyer review',
+    );
+    expect(published.status).toBe('PUBLISHED');
 
     const sellerReview = await request.post(
       `${API_BASE}/orders/${order.id}/reviews`,
@@ -130,6 +134,6 @@ test.describe('golden-03 checkout review', () => {
         data: { ...reviewPayload, body: 'Great buyer — golden-03' },
       },
     );
-    expect(sellerReview.ok(), await sellerReview.text()).toBeTruthy();
+    expect(sellerReview.status()).toBe(403);
   });
 });

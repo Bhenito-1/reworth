@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import {
   Button,
@@ -13,6 +13,7 @@ import {
   Toast,
 } from "@reworth/ui-web";
 import { MakeOfferModal } from "../../../components/chat/MakeOfferModal";
+import { ListingReviews } from "../../../components/trust/ListingReviews";
 import { SwapProposalModal } from "../../../components/swap/SwapProposalModal";
 import { apiFetch, ApiError } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
@@ -25,16 +26,20 @@ import {
   getMeFavourites,
   unfavouriteListing,
 } from "../../../lib/discovery";
+import { addToCart, listCart } from "../../../lib/cart";
+import { CartIcon } from "../../../components/AppNav";
 import { fetchRecommendations } from "../../../lib/intelligence";
+import { removeListing } from "../../../lib/inventory";
 import {
   CONDITION_LABELS,
+  sentenceCaseLabel,
   formatPostedAt,
   getListing,
   getPriceIntelligence,
   listingImageUrl,
+  listingShareLinks,
   reportListing,
 } from "../../../lib/listings";
-import { createGiveawayClaim } from "../../../lib/swap";
 import { formatResponseShort } from "../../../lib/trust";
 import {
   formatInspectedDate,
@@ -68,28 +73,45 @@ export default function ListingPdpPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
   const router = useRouter();
+  const from = useSearchParams().get("from");
+  const backHref = from && /^\/users\/[\w-]+$/.test(from) ? from : null;
 
   const [listing, setListing] = useState<PublicListing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeImage, setActiveImage] = useState(0);
   const [toast, setToast] = useState<{
     message: string;
     tone?: "info" | "success" | "warn" | "error";
+    durationMs?: number;
+    inline?: boolean;
   } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [reportDetail, setReportDetail] = useState("");
   const [reporting, setReporting] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [qty, setQty] = useState(1);
+  const [inCart, setInCart] = useState(0);
+  const [cartBusy, setCartBusy] = useState(false);
+  const [cartReady, setCartReady] = useState(false);
+  const [cartFormOpen, setCartFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const [offerBusy, setOfferBusy] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
-  const [claimBusy, setClaimBusy] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [meId, setMeId] = useState<string | null>(null);
   const [similar, setSimilar] = useState<PublicListing[]>([]);
+  const similarInCategory = useMemo(
+    () =>
+      similar.filter((item) => {
+        if (meId && item.seller?.id === meId) return false;
+        if (!listing?.category?.id) return false;
+        return item.category?.id === listing.category.id;
+      }),
+    [similar, meId, listing?.category?.id],
+  );
   const [priceIntel, setPriceIntel] = useState<PriceIntelligence | null>(null);
   const [reportViewerOpen, setReportViewerOpen] = useState(false);
   const [inspectionReport, setInspectionReport] =
@@ -103,17 +125,50 @@ export default function ListingPdpPage() {
     null,
   );
   const [monetizeBusy, setMonetizeBusy] = useState(false);
+  const [imageIndex, setImageIndex] = useState(0);
+  useEffect(() => {
+    setImageIndex(0);
+  }, [id]);
+  const [deleting, setDeleting] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!id) return;
-    setLoading(true);
-    setError(null);
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const token = getAccessToken();
       const data = await getListing(id, token);
       setListing(data);
-      setActiveImage(0);
-
+      if (data.status === "DRAFT") {
+        setInCart(0);
+        setSimilar([]);
+        setPriceIntel(null);
+        setSaved(false);
+        if (token) {
+          try {
+            const me = await apiFetch<MeResponse>("/me", { token });
+            setMeId(me.id);
+          } catch {
+            setMeId(null);
+          }
+        } else {
+          setMeId(null);
+        }
+        return;
+      }
+      if (token) {
+        void listCart(token)
+          .then((items) => {
+            setInCart(
+              items.find((item) => item.listing.id === id)?.quantity ?? 0,
+            );
+          })
+          .catch(() => undefined);
+      } else {
+        setInCart(0);
+      }
       void fetchRecommendations(
         {
           surface: "similar",
@@ -148,6 +203,7 @@ export default function ListingPdpPage() {
         setSaved(false);
       }
     } catch (err) {
+      if (opts?.silent) return;
       setError(err instanceof ApiError ? err.message : "Listing not found");
       setListing(null);
     } finally {
@@ -159,18 +215,35 @@ export default function ListingPdpPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      void load({ silent: true });
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [load]);
+
+  const stock = listing?.quantityAvailable ?? 1;
+  const remaining = Math.max(0, stock - inCart);
+
+  useEffect(() => {
+    if (remaining < 1) return;
+    setQty((current) => Math.min(Math.max(1, current), remaining));
+  }, [remaining]);
+
   function requireAuth(): string | null {
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to continue", tone: "warn" });
-      router.push("/onboarding");
+      router.push("/");
       return null;
     }
     return token;
   }
 
   async function startChat() {
-    if (!id) return;
+    if (!id || chatBusy) return;
     const token = requireAuth();
     if (!token) return;
     setChatBusy(true);
@@ -178,12 +251,11 @@ export default function ListingPdpPage() {
       const conv = await createConversation(token, id);
       router.push(`/chats/${conv.id}`);
     } catch (err) {
+      setChatBusy(false);
       setToast({
         message: err instanceof ApiError ? err.message : "Could not start chat",
         tone: "error",
       });
-    } finally {
-      setChatBusy(false);
     }
   }
 
@@ -199,25 +271,65 @@ export default function ListingPdpPage() {
         note,
         conversationId: conv.id,
       });
+      const amountLabel = formatNgn({ amountKobo });
+      const item = listing?.title?.trim() || "this item";
       setOfferOpen(false);
-      setToast({ message: "Offer sent", tone: "success" });
+      sessionStorage.setItem(
+        "reworth:offer-notice",
+        JSON.stringify({
+          message: `Offer of ${amountLabel} sent for ${item}. The seller can accept, decline, or counter it.`,
+          tone: "success",
+          durationMs: 6000,
+        }),
+      );
       router.push(`/chats/${conv.id}`);
     } catch (err) {
-      setToast({
-        message: err instanceof ApiError ? err.message : "Offer failed",
-        tone: "error",
+      const amountLabel = formatNgn({ amountKobo });
+      const item = listing?.title?.trim() || "this item";
+      const reason =
+        err instanceof ApiError ? err.message : "Something went wrong. Try again.";
+      setOfferOpen(false);
+      window.requestAnimationFrame(() => {
+        setToast({
+          message: `Your offer of ${amountLabel} for ${item} was not sent. ${reason}`,
+          tone: "error",
+          durationMs: 6000,
+          inline: true,
+        });
       });
     } finally {
       setOfferBusy(false);
     }
   }
 
-  function buyNow(opts?: { instantBuy?: boolean }) {
-    if (!id) return;
-    if (!requireAuth()) return;
-    const qs = new URLSearchParams({ listingId: id });
-    if (opts?.instantBuy) qs.set("instantBuy", "1");
-    router.push(`/checkout?${qs.toString()}`);
+  async function saveToCart() {
+    if (!id || !listing) return;
+    const token = requireAuth();
+    if (!token) return;
+    const stock = listing.quantityAvailable ?? 1;
+    const adding = Math.min(qty, Math.max(0, stock - inCart));
+    if (adding < 1) return;
+    setCartBusy(true);
+    try {
+      const saved = await addToCart(token, id, inCart + adding);
+      setInCart(saved.quantity);
+      setQty(1);
+      setCartReady(true);
+      setToast({
+        message:
+          adding === 1
+            ? "Added to cart. Open your cart to place the order."
+            : `Added ${adding} to cart. Open your cart to place the order.`,
+        tone: "success",
+      });
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not add to cart",
+        tone: "error",
+      });
+    } finally {
+      setCartBusy(false);
+    }
   }
 
   async function toggleSave() {
@@ -233,7 +345,7 @@ export default function ListingPdpPage() {
       if (next) await favouriteListing(id, token);
       else await unfavouriteListing(id, token);
       setToast({
-        message: next ? "Saved" : "Removed from saved",
+        message: next ? "Added to wishlist" : "Removed from wishlist",
         tone: "success",
       });
     } catch (err) {
@@ -247,25 +359,15 @@ export default function ListingPdpPage() {
     }
   }
 
-  async function shareListing() {
-    const url = typeof window !== "undefined" ? window.location.href : "";
+  async function copyShareLink() {
+    if (!id) return;
+    const links = listingShareLinks(id, listing?.title ?? "ReWorth listing");
     try {
-      if (navigator.share) {
-        await navigator.share({
-          title: listing?.title ?? "ReWorth listing",
-          url,
-        });
-        return;
-      }
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(links.message);
+      setShareOpen(false);
       setToast({ message: "Link copied", tone: "success" });
     } catch {
-      try {
-        await navigator.clipboard.writeText(url);
-        setToast({ message: "Link copied", tone: "success" });
-      } catch {
-        setToast({ message: "Could not copy link", tone: "error" });
-      }
+      setToast({ message: "Could not copy link", tone: "error" });
     }
   }
 
@@ -325,6 +427,30 @@ export default function ListingPdpPage() {
     }
   }
 
+  async function deleteDraft() {
+    if (!listing) return;
+    const token = getAccessToken();
+    if (!token) {
+      router.push("/");
+      return;
+    }
+    const title = listing.title || "Untitled";
+    if (!window.confirm(`Delete the draft “${title}”? This cannot be undone.`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await removeListing(token, listing.id);
+      router.push("/selling");
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not delete this draft",
+        tone: "error",
+      });
+      setDeleting(false);
+    }
+  }
+
   async function onRequestInspection() {
     if (!id) return;
     const token = requireAuth();
@@ -352,7 +478,7 @@ export default function ListingPdpPage() {
     return (
       <main className="min-h-[100dvh] bg-[var(--rw-bg)] px-4 py-8 sm:px-8">
         <div className="mx-auto max-w-3xl space-y-4">
-          <Skeleton className="aspect-[4/3] w-full" label="Loading gallery" />
+          <Skeleton className="h-[50dvh] w-full" label="Loading gallery" />
           <Skeleton className="h-8 w-1/2" label="Loading price" />
           <Skeleton className="h-6 w-3/4" label="Loading title" />
           <Skeleton className="h-32 w-full" label="Loading details" />
@@ -378,16 +504,17 @@ export default function ListingPdpPage() {
   }
 
   const images = [...listing.images].sort((a, b) => a.sortOrder - b.sortOrder);
-  const heroUrl = listingImageUrl(images[activeImage]) ?? listingImageUrl(images[0]);
+  const photoIndex =
+    images.length === 0 ? 0 : Math.min(imageIndex, images.length - 1);
+  const isOwner = Boolean(meId && meId === listing.seller.id);
+  const isLive = listing.status === "LIVE";
+  const isDraft = listing.status === "DRAFT";
   const isSwap =
-    listing.sellingMode === "SWAP" || listing.sellingMode === "SWAP_CASH";
+    listing.sellingMode === "SWAP";
   const isGiveAway = listing.sellingMode === "GIVE_AWAY";
   const posted = formatPostedAt(listing.publishedAt ?? listing.createdAt);
 
-  const fulfilment: string[] = [];
-  if (listing.fulfilmentPickup) fulfilment.push("Pickup");
-  if (listing.fulfilmentMeet) fulfilment.push("Meet point");
-  if (listing.fulfilmentDelivery) fulfilment.push("Delivery (quote at checkout)");
+  const fulfilment = ["ReWorth delivery"];
 
   const inspected = resolveInspectedBadge(listing);
   const authLabel = luxuryAuthLabel(listing);
@@ -405,72 +532,80 @@ export default function ListingPdpPage() {
         }}
       />
 
-      <div className="relative z-10 mx-auto max-w-3xl px-4 pb-28 pt-6 sm:px-8">
+      <div className="relative z-10 mx-auto max-w-3xl px-4 pb-16 pt-6 sm:px-8">
+        {toast?.inline ? (
+          <div className="sticky top-14 z-20 mb-4">
+            <Toast
+              message={toast.message}
+              tone={toast.tone}
+              durationMs={toast.durationMs}
+              onDismiss={() => setToast(null)}
+            />
+          </div>
+        ) : null}
         <header className="mb-6 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
-          <button
-            type="button"
-            onClick={() => setReportOpen(true)}
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            Report
-          </button>
+          <div className="flex items-center gap-3">
+            {backHref ? (
+              <Link
+                href={backHref}
+                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
+              >
+                ← Back
+              </Link>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-3">
+            {isOwner ? null : (
+              <button
+                type="button"
+                onClick={() => setReportOpen(true)}
+                className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
+              >
+                Report
+              </button>
+            )}
+          </div>
         </header>
 
         <section aria-label="Photo gallery" className="rw-fade-up">
-          <div className="aspect-[4/3] overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)]">
-            {heroUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={heroUrl}
-                alt=""
-                loading="lazy"
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-[var(--rw-ink-muted)]">
-                No photos yet
-              </div>
-            )}
-          </div>
-          {images.length > 1 ? (
-            <ul className="mt-3 flex gap-2 overflow-x-auto pb-1">
-              {images.map((img, i) => {
-                const thumb = listingImageUrl(img);
-                return (
-                  <li key={img.id}>
-                    <button
-                      type="button"
-                      onClick={() => setActiveImage(i)}
-                      aria-label={`Photo ${i + 1}`}
-                      aria-pressed={activeImage === i}
-                      className={[
-                        "h-16 w-16 overflow-hidden rounded-[var(--rw-radius)] border-2",
-                        activeImage === i
-                          ? "border-[var(--rw-accent)]"
-                          : "border-transparent",
-                      ].join(" ")}
-                    >
-                      {thumb ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={thumb}
-                          alt=""
-                          loading="lazy"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : null}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
+          {images.length === 0 ? (
+            <div className="flex h-[50dvh] items-center justify-center rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)] text-sm text-[var(--rw-ink-muted)]">
+              No photos yet
+            </div>
+          ) : (
+            <div className="relative h-[50dvh] overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)]">
+              {listingImageUrl(images[photoIndex]) ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={listingImageUrl(images[photoIndex]) ?? ""}
+                  alt={`Photo ${photoIndex + 1} of ${images.length}`}
+                  className="h-full w-full object-cover"
+                />
+              ) : null}
+              {photoIndex > 0 ? (
+                <button
+                  type="button"
+                  aria-label="Previous photo"
+                  onClick={() => setImageIndex((i) => Math.max(0, i - 1))}
+                  className="absolute left-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-2xl font-semibold text-[var(--rw-ink)] shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                >
+                  ‹
+                </button>
+              ) : null}
+              {photoIndex < images.length - 1 ? (
+                <button
+                  type="button"
+                  aria-label="Next photo"
+                  onClick={() =>
+                    setImageIndex((i) => Math.min(images.length - 1, i + 1))
+                  }
+                  className="absolute right-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-2xl font-semibold text-[var(--rw-ink)] shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                >
+                  ›
+                </button>
+              ) : null}
+            </div>
+          )}
         </section>
 
         <section className="rw-fade-up-delay mt-8">
@@ -480,9 +615,24 @@ export default function ListingPdpPage() {
               : isSwap
                 ? "Swap"
                 : formatNgn({ amountKobo: listing.priceKobo })}
-            {!isGiveAway && !isSwap && listing.negotiable ? (
-              <span className="ml-2 text-base font-medium text-[var(--rw-ink-muted)]">
-                · Negotiable
+            {!isGiveAway && !isSwap ? (
+              <span className="mt-1 block text-base font-medium text-[var(--rw-ink-muted)] sm:ml-2 sm:mt-0 sm:inline">
+                per unit
+                {listing.status === "SOLD"
+                  ? " · Sold"
+                  : listing.status === "RESERVED"
+                    ? " · Reserved"
+                    : listing.status === "EXPIRED"
+                      ? " · No longer listed"
+                      : typeof listing.quantityAvailable === "number" &&
+                          listing.quantityAvailable < 1
+                        ? " · No units left"
+                        : typeof listing.quantityAvailable === "number"
+                          ? inCart > 0
+                            ? ` · ${remaining} left to add`
+                            : ` · ${listing.quantityAvailable} available`
+                          : ""}
+                {listing.negotiable ? " · Negotiable" : ""}
               </span>
             ) : null}
           </p>
@@ -491,19 +641,11 @@ export default function ListingPdpPage() {
           </h1>
           {(inspected.inspected ||
             authLabel ||
-            listing.certificateId ||
-            listing.instantBuyEligible) && (
+            listing.certificateId) && (
             <ul
               className="mt-3 flex flex-wrap gap-2"
               aria-label="Trust badges"
             >
-              {listing.instantBuyEligible ? (
-                <li>
-                  <span className="inline-flex items-center rounded-[var(--rw-radius)] bg-[var(--rw-accent-muted)] px-3 py-1.5 text-sm font-semibold text-[var(--rw-accent)]">
-                    Instant Buy
-                  </span>
-                </li>
-              ) : null}
               {inspected.inspected ? (
                 <li>
                   <button
@@ -541,7 +683,7 @@ export default function ListingPdpPage() {
               ) : null}
             </ul>
           )}
-          {vehicleListing && !inspected.inspected ? (
+          {isOwner && isLive && vehicleListing && !inspected.inspected ? (
             <p className="mt-3">
               <Button
                 variant="secondary"
@@ -599,7 +741,7 @@ export default function ListingPdpPage() {
               </Link>
             </p>
           ) : null}
-          {meId && meId === listing.seller.id && !listing.movingSale ? (
+          {isOwner && isLive && !listing.movingSale ? (
             <p className="mt-3 text-sm">
               <Link
                 href={`/moving-sales/new?listingId=${listing.id}`}
@@ -609,8 +751,92 @@ export default function ListingPdpPage() {
               </Link>
             </p>
           ) : null}
+          {isOwner && isDraft ? (
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              <Button
+                onClick={() =>
+                  router.push(`/sell?listingId=${listing.id}`)
+                }
+              >
+                Continue
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={deleting}
+                onClick={() => void deleteDraft()}
+              >
+                {deleting ? "Deleting…" : "Delete draft"}
+              </Button>
+            </div>
+          ) : (
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            {isOwner ? null : (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={saving}
+              onClick={() => void toggleSave()}
+              aria-label={saved ? "Remove from wishlist" : "Add to wishlist"}
+              aria-pressed={saved}
+            >
+              <span aria-hidden style={{ color: saved ? "#DC2626" : "#5C636A" }}>
+                {saved ? "♥" : "♡"}
+              </span>
+              <span className="ml-1.5">{saved ? "Saved" : "Save"}</span>
+            </Button>
+            )}
+            {isLive && id ? (
+            <div className="relative">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShareOpen((open) => !open)}
+                aria-label="Share listing"
+                aria-expanded={shareOpen}
+              >
+                Share
+              </Button>
+              {shareOpen ? (
+                <div className="absolute left-0 z-20 mt-2 w-52 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-2 shadow-lg">
+                  {(
+                    [
+                      ["WhatsApp", "whatsapp"],
+                      ["Facebook", "facebook"],
+                      ["X", "x"],
+                    ] as const
+                  ).map(([label, key]) => {
+                    const links = listingShareLinks(
+                      id,
+                      listing?.title ?? "ReWorth listing",
+                    );
+                    return (
+                      <a
+                        key={key}
+                        href={links[key]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block rounded-md px-3 py-2 text-sm font-medium hover:bg-[var(--rw-bg)]"
+                        onClick={() => setShareOpen(false)}
+                      >
+                        {label}
+                      </a>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="block w-full rounded-md px-3 py-2 text-left text-sm font-medium hover:bg-[var(--rw-bg)]"
+                    onClick={() => void copyShareLink()}
+                  >
+                    Copy link
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            ) : null}
+          </div>
+          )}
 
-          {meId && meId === listing.seller.id ? (
+          {isOwner && isLive ? (
             <OwnerMonetization
               listingId={listing.id}
               boosted={Boolean(listing.boosted)}
@@ -629,50 +855,67 @@ export default function ListingPdpPage() {
           ) : null}
         </section>
 
+        {meId === listing.seller.id ? null : (
         <section
           className="mt-8 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-4"
           aria-label="Seller"
         >
-          <Link
-            href={`/users/${listing.seller.id}`}
-            className="flex items-center gap-4 rounded-[var(--rw-radius)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            <div
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--rw-accent-muted)] text-lg font-semibold text-[var(--rw-accent)]"
-              aria-hidden
+          <div className="flex items-start gap-3">
+            <Link
+              href={`/users/${listing.seller.id}?from=/listings/${listing.id}`}
+              className="flex min-w-0 flex-1 items-start gap-3 rounded-[var(--rw-radius)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
             >
-              {(listing.seller.displayName || "S").slice(0, 1).toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold">
-                {listing.seller.displayName}
+              <div
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[var(--rw-accent-muted)] text-lg font-semibold text-[var(--rw-accent)]"
+                aria-hidden
+              >
+                {(listing.seller.displayName || "S").slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold">{listing.seller.displayName}</p>
                 {listing.seller.verificationBadge ? (
-                  <span className="ml-2 text-sm font-medium text-[var(--rw-accent)]">
+                  <p className="text-sm font-medium text-[var(--rw-accent)]">
                     Identity Verified ✓
-                  </span>
+                  </p>
                 ) : null}
-              </p>
-              <p className="text-sm text-[var(--rw-ink-muted)]">
-                {listing.seller.ratingLabel}
-              </p>
-              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                {listing.seller.trustBadge ? (
-                  <span className="rounded-[var(--rw-radius)] bg-[var(--rw-gold-muted)] px-2 py-0.5 text-xs font-semibold text-[var(--rw-ink)]">
-                    {listing.seller.trustBadge}
-                  </span>
-                ) : null}
-                {formatResponseShort(listing.seller.responseMinutes) ? (
-                  <span className="text-[var(--rw-ink-muted)]">
-                    {formatResponseShort(listing.seller.responseMinutes)}
-                  </span>
-                ) : null}
-              </p>
-            </div>
-            <span className="text-sm font-medium text-[var(--rw-accent)]">
-              Profile →
-            </span>
+                <p className="text-sm text-[var(--rw-ink-muted)]">
+                  {listing.seller.ratingLabel}
+                </p>
+                <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                  {listing.seller.trustBadge ? (
+                    <span className="rounded-[var(--rw-radius)] bg-[var(--rw-gold-muted)] px-2 py-0.5 text-xs font-semibold text-[var(--rw-ink)]">
+                      {listing.seller.trustBadge}
+                    </span>
+                  ) : null}
+                  {formatResponseShort(listing.seller.responseMinutes) ? (
+                    <span className="text-[var(--rw-ink-muted)]">
+                      {formatResponseShort(listing.seller.responseMinutes)}
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+            </Link>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="shrink-0"
+              disabled={chatBusy}
+              aria-busy={chatBusy}
+              onClick={() => void startChat()}
+            >
+              Chat
+            </Button>
+          </div>
+          <Link
+            href={`/users/${listing.seller.id}?from=/listings/${listing.id}`}
+            className="mt-3 inline-block text-sm font-medium text-[var(--rw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+          >
+            Profile →
           </Link>
         </section>
+        )}
+
+        <ListingReviews listingId={listing.id} />
 
         <section className="mt-8" aria-labelledby="pdp-desc">
           <h2 id="pdp-desc" className="text-lg font-semibold">
@@ -681,6 +924,111 @@ export default function ListingPdpPage() {
           <p className="mt-3 whitespace-pre-wrap leading-relaxed text-[var(--rw-ink-muted)]">
             {listing.description || "No description provided."}
           </p>
+          {!isGiveAway && !isSwap && meId !== listing.seller.id && listing.status !== "SOLD" ? (
+            <div className="mt-6 flex flex-col items-center gap-3">
+              <CartIcon className="h-20 w-20 text-[var(--rw-ink-muted)]" />
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  className="px-5"
+                  disabled={stock < 1 || remaining < 1}
+                  onClick={() => {
+                    setQty(1);
+                    setCartFormOpen(true);
+                  }}
+                >
+                  {remaining < 1 && inCart > 0 ? "In your cart" : "Add to cart"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    if (!requireAuth()) return;
+                    setOfferOpen(true);
+                  }}
+                >
+                  Make offer
+                </Button>
+              </div>
+              {stock < 1 ? (
+                <p className="mt-2 text-sm font-medium text-[var(--rw-ink-muted)]">
+                  No units left
+                </p>
+              ) : null}
+              {inCart > 0 ? (
+                <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+                  {inCart} already in your cart
+                  {remaining > 0 ? ` · ${remaining} still available` : ""}
+                </p>
+              ) : null}
+              {cartFormOpen && remaining > 0 ? (
+                <form
+                  className="mt-4 w-full space-y-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (meId && meId === listing.seller.id) {
+                      setToast({
+                        message: "You can't add your own listing to the cart",
+                        tone: "warn",
+                      });
+                      return;
+                    }
+                    void saveToCart();
+                  }}
+                >
+                  <p className="text-sm font-medium">How many units?</p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="h-10 w-10 rounded-full border border-[var(--rw-border)]"
+                      onClick={() => setQty((n) => Math.max(1, n - 1))}
+                      aria-label="Decrease quantity"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-6 text-center text-sm font-semibold">
+                      {qty}
+                    </span>
+                    <button
+                      type="button"
+                      className="h-10 w-10 rounded-full border border-[var(--rw-border)] disabled:opacity-40"
+                      disabled={qty >= remaining}
+                      onClick={() =>
+                        setQty((n) => Math.min(remaining, n + 1))
+                      }
+                      aria-label="Increase quantity"
+                    >
+                      +
+                    </button>
+                    <span className="text-sm text-[var(--rw-ink-muted)]">
+                      {remaining} available
+                    </span>
+                  </div>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    className="w-full"
+                    disabled={cartBusy}
+                  >
+                    {cartBusy ? "Adding…" : `Add ${Math.min(qty, remaining)} to cart`}
+                  </Button>
+                </form>
+              ) : null}
+              {inCart > 0 || cartReady ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full"
+                  onClick={() => router.push("/cart")}
+                >
+                  Go to cart
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <section className="mt-8" aria-labelledby="pdp-delivery">
@@ -719,149 +1067,54 @@ export default function ListingPdpPage() {
           </aside>
         ) : null}
 
-        {isSwap ? (
-          <p className="mt-8 text-center text-sm font-medium text-[var(--rw-ink-muted)]">
-            Interested in swapping? Chat with the seller
-          </p>
+        {isSwap && meId !== listing.seller.id ? (
+          <div className="mt-8 flex flex-col items-center gap-3">
+            <p className="text-center text-sm font-medium text-[var(--rw-ink-muted)]">
+              Interested in swapping? Chat with the seller
+            </p>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                if (!requireAuth()) return;
+                setSwapOpen(true);
+              }}
+            >
+              Swap
+            </Button>
+          </div>
         ) : null}
 
-        {similar.length > 0 ? (
+        {isGiveAway && meId !== listing.seller.id ? (
+          <div className="mt-8 flex justify-center">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                if (!id) return;
+                if (!requireAuth()) return;
+                router.push(`/checkout?listingId=${id}`);
+              }}
+            >
+              Get this gift
+            </Button>
+          </div>
+        ) : null}
+
+        {similarInCategory.length > 0 ? (
           <section className="mt-12" aria-labelledby="similar-heading">
             <h2 id="similar-heading" className="text-lg font-semibold">
               Similar items
             </h2>
             <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
-              {similar.map((item) => (
-                <li key={item.id} className="w-40 shrink-0 sm:w-44">
+              {similarInCategory.map((item) => (
+                <li key={item.id} className="w-[7.5rem] shrink-0">
                   <DiscoveryListingCard listing={item} />
                 </li>
               ))}
             </ul>
           </section>
         ) : null}
-      </div>
-
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-3xl flex-wrap gap-2 px-4 py-3 sm:px-8">
-          {isSwap ? (
-            <>
-              <Button
-                variant="primary"
-                className="flex-1"
-                onClick={() => {
-                  if (!requireAuth()) return;
-                  setSwapOpen(true);
-                }}
-              >
-                Swap
-              </Button>
-              <Button
-                variant="ghost"
-                className="flex-1"
-                disabled={chatBusy}
-                onClick={() => void startChat()}
-              >
-                {chatBusy ? "Opening…" : "Chat"}
-              </Button>
-            </>
-          ) : isGiveAway ? (
-            <>
-              <Button
-                variant="primary"
-                className="flex-1"
-                disabled={claimBusy}
-                onClick={async () => {
-                  if (!id) return;
-                  const token = requireAuth();
-                  if (!token) return;
-                  setClaimBusy(true);
-                  try {
-                    await createGiveawayClaim(token, id);
-                    setToast({
-                      message: "Claim sent — seller will review",
-                      tone: "success",
-                    });
-                  } catch (err) {
-                    setToast({
-                      message:
-                        err instanceof ApiError
-                          ? err.message
-                          : "Could not claim",
-                      tone: "error",
-                    });
-                  } finally {
-                    setClaimBusy(false);
-                  }
-                }}
-              >
-                {claimBusy ? "Claiming…" : "Claim this item"}
-              </Button>
-              <Button
-                variant="ghost"
-                className="flex-1"
-                disabled={chatBusy}
-                onClick={() => void startChat()}
-              >
-                Chat
-              </Button>
-            </>
-          ) : (
-            <>
-              {listing.instantBuyEligible ? (
-                <Button
-                  variant="primary"
-                  className="flex-1"
-                  onClick={() => buyNow({ instantBuy: true })}
-                >
-                  Instant Buy
-                </Button>
-              ) : null}
-              <Button
-                variant="secondary"
-                className="flex-1"
-                onClick={() => {
-                  if (!requireAuth()) return;
-                  setOfferOpen(true);
-                }}
-              >
-                Make offer
-              </Button>
-              <Button
-                variant={listing.instantBuyEligible ? "ghost" : "primary"}
-                className="flex-1"
-                onClick={() => buyNow()}
-              >
-                Buy now
-              </Button>
-              <Button
-                variant="ghost"
-                className="flex-1"
-                disabled={chatBusy}
-                onClick={() => void startChat()}
-              >
-                {chatBusy ? "Opening…" : "Chat"}
-              </Button>
-            </>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={saving}
-            onClick={() => void toggleSave()}
-            aria-label={saved ? "Remove from saved" : "Save listing"}
-            aria-pressed={saved}
-          >
-            {saved ? "Saved ♥" : "Save"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void shareListing()}
-            aria-label="Share listing"
-          >
-            Share
-          </Button>
-        </div>
       </div>
 
       <MakeOfferModal
@@ -876,10 +1129,10 @@ export default function ListingPdpPage() {
         onClose={() => setSwapOpen(false)}
         token={getAccessToken() ?? ""}
         targetListingId={id ?? ""}
-        onSubmitted={() =>
-          setToast({ message: "Swap proposal sent", tone: "success" })
-        }
-        onNeedListing={() => router.push("/sell")}
+        onSubmitted={(conversationId) => {
+          setToast({ message: "Swap proposal sent", tone: "success" });
+          if (conversationId) router.push(`/chats/${conversationId}`);
+        }}
       />
 
       <Modal
@@ -932,7 +1185,9 @@ export default function ListingPdpPage() {
           <div className="flex flex-col gap-3 text-sm">
             <p>
               <span className="text-[var(--rw-ink-muted)]">Status · </span>
-              <span className="font-medium">{inspectionReport.status}</span>
+              <span className="font-medium">
+                {sentenceCaseLabel(inspectionReport.status)}
+              </span>
             </p>
             {inspectionReport.conditionScore != null ? (
               <p>
@@ -985,11 +1240,12 @@ export default function ListingPdpPage() {
         )}
       </Modal>
 
-      {toast ? (
-        <div className="fixed bottom-24 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2">
+      {toast && !toast.inline ? (
+        <div className="fixed bottom-6 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2 lg:left-[calc(50%+var(--rw-sidebar-offset,0px))]">
           <Toast
             message={toast.message}
             tone={toast.tone}
+            durationMs={toast.durationMs}
             onDismiss={() => setToast(null)}
           />
         </div>

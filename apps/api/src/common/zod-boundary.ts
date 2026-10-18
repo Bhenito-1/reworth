@@ -13,7 +13,7 @@ export function parseOrThrow<T>(schema: z.ZodType<T>, data: unknown): T {
 }
 
 export const consentUpdateSchema = z.object({
-  channel: z.enum(['SMS', 'MARKETING', 'EMAIL']),
+  channel: z.enum(['MARKETING', 'EMAIL']),
   granted: z.boolean(),
 });
 

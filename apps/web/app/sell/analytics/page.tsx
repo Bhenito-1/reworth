@@ -33,7 +33,7 @@ function MetricTile({
 }) {
   return (
     <div className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-[var(--rw-ink-muted)]">
+      <p className="text-xs font-medium text-[var(--rw-ink-muted)]">
         {label}
       </p>
       <p className="mt-1 text-xl font-semibold tracking-tight">{value}</p>
@@ -118,7 +118,7 @@ export default function SellerAnalyticsPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -128,7 +128,7 @@ export default function SellerAnalyticsPage() {
       setData(res);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(
@@ -223,7 +223,7 @@ export default function SellerAnalyticsPage() {
             description="Publish a listing and get views to see metrics here."
             action={
               <Link href="/sell">
-                <Button variant="sell">SELL</Button>
+                <Button variant="sell">Sell</Button>
               </Link>
             }
           />

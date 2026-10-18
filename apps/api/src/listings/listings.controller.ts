@@ -41,6 +41,12 @@ export class ListingsController {
     return this.listings.create(user.id, dto);
   }
 
+  @Get('inventory')
+  @UseGuards(JwtAuthGuard)
+  inventory(@CurrentUser() user: AuthUser) {
+    return this.listings.sellerInventory(user.id);
+  }
+
   @Get('listings')
   @UseGuards(OptionalJwtAuthGuard)
   browse(
@@ -48,6 +54,12 @@ export class ListingsController {
     @CurrentUser() user: AuthUser | null,
   ) {
     return this.listings.browse(query, user?.id);
+  }
+
+  @Get('listings/mine')
+  @UseGuards(JwtAuthGuard)
+  listMine(@CurrentUser() user: AuthUser) {
+    return this.listings.listMine(user.id);
   }
 
   @Get('listings/:id')

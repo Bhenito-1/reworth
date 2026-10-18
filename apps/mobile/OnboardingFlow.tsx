@@ -1,70 +1,62 @@
 /**
- * Design Elevation — consumer onboarding (phone OR email) + profile customize.
- * Mobile-first; tokens from theme/tokens.ts.
+ * Consumer onboarding — email register/login + profile customise.
  */
 
 import { useEffect, useState } from "react";
 import {
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import * as ImagePicker from "expo-image-picker";
 import { ApiError, apiFetch } from "./lib/api";
 import {
-  isValidNgPhone,
-  normalizeNgPhone,
-  setOnboardingPhone,
-  setTokens,
-} from "./lib/auth";
-import {
-  COMMUNITIES,
-  type Community,
-  type MeResponse,
-} from "./lib/types";
-import {
-  communityLabelsForCity,
-  listRegions,
-  setPreferredCityKey,
-  type RegionCity,
-} from "./lib/region";
-import { brandAssets } from "./lib/brandAssets";
+  areaChoices,
+  FALLBACK_AREAS,
+  FALLBACK_STATES,
+  type AreaChoice,
+} from "./lib/areas";
+import { setTokens } from "./lib/auth";
+import { getRegion, listRegions, type RegionCity } from "./lib/region";
+import { type MeResponse } from "./lib/types";
 import { colors, radius, space, tap, type as typeScale } from "./theme/tokens";
-import { hapticLight } from "./theme/haptics";
 
-type Step =
-  | "welcome"
-  | "method"
-  | "phone"
-  | "otp"
-  | "email"
-  | "profile";
+type Step = "welcome" | "email" | "profile";
 
 type Props = {
+  /** `register` = new-user onboarding; `login` = returning users only. */
+  intent?: "register" | "login";
+  onBack?: () => void;
   onComplete: (me: MeResponse) => void;
 };
 
-export function OnboardingFlow({ onComplete }: Props) {
-  const [step, setStep] = useState<Step>("welcome");
-  const [phone, setPhone] = useState("+234");
-  const [otp, setOtp] = useState("");
+export function OnboardingFlow({
+  intent = "register",
+  onBack,
+  onComplete,
+}: Props) {
+  const [step, setStep] = useState<Step>(
+    intent === "login" ? "email" : "welcome",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [emailMode, setEmailMode] = useState<"register" | "login">("register");
+  const [showPassword, setShowPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
-  const [community, setCommunity] = useState<Community | "">("");
-  const [cityKey, setCityKey] = useState("lagos");
-  const [cities, setCities] = useState<RegionCity[]>([]);
+  const [regions, setRegions] = useState<RegionCity[]>([...FALLBACK_STATES]);
+  const [stateKey, setStateKey] = useState("");
+  const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
+  const [community, setCommunity] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [debugHint, setDebugHint] = useState<string | null>(null);
   const [welcomeSlide, setWelcomeSlide] = useState(0);
 
   useEffect(() => {
@@ -73,84 +65,36 @@ export function OnboardingFlow({ onComplete }: Props) {
 
   useEffect(() => {
     void listRegions()
-      .then((list) => {
-        setCities(list);
-        if (list[0]?.city) setCityKey(list[0].city);
+      .then((items) => {
+        if (items.length > 0) setRegions(items);
       })
-      .catch(() => {
-        /* keep Lagos default */
-      });
+      .catch(() => undefined);
   }, []);
 
-  async function requestOtp() {
-    setError(null);
-    const normalized = normalizeNgPhone(phone);
-    if (!isValidNgPhone(normalized)) {
-      setError("Enter a valid Nigerian mobile (+234…)");
+  useEffect(() => {
+    if (!stateKey) {
+      setAreaOptions([]);
       return;
     }
-    setLoading(true);
-    try {
-      const res = await apiFetch<{
-        ok: boolean;
-        debugCode?: string;
-      }>("/auth/otp/request", {
-        method: "POST",
-        body: { phone: normalized },
+    let cancelled = false;
+    void getRegion(stateKey)
+      .then((detail) => {
+        if (cancelled) return;
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[stateKey] ?? []);
+        setAreaOptions(areaChoices(stateKey, source));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAreaOptions(areaChoices(stateKey, FALLBACK_AREAS[stateKey] ?? []));
+        }
       });
-      await setOnboardingPhone(normalized);
-      setDebugHint(res.debugCode ? `Dev code: ${res.debugCode}` : null);
-      setStep("otp");
-    } catch (err) {
-      const msg =
-        err instanceof ApiError
-          ? err.status === 429
-            ? "Too many codes sent — wait a few minutes, or sign in with email."
-            : err.message
-          : "Could not send code";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function verifyOtp() {
-    setError(null);
-    const code = otp.replace(/\D/g, "");
-    if (code.length < 4) {
-      setError("Enter the SMS code");
-      return;
-    }
-    const normalized = normalizeNgPhone(phone);
-    setLoading(true);
-    try {
-      const res = await apiFetch<{
-        accessToken: string;
-        refreshToken: string;
-        userId: string;
-      }>("/auth/otp/verify", {
-        method: "POST",
-        body: {
-          phone: normalized,
-          code,
-          device: { name: "ReWorth Mobile", platform: "IOS" },
-        },
-      });
-      await setTokens(res.accessToken, res.refreshToken);
-      setAccessToken(res.accessToken);
-      const me = await apiFetch<MeResponse>("/me", { token: res.accessToken });
-      if (me.profile?.displayName) setDisplayName(me.profile.displayName);
-      const pref = me.profile?.preferredCommunity;
-      if (pref && (COMMUNITIES as readonly string[]).includes(pref)) {
-        setCommunity(pref as Community);
-      }
-      setStep("profile");
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Invalid code");
-    } finally {
-      setLoading(false);
-    }
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [stateKey]);
 
   async function submitEmail() {
     setError(null);
@@ -159,38 +103,55 @@ export function OnboardingFlow({ onComplete }: Props) {
       setError("Email and password (min 8 characters) required");
       return;
     }
+    if (intent === "register" && password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
     setLoading(true);
     try {
-      const path =
-        emailMode === "register" ? "/auth/register" : "/auth/login";
-      const body =
-        emailMode === "register"
-          ? {
-              email: em,
-              password,
-              displayName: displayName.trim() || em.split("@")[0],
-              device: { name: "ReWorth Mobile", platform: "IOS" },
-            }
-          : {
-              email: em,
-              password,
-              device: { name: "ReWorth Mobile", platform: "IOS" },
-            };
+      if (intent === "login") {
+        const res = await apiFetch<{
+          accessToken: string;
+          refreshToken: string;
+          userId: string;
+        }>("/auth/login", {
+          method: "POST",
+          body: {
+            email: em,
+            password,
+            device: { name: "ReWorth Mobile", platform: "IOS" },
+          },
+        });
+        await setTokens(res.accessToken, res.refreshToken);
+        setAccessToken(res.accessToken);
+        const me = await apiFetch<MeResponse>("/me", {
+          token: res.accessToken,
+        });
+        onComplete(me);
+        return;
+      }
+
       const res = await apiFetch<{
         accessToken: string;
         refreshToken: string;
         userId: string;
-      }>(path, { method: "POST", body });
+      }>("/auth/register", {
+        method: "POST",
+        body: {
+          email: em,
+          password,
+          displayName: displayName.trim() || em.split("@")[0],
+          device: { name: "ReWorth Mobile", platform: "IOS" },
+        },
+      });
       await setTokens(res.accessToken, res.refreshToken);
       setAccessToken(res.accessToken);
       const me = await apiFetch<MeResponse>("/me", { token: res.accessToken });
       if (me.profile?.displayName) setDisplayName(me.profile.displayName);
       if (me.profile?.bio) setBio(me.profile.bio);
       if (me.profile?.avatarUrl) setAvatarUrl(me.profile.avatarUrl);
-      const pref = me.profile?.preferredCommunity;
-      if (pref && (COMMUNITIES as readonly string[]).includes(pref)) {
-        setCommunity(pref as Community);
-      }
+      const pref = me.profile?.preferredCommunity?.trim();
+      if (pref) setCommunity(pref);
       setStep("profile");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Auth failed");
@@ -212,16 +173,22 @@ export function OnboardingFlow({ onComplete }: Props) {
       aspect: [1, 1],
     });
     if (result.canceled || !result.assets[0]) return;
-    // Local URI stored until profile save — API accepts avatarUrl string.
-    // For elevation MVP we use a data-less public placeholder keyed by asset.
     setAvatarUrl(result.assets[0].uri);
   }
 
   async function saveProfile() {
     setError(null);
     const name = displayName.trim();
-    if (!name || !community) {
-      setError("Name and community are required");
+    if (!name) {
+      setError("Display name is required");
+      return;
+    }
+    if (!stateKey) {
+      setError("Select your state");
+      return;
+    }
+    if (!community || !areaOptions.some((area) => area.value === community)) {
+      setError("Select a preferred area in that state");
       return;
     }
     const token = accessToken;
@@ -231,7 +198,6 @@ export function OnboardingFlow({ onComplete }: Props) {
     }
     setLoading(true);
     try {
-      // Prefer remote avatar when already http(s); skip file:// until upload wired.
       const remoteAvatar =
         avatarUrl && /^https?:\/\//i.test(avatarUrl) ? avatarUrl : undefined;
       const me = await apiFetch<MeResponse>("/me", {
@@ -244,7 +210,6 @@ export function OnboardingFlow({ onComplete }: Props) {
           ...(remoteAvatar ? { avatarUrl: remoteAvatar } : {}),
         },
       });
-      await setPreferredCityKey(cityKey);
       onComplete(me);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save");
@@ -254,21 +219,9 @@ export function OnboardingFlow({ onComplete }: Props) {
   }
 
   const slides = [
-    {
-      title: "Good things find new homes.",
-      line: "Sell what you don’t need — photo to live listing in Lagos.",
-      image: brandAssets.landingPage,
-    },
-    {
-      title: "Buy with local trust",
-      line: "Verified neighbours. Buyer protection on every deal.",
-      image: brandAssets.onboarding,
-    },
-    {
-      title: "Swap or give away",
-      line: "Your unused things are worth something.",
-      image: brandAssets.invite,
-    },
+    { title: "Sell what you don’t need", line: "Photo → AI draft → live in Lagos." },
+    { title: "Buy with local trust", line: "Verified neighbours. Buyer protection." },
+    { title: "Swap or give away", line: "Your unused things are worth something." },
   ];
 
   return (
@@ -276,215 +229,48 @@ export function OnboardingFlow({ onComplete }: Props) {
       contentContainerStyle={styles.pad}
       keyboardShouldPersistTaps="handled"
     >
-      <Image
-        source={brandAssets.logo}
-        style={styles.brandLogo}
-        resizeMode="contain"
-        accessibilityLabel="ReWorth"
-      />
+      <Text style={styles.brand} accessibilityRole="header">
+        ReWorth
+      </Text>
 
       {step === "welcome" ? (
         <View>
-          <View style={styles.welcomeHero}>
-            <Image
-              source={slides[welcomeSlide].image}
-              style={styles.welcomeImage}
-              resizeMode="cover"
-            />
-          </View>
           <Text style={styles.title}>{slides[welcomeSlide].title}</Text>
           <Text style={styles.copy}>{slides[welcomeSlide].line}</Text>
           <View style={styles.dots}>
             {slides.map((_, i) => (
-              <Pressable
+              <View
                 key={i}
-                onPress={() => setWelcomeSlide(i)}
-                accessibilityRole="button"
-                accessibilityLabel={`Slide ${i + 1}`}
-                hitSlop={8}
                 style={[styles.dot, i === welcomeSlide && styles.dotOn]}
               />
             ))}
           </View>
           <Pressable
-            style={({ pressed }) => [
-              styles.primaryBtn,
-              pressed && styles.primaryBtnPressed,
-            ]}
+            style={styles.primaryBtn}
             onPress={() => {
-              void hapticLight();
               if (welcomeSlide < slides.length - 1) {
                 setWelcomeSlide((s) => s + 1);
               } else {
-                setStep("method");
+                setStep("email");
               }
             }}
             accessibilityRole="button"
             accessibilityLabel="Continue"
           >
             <Text style={styles.primaryBtnText}>
-              {welcomeSlide < slides.length - 1 ? "Next" : "Get started"}
+              {welcomeSlide < slides.length - 1 ? "Next" : "Continue with email"}
             </Text>
           </Pressable>
           <Pressable
             onPress={() => {
-              void hapticLight();
-              setStep("method");
+              if (onBack && welcomeSlide === 0) onBack();
+              else setStep("email");
             }}
             accessibilityRole="button"
-            hitSlop={8}
           >
-            <Text style={styles.link}>Skip</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {step === "method" ? (
-        <View>
-          <View style={styles.stepHero}>
-            <Image
-              source={brandAssets.invite}
-              style={styles.stepHeroImage}
-              resizeMode="contain"
-              accessibilityIgnoresInvertColors
-            />
-          </View>
-          <Text style={styles.title}>Join ReWorth</Text>
-          <Text style={styles.copy}>
-            Sign in with your phone number or email — then customise how
-            neighbours see you.
-          </Text>
-          <Pressable
-            style={[styles.methodPhone, loading && styles.btnDisabled]}
-            onPress={() => setStep("phone")}
-            disabled={loading}
-            accessibilityRole="button"
-            accessibilityLabel="Continue with phone"
-          >
-            <Text style={styles.methodLabelOnAccent}>Continue with phone</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.methodEmail, loading && styles.btnDisabled]}
-            onPress={() => setStep("email")}
-            disabled={loading}
-            accessibilityRole="button"
-            accessibilityLabel="Continue with email"
-          >
-            <Text style={styles.methodLabelOnAccent}>Continue with email</Text>
-          </Pressable>
-          {error ? (
-            <Text style={styles.error} accessibilityRole="alert">
-              {error}
+            <Text style={styles.link}>
+              {onBack && welcomeSlide === 0 ? "Back" : "Skip"}
             </Text>
-          ) : null}
-        </View>
-      ) : null}
-
-      {step === "phone" ? (
-        <View>
-          <View style={styles.stepHero}>
-            <Image
-              source={brandAssets.onboarding}
-              style={styles.stepHeroImage}
-              resizeMode="contain"
-              accessibilityIgnoresInvertColors
-            />
-          </View>
-          <Text style={styles.title}>Your phone</Text>
-          <Text style={styles.copy}>
-            We’ll send a 6-digit code by SMS and WhatsApp at the same time.
-          </Text>
-          <View style={styles.channelRow} accessibilityLabel="Delivery channels">
-            <View style={styles.channelChip}>
-              <Text style={styles.channelLabel}>SMS</Text>
-            </View>
-            <View style={styles.channelChip}>
-              <Text style={styles.channelLabel}>WhatsApp</Text>
-            </View>
-          </View>
-          <Text style={styles.label}>Mobile number</Text>
-          <TextInput
-            style={styles.input}
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-            autoComplete="tel"
-            accessibilityLabel="Phone number"
-            testID="phone-input"
-            editable={!loading}
-          />
-          {error ? (
-            <Text style={styles.error} accessibilityRole="alert">
-              {error}
-            </Text>
-          ) : null}
-          {debugHint ? <Text style={styles.hint}>{debugHint}</Text> : null}
-          <Pressable
-            style={[styles.primaryBtn, loading && styles.btnDisabled]}
-            onPress={() => void requestOtp()}
-            disabled={loading}
-            accessibilityRole="button"
-            accessibilityLabel="Send code"
-            testID="send-otp"
-          >
-            <Text style={styles.primaryBtnText}>
-              {loading ? "Sending…" : "Send code"}
-            </Text>
-          </Pressable>
-          <Pressable onPress={() => setStep("method")}>
-            <Text style={styles.link}>Back</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      {step === "otp" ? (
-        <View>
-          <View style={styles.otpHero}>
-            <Image
-              source={brandAssets.trustSecurePayment}
-              style={styles.otpHeroImage}
-              resizeMode="contain"
-              accessibilityLabel="Secure code"
-            />
-            <Image
-              source={brandAssets.verified}
-              style={styles.otpVerified}
-              resizeMode="contain"
-            />
-          </View>
-          <Text style={styles.title}>Enter code</Text>
-          <Text style={styles.copy}>
-            6-digit code from SMS or WhatsApp
-          </Text>
-          <TextInput
-            style={[styles.input, styles.otpInput]}
-            value={otp}
-            onChangeText={(t) => setOtp(t.replace(/\D/g, "").slice(0, 6))}
-            keyboardType="number-pad"
-            maxLength={6}
-            accessibilityLabel="One-time code"
-            testID="otp-input"
-            editable={!loading}
-          />
-          {error ? (
-            <Text style={styles.error} accessibilityRole="alert">
-              {error}
-            </Text>
-          ) : null}
-          <Pressable
-            style={[styles.primaryBtn, loading && styles.btnDisabled]}
-            onPress={() => void verifyOtp()}
-            disabled={loading}
-            accessibilityRole="button"
-            accessibilityLabel="Verify"
-            testID="verify-otp"
-          >
-            <Text style={styles.primaryBtnText}>
-              {loading ? "Verifying…" : "Verify"}
-            </Text>
-          </Pressable>
-          <Pressable onPress={() => setStep("phone")}>
-            <Text style={styles.link}>Change number</Text>
           </Pressable>
         </View>
       ) : null}
@@ -492,39 +278,13 @@ export function OnboardingFlow({ onComplete }: Props) {
       {step === "email" ? (
         <View>
           <Text style={styles.title}>
-            {emailMode === "register" ? "Create account" : "Welcome back"}
+            {intent === "login" ? "Welcome back" : "Create account"}
           </Text>
-          <View style={styles.seg}>
-            <Pressable
-              style={[
-                styles.segItem,
-                emailMode === "register" && styles.segOn,
-              ]}
-              onPress={() => setEmailMode("register")}
-            >
-              <Text
-                style={[
-                  styles.segText,
-                  emailMode === "register" && styles.segTextOn,
-                ]}
-              >
-                Register
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.segItem, emailMode === "login" && styles.segOn]}
-              onPress={() => setEmailMode("login")}
-            >
-              <Text
-                style={[
-                  styles.segText,
-                  emailMode === "login" && styles.segTextOn,
-                ]}
-              >
-                Log in
-              </Text>
-            </Pressable>
-          </View>
+          <Text style={styles.copy}>
+            {intent === "login"
+              ? "Log in with the email you used to join ReWorth."
+              : "Use your email, then customise how neighbours see you."}
+          </Text>
           <Text style={styles.label}>Email</Text>
           <TextInput
             style={styles.input}
@@ -536,19 +296,27 @@ export function OnboardingFlow({ onComplete }: Props) {
             accessibilityLabel="Email"
             editable={!loading}
           />
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
+          <PasswordBox
+            label="Password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
-            autoComplete={
-              emailMode === "register" ? "new-password" : "password"
-            }
-            accessibilityLabel="Password"
+            visible={showPassword}
+            onToggle={() => setShowPassword((current) => !current)}
+            autoComplete={intent === "login" ? "password" : "new-password"}
             editable={!loading}
           />
-          {emailMode === "register" ? (
+          {intent === "register" ? (
+            <PasswordBox
+              label="Confirm password"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              visible={showConfirmPassword}
+              onToggle={() => setShowConfirmPassword((current) => !current)}
+              autoComplete="new-password"
+              editable={!loading}
+            />
+          ) : null}
+          {intent === "register" ? (
             <>
               <Text style={styles.label}>Display name (optional)</Text>
               <TextInput
@@ -574,12 +342,17 @@ export function OnboardingFlow({ onComplete }: Props) {
             <Text style={styles.primaryBtnText}>
               {loading
                 ? "…"
-                : emailMode === "register"
-                  ? "Create account"
-                  : "Log in"}
+                : intent === "login"
+                  ? "Log in"
+                  : "Create account"}
             </Text>
           </Pressable>
-          <Pressable onPress={() => setStep("method")}>
+          <Pressable
+            onPress={() => {
+              if (intent === "login" && onBack) onBack();
+              else setStep("welcome");
+            }}
+          >
             <Text style={styles.link}>Back</Text>
           </Pressable>
         </View>
@@ -589,7 +362,7 @@ export function OnboardingFlow({ onComplete }: Props) {
         <View>
           <Text style={styles.title}>Customise your profile</Text>
           <Text style={styles.copy}>
-            Name, photo, bio, and community — how neighbours in your city see you.
+            Name, photo, bio, and the area you want to shop in.
           </Text>
           <Pressable
             style={styles.avatarBtn}
@@ -621,61 +394,64 @@ export function OnboardingFlow({ onComplete }: Props) {
             accessibilityLabel="Bio"
             editable={!loading}
           />
-          {cities.length > 0 ? (
-            <>
-              <Text style={styles.label}>City</Text>
-              <View style={styles.chips}>
-                {cities.map((city) => {
-                  const key = city.city || city.key;
-                  return (
-                    <Pressable
-                      key={key}
-                      onPress={() => {
-                        setCityKey(key);
-                        setCommunity("");
-                      }}
-                      style={[
-                        styles.chip,
-                        cityKey === key && styles.chipSelected,
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: cityKey === key }}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          cityKey === key && styles.chipTextSelected,
-                        ]}
-                      >
-                        {city.displayName || key}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </>
-          ) : null}
-          <Text style={styles.label}>Preferred community</Text>
+          <Text style={styles.label}>State</Text>
           <View style={styles.chips}>
-            {communityLabelsForCity(cityKey).map((c) => (
+            {(regions.length > 0 ? regions : [...FALLBACK_STATES]).map((item) => (
               <Pressable
-                key={c}
-                onPress={() => setCommunity(c as Community)}
-                style={[styles.chip, community === c && styles.chipSelected]}
+                key={item.city}
+                onPress={() => {
+                  setStateKey(item.city);
+                  setCommunity("");
+                }}
+                style={[styles.chip, stateKey === item.city && styles.chipSelected]}
                 accessibilityRole="button"
-                accessibilityState={{ selected: community === c }}
+                accessibilityState={{ selected: stateKey === item.city }}
               >
                 <Text
                   style={[
                     styles.chipText,
-                    community === c && styles.chipTextSelected,
+                    stateKey === item.city && styles.chipTextSelected,
                   ]}
                 >
-                  {c}
+                  {item.displayName}
                 </Text>
               </Pressable>
             ))}
           </View>
+          {stateKey ? (
+            <>
+              <Text style={styles.label}>Preferred area</Text>
+              {areaOptions.length === 0 ? (
+                <Text style={styles.hint}>No areas are available for this state yet.</Text>
+              ) : (
+                <View style={styles.chips}>
+                  {areaOptions.map((area) => (
+                    <Pressable
+                      key={area.value}
+                      onPress={() => setCommunity(area.value)}
+                      style={[
+                        styles.chip,
+                        community === area.value && styles.chipSelected,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: community === area.value }}
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          community === area.value && styles.chipTextSelected,
+                        ]}
+                      >
+                        {area.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </>
+          ) : (
+            <Text style={styles.hint}>Select a state to see its areas.</Text>
+          )}
           {error ? (
             <Text style={styles.error} accessibilityRole="alert">
               {error}
@@ -697,6 +473,50 @@ export function OnboardingFlow({ onComplete }: Props) {
   );
 }
 
+function PasswordBox({
+  label,
+  value,
+  onChangeText,
+  visible,
+  onToggle,
+  autoComplete,
+  editable,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  visible: boolean;
+  onToggle: () => void;
+  autoComplete: "password" | "new-password";
+  editable: boolean;
+}) {
+  return (
+    <View>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.passwordRow}>
+        <TextInput
+          style={[styles.input, styles.passwordInput]}
+          value={value}
+          onChangeText={onChangeText}
+          secureTextEntry={!visible}
+          autoComplete={autoComplete}
+          autoCapitalize="none"
+          accessibilityLabel={label}
+          editable={editable}
+        />
+        <Pressable
+          onPress={onToggle}
+          accessibilityRole="button"
+          accessibilityLabel={visible ? `Hide ${label}` : `Show ${label}`}
+          style={styles.passwordToggle}
+        >
+          <Text style={styles.passwordToggleText}>{visible ? "◉" : "⌣"}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   pad: {
     padding: space.lg,
@@ -709,105 +529,6 @@ const styles = StyleSheet.create({
     color: colors.ink,
     marginBottom: space.xl,
     letterSpacing: -0.3,
-  },
-  brandLogo: {
-    width: 148,
-    height: 40,
-    marginBottom: space.xl,
-  },
-  welcomeHero: {
-    width: "100%",
-    aspectRatio: 4 / 5,
-    borderRadius: radius.lg,
-    overflow: "hidden",
-    marginBottom: space.lg,
-    backgroundColor: colors.navy,
-  },
-  welcomeImage: {
-    width: "100%",
-    height: "100%",
-  },
-  stepHero: {
-    width: "100%",
-    height: 160,
-    borderRadius: radius.lg,
-    overflow: "hidden",
-    marginBottom: space.lg,
-    backgroundColor: colors.surfaceWarm,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stepHeroImage: {
-    width: "88%",
-    height: "88%",
-  },
-  methodPhone: {
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: tap.min,
-    borderRadius: radius.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    marginBottom: space.sm,
-    backgroundColor: colors.orange,
-  },
-  methodEmail: {
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: tap.min,
-    borderRadius: radius.md,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    marginBottom: space.sm,
-    backgroundColor: colors.navy,
-  },
-  methodLabel: {
-    fontSize: typeScale.body,
-    fontWeight: "600",
-    color: colors.ink,
-  },
-  methodLabelOnAccent: {
-    fontSize: typeScale.body,
-    fontWeight: "700",
-    color: colors.onAccent,
-    textAlign: "center",
-  },
-  channelRow: {
-    flexDirection: "row",
-    gap: space.sm,
-    marginBottom: space.md,
-  },
-  channelChip: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  channelLabel: {
-    fontSize: typeScale.meta,
-    fontWeight: "600",
-    color: colors.muted,
-  },
-  otpHero: {
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: space.lg,
-    height: 96,
-  },
-  otpHeroImage: {
-    width: 72,
-    height: 72,
-  },
-  otpVerified: {
-    position: "absolute",
-    right: "32%",
-    bottom: 4,
-    width: 28,
-    height: 28,
   },
   title: {
     fontSize: typeScale.titleSm,
@@ -840,10 +561,23 @@ const styles = StyleSheet.create({
     color: colors.ink,
     backgroundColor: colors.surface,
   },
-  otpInput: {
-    letterSpacing: 8,
+  passwordRow: {
+    position: "relative",
+    justifyContent: "center",
+  },
+  passwordInput: {
+    paddingRight: 72,
+  },
+  passwordToggle: {
+    position: "absolute",
+    right: space.md,
+    minHeight: tap.min,
+    justifyContent: "center",
+  },
+  passwordToggleText: {
+    color: colors.emerald,
+    fontSize: typeScale.bodySm,
     fontWeight: "600",
-    textAlign: "center",
   },
   bio: {
     minHeight: 88,
@@ -852,30 +586,14 @@ const styles = StyleSheet.create({
   primaryBtn: {
     marginTop: space.xl,
     minHeight: tap.min,
-    borderRadius: radius.lg,
-    backgroundColor: colors.orange,
+    borderRadius: radius.md,
+    backgroundColor: colors.emerald,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: space.lg,
   },
-  primaryBtnPressed: {
-    backgroundColor: colors.orangePressed,
-  },
   primaryBtnText: {
-    color: colors.onAccent,
-    fontSize: typeScale.bodySm,
-    fontWeight: "600",
-  },
-  secondaryBtn: {
-    marginTop: space.md,
-    minHeight: tap.min,
-    borderRadius: radius.lg,
-    backgroundColor: colors.navy,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  secondaryBtnText: {
-    color: colors.onAccent,
+    color: "#FFFFFF",
     fontSize: typeScale.bodySm,
     fontWeight: "600",
   },
@@ -883,7 +601,7 @@ const styles = StyleSheet.create({
   link: {
     marginTop: space.lg,
     textAlign: "center",
-    color: colors.orange,
+    color: colors.emerald,
     fontSize: typeScale.bodySm,
     fontWeight: "500",
   },
@@ -914,8 +632,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   chipSelected: {
-    backgroundColor: colors.beige,
-    borderColor: colors.navy,
+    backgroundColor: colors.emeraldWash,
+    borderColor: colors.emerald,
   },
   chipText: {
     fontSize: typeScale.meta,
@@ -923,27 +641,9 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   chipTextSelected: {
-    color: colors.navy,
+    color: colors.emeraldPressed,
     fontWeight: "600",
   },
-  seg: {
-    flexDirection: "row",
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: "hidden",
-    marginBottom: space.md,
-  },
-  segItem: {
-    flex: 1,
-    minHeight: tap.min,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface,
-  },
-  segOn: { backgroundColor: colors.beige },
-  segText: { fontSize: typeScale.bodySm, color: colors.muted, fontWeight: "500" },
-  segTextOn: { color: colors.navy, fontWeight: "600" },
   dots: {
     flexDirection: "row",
     gap: space.sm,
@@ -955,7 +655,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: colors.border,
   },
-  dotOn: { backgroundColor: colors.orange },
+  dotOn: { backgroundColor: colors.emerald },
   avatarBtn: {
     alignSelf: "center",
     width: 88,
@@ -963,7 +663,7 @@ const styles = StyleSheet.create({
     borderRadius: 44,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.beige,
+    backgroundColor: colors.emeraldWash,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -972,7 +672,7 @@ const styles = StyleSheet.create({
   avatarImg: { width: 88, height: 88 },
   avatarPlus: {
     fontSize: 32,
-    color: colors.orange,
+    color: colors.emerald,
     fontWeight: "600",
   },
 });

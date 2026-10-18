@@ -149,34 +149,28 @@ export class HomeService {
     let live = await this.prisma.listing.findMany({
       where: {
         ...liveWhereBase,
-        ...(query.community ? { community: query.community } : {}),
+        quantityAvailable: { gt: 0 },
+        NOT: { riskFlags: { has: 'swap-response' } },
+        seller: { status: 'ACTIVE' },
+        ...(query.community
+          ? {
+              community: {
+                equals: query.community,
+                mode: 'insensitive' as const,
+              },
+            }
+          : {}),
       },
       include: {
         ...listingInclude,
         events: {
-          where: { type: { in: ['VIEWED', 'SAVED', 'PRICE_CHANGED'] } },
-          select: { type: true, payload: true },
+          where: { type: 'SAVED' },
+          select: { type: true },
         },
       },
       orderBy: { publishedAt: 'desc' },
       take: 60,
     });
-
-    // Empty preferred community → show city-wide so Home never looks dead.
-    if (query.community && live.length === 0) {
-      live = await this.prisma.listing.findMany({
-        where: liveWhereBase,
-        include: {
-          ...listingInclude,
-          events: {
-            where: { type: { in: ['VIEWED', 'SAVED', 'PRICE_CHANGED'] } },
-            select: { type: true, payload: true },
-          },
-        },
-        orderBy: { publishedAt: 'desc' },
-        take: 60,
-      });
-    }
 
     type Row = (typeof live)[number] & { distanceKm?: number | null };
 
@@ -216,19 +210,25 @@ export class HomeService {
       .filter((r) => r.distanceKm != null)
       .sort((a, b) => (a.distanceKm ?? 99) - (b.distanceKm ?? 99));
 
-    const justListed = [...withDistance].sort(
+    const others = (rows: Row[]) =>
+      query.viewerId
+        ? rows.filter((row) => row.sellerId !== query.viewerId)
+        : rows;
+    const browse = others(withDistance);
+
+    const justListed = [...browse].sort(
       (a, b) =>
         (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0),
     );
 
     const priceDropIds = new Set(await this.priceDropListingIds(5));
-    const priceDrops = withDistance.filter((r) => priceDropIds.has(r.id));
+    const priceDrops = browse.filter((r) => priceDropIds.has(r.id));
 
     const popularMeta = new Map<
       string,
       { views: number; saves: number; publishedAt: Date | null }
     >();
-    for (const r of withDistance) {
+    for (const r of browse) {
       const saves = r.events.filter((e) => e.type === 'SAVED').length;
       popularMeta.set(r.id, {
         views: r.views,
@@ -237,11 +237,11 @@ export class HomeService {
       });
     }
     const popularNear = this.recommendations.rank(
-      toItems(inRadius(withDistance), 40),
+      toItems(others(inRadius(withDistance)), 40),
       popularMeta,
     );
 
-    const verified = withDistance.filter((r) =>
+    const verified = others(withDistance).filter((r) =>
       r.seller?.verifications?.some(
         (v) => v.level === 'L3_IDENTITY' && v.status === 'VERIFIED',
       ),
@@ -249,33 +249,45 @@ export class HomeService {
 
     let recommended: PublicListingDto[];
     if (query.viewerId) {
-      recommended = await this.recommendations.recommend({
-        userId: query.viewerId,
-        city: cityLabel,
-        limit: 12,
-        surface: 'home',
-        seed: `${query.viewerId}:home`,
-      });
+      recommended = (
+        await this.recommendations.recommend({
+          userId: query.viewerId,
+          city: cityLabel,
+          limit: 12,
+          surface: 'home',
+          seed: `${query.viewerId}:home`,
+        })
+      ).filter((item) => item.seller.id !== query.viewerId);
     } else {
       recommended = this.recommendations
-        .rank(toItems(withDistance, 40), popularMeta)
+        .rank(toItems(browse, 40), popularMeta)
         .slice(0, 12);
+    }
+
+    if (query.community) {
+      const wanted = query.community.trim().toLowerCase();
+      recommended = recommended.filter(
+        (item) => (item.community ?? '').trim().toLowerCase() === wanted,
+      );
     }
 
     const movingSaleItems = await this.movingSales.topForHome({
       lat: query.lat,
       lng: query.lng,
       radiusKm: query.radiusKm,
+      community: query.community,
       limit: 12,
     });
+
+    const nearbyItems = others(nearbyPool);
 
     return [
       {
         id: 'nearby',
         title: 'Nearby',
-        items: toItems(nearbyPool),
+        items: toItems(nearbyItems),
         emptyMessage:
-          nearbyPool.length === 0
+          nearbyItems.length === 0
             ? 'No listings nearby — try expanding your radius'
             : undefined,
       },

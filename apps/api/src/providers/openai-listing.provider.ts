@@ -121,6 +121,7 @@ export class OpenAiListingProvider implements AiListingProvider {
       'suggestedCondition must be one of: LIKE_NEW, VERY_GOOD, GOOD, FAIR, FOR_PARTS.',
       'suggestedCategory: top-level like Electronics, Fashion, Home, Phones, Kids, Sports, Other.',
       'Prices in Nigerian Naira integers (no symbols). Description 2–4 short sentences.',
+      'Do not mention pickup or delivery preferences.',
     ];
     if (input.titleHint) lines.push(`Title hint: ${input.titleHint}`);
     if (input.descriptionHint)

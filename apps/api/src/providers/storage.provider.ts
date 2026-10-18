@@ -27,7 +27,7 @@ export type PresignUploadResult = {
   publicUrl: string;
 };
 
-/** Object storage abstraction (MinIO / S3-compatible). */
+/** Object storage abstraction (adobe/s3mock locally, AWS S3 in prod). */
 export interface StorageProvider {
   readonly name: string;
   putObject(input: PutObjectInput): Promise<PutObjectResult>;
@@ -95,7 +95,7 @@ export class MockStorageAdapter implements StorageProvider {
   }
 }
 
-/** Local stub that records operations without talking to MinIO. */
-export class MinioStorageStub extends MockStorageAdapter {
-  readonly name = 'minio-stub';
+/** Local stub that records operations without talking to S3. */
+export class S3StorageStub extends MockStorageAdapter {
+  readonly name = 's3-stub';
 }

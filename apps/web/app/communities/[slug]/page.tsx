@@ -15,6 +15,7 @@ import {
   requestJoinCommunity,
   type EstateCommunityDetail,
 } from "../../../lib/estate-communities";
+import { sentenceCaseLabel } from "../../../lib/listings";
 import type { PublicListing } from "../../../lib/types";
 
 export default function CommunityDetailPage() {
@@ -81,7 +82,7 @@ export default function CommunityDetailPage() {
     const token = getAccessToken();
     if (!token) {
       setToast("Sign in to continue");
-      router.push("/onboarding");
+      router.push("/");
       return null;
     }
     return token;
@@ -139,12 +140,6 @@ export default function CommunityDetailPage() {
           >
             ← Communities
           </Link>
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
         </header>
 
         {loading ? (
@@ -166,8 +161,8 @@ export default function CommunityDetailPage() {
           <>
             <section className="rw-fade-up">
               <p className="text-sm font-medium text-[var(--rw-ink-muted)]">
-                {community.type.replace(/_/g, " ")} ·{" "}
-                {community.privacy.replace(/_/g, " ").toLowerCase()}
+                {sentenceCaseLabel(community.type)} ·{" "}
+                {sentenceCaseLabel(community.privacy)}
               </p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
                 {community.name}
@@ -271,9 +266,9 @@ export default function CommunityDetailPage() {
                   No listings in this community yet.
                 </p>
               ) : (
-                <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <ul className="mt-4 flex flex-wrap gap-3">
                   {listings.map((item) => (
-                    <li key={item.id}>
+                    <li key={item.id} className="w-[7.5rem] shrink-0">
                       <DiscoveryListingCard listing={item} />
                     </li>
                   ))}

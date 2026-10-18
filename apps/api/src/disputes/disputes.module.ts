@@ -7,6 +7,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersModule } from '../orders/orders.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { VerticalsModule } from '../verticals/verticals.module';
+import { AdminAlertsModule } from '../admin/admin-alerts.module';
 import { DisputeSellerExpiryScheduler } from './dispute-seller-expiry.scheduler';
 import { DisputesController } from './disputes.controller';
 import { DisputesService } from './disputes.service';
@@ -17,6 +18,7 @@ import { DisputesService } from './disputes.service';
     AuthModule,
     ConfigModule,
     NotificationsModule,
+    AdminAlertsModule,
     forwardRef(() => OrdersModule),
     forwardRef(() => VerticalsModule),
   ],

@@ -2,6 +2,33 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { apiFetch } from "./api";
 import type { PublicListing } from "./types";
 
+/** Why a saved listing cannot be ordered, if it cannot. */
+export function savedListingNote(listing: {
+  status: string;
+  sellingMode?: string;
+  quantityAvailable?: number;
+}): string | null {
+  if (listing.status === "SOLD") return "Sold";
+  if (listing.status === "RESERVED") return "Reserved";
+  if (listing.status === "EXPIRED") return "No longer listed";
+  if (listing.sellingMode === "SELL" && (listing.quantityAvailable ?? 0) < 1) {
+    return "No units left";
+  }
+  return null;
+}
+
+export function savedListingCanCart(listing: {
+  status: string;
+  sellingMode?: string;
+  quantityAvailable?: number;
+}): boolean {
+  return (
+    listing.status === "LIVE" &&
+    listing.sellingMode === "SELL" &&
+    (listing.quantityAvailable ?? 0) > 0
+  );
+}
+
 export type RadiusKm = 2 | 5 | 10 | 25;
 
 export type SearchFilters = {
@@ -77,6 +104,30 @@ export type MeFavouritesResponse = {
 
 const HOME_CACHE_KEY = "rw_home_cache_v1";
 
+const CONDITION_LABELS: Record<string, string> = {
+  NEW: "New",
+  LIKE_NEW: "Like new",
+  VERY_GOOD: "Very good",
+  GOOD: "Good",
+  FAIR: "Fair",
+  FOR_PARTS: "For parts",
+};
+
+/** `ORDER_CANCELLED` → `Order cancelled`. */
+export function sentenceCaseLabel(value: string): string {
+  const words = value.trim().replace(/_/g, " ").toLowerCase();
+  if (!words) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Sentence-case label for a stored condition enum. */
+export function conditionLabel(value: string): string {
+  const key = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  if (CONDITION_LABELS[key]) return CONDITION_LABELS[key];
+  const words = value.replace(/_/g, " ").toLowerCase();
+  return words.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function qs(filters: Record<string, string | number | boolean | undefined>) {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) {
@@ -90,6 +141,7 @@ function qs(filters: Record<string, string | number | boolean | undefined>) {
 export async function fetchHome(
   params: {
     community?: string;
+    city?: string;
     radiusKm?: RadiusKm;
   },
   token?: string | null,
@@ -97,6 +149,7 @@ export async function fetchHome(
   return apiFetch<HomeResponse>(
     `/home${qs({
       community: params.community,
+      city: params.city,
       radiusKm: params.radiusKm,
     })}`,
     { token },
@@ -106,6 +159,14 @@ export async function fetchHome(
 export async function cacheHome(data: HomeResponse): Promise<void> {
   try {
     await AsyncStorage.setItem(HOME_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function clearHomeCache(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(HOME_CACHE_KEY);
   } catch {
     /* ignore */
   }
@@ -188,7 +249,7 @@ export function summarizeSavedFilters(
     parts.push(filters.community);
   if (filters.radiusKm != null) parts.push(`${filters.radiusKm} km`);
   if (typeof filters.condition === "string" && filters.condition)
-    parts.push(String(filters.condition).replace(/_/g, " "));
+    parts.push(conditionLabel(filters.condition));
   if (filters.priceMinKobo != null || filters.priceMaxKobo != null) {
     const min =
       typeof filters.priceMinKobo === "number"

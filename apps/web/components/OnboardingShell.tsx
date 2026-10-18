@@ -48,7 +48,7 @@ export function OnboardingShell({
           </Link>
           {step !== undefined ? (
             <p
-              className="text-sm text-[var(--rw-ink-muted)]"
+              className="text-sm tabular-nums text-[var(--rw-ink-muted)]"
               aria-label={`Step ${step} of ${totalSteps}`}
             >
               {step} / {totalSteps}
@@ -69,7 +69,7 @@ export function OnboardingShell({
               <span
                 key={i}
                 className={[
-                  "h-1 flex-1 rounded-full transition-colors",
+                  "h-1 flex-1 rounded-full transition-colors duration-300",
                   i < step ? "bg-[var(--rw-accent)]" : "bg-[var(--rw-border)]",
                 ].join(" ")}
               />
@@ -92,7 +92,7 @@ export function OnboardingShell({
             {title}
           </h1>
           {subtitle ? (
-            <p className="mt-3 text-base leading-relaxed text-[var(--rw-ink-muted)]">
+            <p className="mt-3 max-w-md text-base leading-relaxed text-[var(--rw-ink-muted)]">
               {subtitle}
             </p>
           ) : null}

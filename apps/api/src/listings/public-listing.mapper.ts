@@ -75,12 +75,15 @@ export type PublicListingDto = {
   authRequired?: boolean;
   authenticationStatus?: string | null;
   proSellerBadge?: string | null;
-  instantBuyEligible?: boolean;
-  instantBuyBadge?: 'Instant Buy' | null;
   boosted?: boolean;
   featured?: boolean;
   boostedUntil?: Date | null;
   featuredUntil?: Date | null;
+  /** Units still available to buy. Price is per unit. */
+  quantityAvailable?: number;
+  quantityTotal?: number;
+  /** Days before an unsold listing is handed on. Null means off. */
+  donateIfUnsoldDays?: number | null;
   /** Present for seller after moderation REJECTED (owner publish path). */
   moderationReasons?: string[];
   riskFlags?: string[];
@@ -111,7 +114,9 @@ type ListingWithRelations = {
   addressPrivate?: string | null;
   authRequired?: boolean;
   authenticationStatus?: string | null;
-  instantBuyEligible?: boolean;
+  quantityAvailable?: number;
+  quantityTotal?: number;
+  donateIfUnsoldDays?: number | null;
   category?: { id: string; slug: string; name: string } | null;
   estateCommunity?: {
     id: string;
@@ -311,8 +316,9 @@ export function toPublicListing(
       ['ACTIVE', 'GRACE'].includes(listing.seller.proAccount.status)
         ? 'Pro Seller'
         : null,
-    instantBuyEligible: listing.instantBuyEligible ?? false,
-    instantBuyBadge: listing.instantBuyEligible ? 'Instant Buy' : null,
+    quantityAvailable: listing.quantityAvailable ?? 1,
+    quantityTotal: listing.quantityTotal ?? 1,
+    donateIfUnsoldDays: listing.donateIfUnsoldDays ?? null,
     boosted: opts?.boosted ?? false,
     featured: opts?.featured ?? false,
     boostedUntil: opts?.boostedUntil ?? null,

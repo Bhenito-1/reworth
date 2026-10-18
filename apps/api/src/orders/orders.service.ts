@@ -12,12 +12,22 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   FulfilmentMethod,
+  NotificationChannel,
   Order,
+  OrderConfirmationStatus,
   OrderStatus,
   Prisma,
   SwapLegStatus,
   TransactionType,
 } from '@prisma/client';
+import {
+  buildEscrowSnapshot,
+  buildOrderLifecycle,
+  type EscrowSnapshot,
+  type OrderLifecycleStage,
+} from '@reworth/shared';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { SUPPORT } from '../admin/admin-roles';
 import { DeliveryService } from '../delivery/delivery.service';
 import { ListingStateMachine } from '../listings/listing-state.machine';
 import { NotificationCategory } from '../notifications/notification-categories';
@@ -29,15 +39,22 @@ import {
   type DeliveryProvider,
 } from '../providers/delivery.provider';
 import { haversineKm } from '../providers/search.provider';
+import { MockPsp } from '../providers/mock-psp';
 import {
   PAYMENT_PROVIDER,
   type PaymentProvider,
 } from '../providers/payment.provider';
 import { ReferralsService } from '../referrals/referrals.service';
 import { TrustScoreService } from '../reviews/trust-score.service';
-import { InstantBuyService } from '../platform-services/instant-buy.service';
 import { LuxuryAuthService } from '../verticals/luxury-auth.service';
-import { CreateOrderDto } from './dto/orders.dto';
+import { HomeCache } from '../home/home.cache';
+import { SwapProposalsService } from '../swap/swap-proposals.service';
+import { InventoryService } from '../inventory/inventory.service';
+import {
+  ConfirmOrderDto,
+  CreateOrderDto,
+  RejectOrderDto,
+} from './dto/orders.dto';
 import {
   computeOrderTotalKobo,
   computeProtectionFeeKobo,
@@ -59,19 +76,53 @@ export type MeetPointSummaryDto = {
   lng: number;
 };
 
+/** One placed order, enough to describe it in a combined email. */
+export type PlacedOrderMail = {
+  id: string;
+  sellerId: string;
+  quantity: number;
+  totalKobo: number;
+  title: string;
+};
+
+const NO_EMAIL: NotificationChannel[] = [
+  NotificationChannel.IN_APP,
+  NotificationChannel.PUSH,
+];
+
+function formatNaira(kobo: number): string {
+  return new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+  }).format(kobo / 100);
+}
+
+function orderMailLine(order: PlacedOrderMail): string {
+  const title = order.title.trim() || 'Item';
+  return `${order.quantity} × ${title} — ${formatNaira(order.totalKobo)}`;
+}
+
 export type OrderDto = {
   id: string;
   listingId: string;
+  listingTitle?: string | null;
   buyerId: string;
   sellerId: string;
   offerId: string | null;
   orderIntentId: string | null;
   amountKobo: number;
   protectionFeeKobo: number;
-  deliveryFeeKobo: number;
+    deliveryFeeKobo: number;
+  swapFeeKobo: number;
   totalKobo: number;
+  quantity: number;
+  unitPriceKobo: number;
   fulfilmentMethod: FulfilmentMethod;
   status: OrderStatus;
+  confirmationStatus: OrderConfirmationStatus;
+  rejectionReason: string | null;
+  sellerNote: string | null;
+  deliveryDate: Date | null;
   buyerProtection: boolean;
   coverageEndsAt: Date | null;
   autoReleaseAt: Date | null;
@@ -89,7 +140,19 @@ export type OrderDto = {
   swapListingBId?: string | null;
   legAStatus?: SwapLegStatus | null;
   legBStatus?: SwapLegStatus | null;
-  cashRecipientId?: string | null;
+  swap?: {
+    deliveryOn: string | null;
+    youReceive: { id: string; title: string; imageUrl: string | null };
+    youSend: { id: string; title: string; imageUrl: string | null };
+    /** False once either person has paid. The other person then has to pay too. */
+    cancellable: boolean;
+    /** This viewer's unpaid swap order, including when they opened the other person's order. */
+    payableOrderId: string | null;
+  } | null;
+  /** Escrow journey stages for UI. */
+  lifecycle?: OrderLifecycleStage[];
+  escrow?: EscrowSnapshot;
+  deliveryStatus?: string | null;
 };
 
 function toOrderDto(
@@ -112,9 +175,16 @@ function toOrderDto(
     amountKobo: o.amountKobo,
     protectionFeeKobo: o.protectionFeeKobo,
     deliveryFeeKobo: o.deliveryFeeKobo,
+    swapFeeKobo: o.swapFeeKobo ?? 0,
     totalKobo: o.totalKobo,
+    quantity: o.quantity ?? 1,
+    unitPriceKobo: o.unitPriceKobo || o.amountKobo,
     fulfilmentMethod: o.fulfilmentMethod,
     status: o.status,
+    confirmationStatus: o.confirmationStatus ?? 'CONFIRMED',
+    rejectionReason: o.rejectionReason ?? null,
+    sellerNote: o.sellerNote ?? null,
+    deliveryDate: o.deliveryDate ?? null,
     buyerProtection: o.buyerProtection,
     coverageEndsAt: o.coverageEndsAt,
     autoReleaseAt: o.autoReleaseAt,
@@ -147,7 +217,6 @@ function toOrderDto(
     swapListingBId: o.swapListingBId,
     legAStatus: o.legAStatus,
     legBStatus: o.legBStatus,
-    cashRecipientId: o.cashRecipientId,
   };
 }
 
@@ -171,10 +240,16 @@ export class OrdersService {
     @Inject(forwardRef(() => LuxuryAuthService))
     private readonly luxuryAuth?: LuxuryAuthService,
     @Optional() private readonly referrals?: ReferralsService,
-    @Optional()
-    @Inject(forwardRef(() => InstantBuyService))
-    private readonly instantBuy?: InstantBuyService,
+    @Optional() private readonly inventory?: InventoryService,
+    @Optional() private readonly alerts?: AdminAlertsService,
+    @Optional() private readonly homeCache?: HomeCache,
+    @Optional() private readonly swaps?: SwapProposalsService,
   ) {}
+
+  /** Home rails are cached. Drop that copy after stock changes so the next visit reads the database. */
+  private async refreshHomeRails(): Promise<void> {
+    await this.homeCache?.clear();
+  }
 
   private feePct(): number {
     return Number(this.config.get('BUYER_PROTECTION_FEE_PCT') ?? 0.025);
@@ -194,7 +269,11 @@ export class OrdersService {
     return Number(this.config.get('BUYER_PROTECTION_COVERAGE_DAYS') ?? 7);
   }
 
-  async create(buyerId: string, dto: CreateOrderDto): Promise<OrderDto> {
+  async create(
+    buyerId: string,
+    dto: CreateOrderDto,
+    opts?: { skipEmail?: boolean; checkoutId?: string },
+  ): Promise<OrderDto> {
     const listing = await this.prisma.listing.findUnique({
       where: { id: dto.listingId },
     });
@@ -249,44 +328,38 @@ export class OrdersService {
       );
     }
 
+    const negotiated = Boolean(dto.offerId || dto.orderIntentId);
+    const quantity = negotiated
+      ? 1
+      : Math.min(999, Math.max(1, dto.quantity ?? 1));
+    const unitPriceKobo = amountKobo;
+    if (!negotiated && listing.sellingMode !== 'SELL') {
+      throw new BadRequestException('This listing is not sold by the unit');
+    }
+    if (
+      !negotiated &&
+      typeof listing.quantityAvailable === 'number' &&
+      listing.quantityAvailable < quantity
+    ) {
+      throw new ConflictException(
+        `Only ${listing.quantityAvailable} unit(s) available`,
+      );
+    }
+    amountKobo = unitPriceKobo * quantity;
+
     const protectionFeeKobo = computeProtectionFeeKobo(
       amountKobo,
       this.feePct(),
       this.feeCap(),
     );
 
-    let deliveryFeeKobo = 0;
-    let distanceKm: number | undefined;
-    let meetPointId: string | null = null;
-
-    if (dto.fulfilmentMethod === FulfilmentMethod.MEET_POINT) {
-      if (!dto.meetPointId) {
-        throw new BadRequestException('meetPointId required for MEET_POINT');
-      }
-      const mp = await this.prisma.meetPoint.findFirst({
-        where: { id: dto.meetPointId, active: true },
-      });
-      if (!mp) throw new NotFoundException('Meet point not found');
-      meetPointId = mp.id;
-    }
-
-    if (dto.fulfilmentMethod === FulfilmentMethod.DELIVERY) {
-      if (
-        dto.toLat != null &&
-        dto.toLng != null &&
-        listing.geoLat != null &&
-        listing.geoLng != null
-      ) {
-        distanceKm = haversineKm(
-          listing.geoLat,
-          listing.geoLng,
-          dto.toLat,
-          dto.toLng,
-        );
-        deliveryFeeKobo = computeDeliveryFeeKobo(distanceKm);
-      }
-      // Quote may also be applied via GET /orders/:id/delivery-quote before pay
-    }
+    // Every order ships with ReWorth delivery. Pickup and meet-up are not offered.
+    const fromLat = listing.geoLat ?? 6.5244;
+    const fromLng = listing.geoLng ?? 3.3792;
+    const toLat = dto.toLat ?? fromLat + 0.02;
+    const toLng = dto.toLng ?? fromLng + 0.02;
+    const distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
+    const deliveryFeeKobo = computeDeliveryFeeKobo(distanceKm);
 
     const totalKobo = computeOrderTotalKobo({
       amountKobo,
@@ -302,21 +375,22 @@ export class OrdersService {
           sellerId: listing.sellerId,
           offerId: offerId ?? null,
           orderIntentId: orderIntentId ?? null,
+          checkoutId: opts?.checkoutId ?? null,
           amountKobo,
+          quantity,
+          unitPriceKobo,
           protectionFeeKobo,
           deliveryFeeKobo,
           totalKobo,
-          fulfilmentMethod: dto.fulfilmentMethod,
-          meetPointId,
+          fulfilmentMethod: FulfilmentMethod.DELIVERY,
+          meetPointId: null,
           status: 'CREATED',
+          confirmationStatus: 'PENDING',
           buyerProtection: true,
         },
       });
 
-      if (
-        dto.fulfilmentMethod === FulfilmentMethod.DELIVERY &&
-        deliveryFeeKobo > 0
-      ) {
+      if (deliveryFeeKobo > 0) {
         const shipment = await tx.deliveryShipment.create({
           data: {
             orderId: created.id,
@@ -340,25 +414,23 @@ export class OrdersService {
         });
       }
 
-      OrderStateMachine.assertTransition('CREATED', 'PAYMENT_PENDING');
-      const pending = await tx.order.update({
-        where: { id: created.id },
-        data: { status: 'PAYMENT_PENDING' },
-      });
+      if (this.inventory) {
+        await this.inventory.reserveStock(tx, listing.id, quantity, buyerId);
+      }
 
       await tx.orderEvent.create({
         data: {
           orderId: created.id,
           type: 'CREATED',
           actorUserId: buyerId,
-          payload: { amountKobo, protectionFeeKobo, totalKobo },
-        },
-      });
-      await tx.orderEvent.create({
-        data: {
-          orderId: created.id,
-          type: 'PAYMENT_PENDING',
-          actorUserId: buyerId,
+          payload: {
+            amountKobo,
+            quantity,
+            unitPriceKobo,
+            protectionFeeKobo,
+            totalKobo,
+            confirmationStatus: 'PENDING',
+          },
         },
       });
 
@@ -369,16 +441,149 @@ export class OrdersService {
         });
       }
 
-      return pending;
+      return created;
     });
 
-    this.notifications.log('order.payment_pending', {
+    await this.refreshHomeRails();
+    this.notifications.log('order.awaiting_confirmation', {
       orderId: order.id,
       buyerId,
       sellerId: listing.sellerId,
+      quantity,
+    });
+
+    const title = listing.title?.trim() || 'your listing';
+    const orderLink = `reworth://orders/${order.id}`;
+    const channels = opts?.skipEmail ? NO_EMAIL : undefined;
+    await this.notifications.notify({
+      userId: buyerId,
+      category: NotificationCategory.ORDER_PLACED,
+      title: 'Order placed',
+      body: `You ordered ${quantity} × ${title}. The seller will accept or reject it. You can pay after they accept.`,
+      deepLink: orderLink,
+      channels,
+      meta: { orderId: order.id, quantity, listingId: listing.id },
+    });
+    await this.notifications.notify({
+      userId: listing.sellerId,
+      category: NotificationCategory.ORDER_PLACED,
+      title: 'New order to accept',
+      body: `A buyer ordered ${quantity} × ${title}. Open this to accept the order or reject it with a reason. Those units stay reserved until you respond.`,
+      deepLink: orderLink,
+      channels,
+      meta: { orderId: order.id, quantity, listingId: listing.id },
     });
 
     return toOrderDto(order);
+  }
+
+  /**
+   * One email per person for orders placed in the same checkout.
+   * In-app notices stay per order. A mail failure does not undo the orders.
+   */
+  async emailOrdersPlaced(
+    buyerId: string,
+    orders: PlacedOrderMail[],
+  ): Promise<void> {
+    if (orders.length === 0) return;
+    if (orders.length === 1) {
+      await this.emailSingleOrderPlaced(buyerId, orders[0]);
+      return;
+    }
+
+    const total = orders.reduce((sum, order) => sum + order.totalKobo, 0);
+    await this.sendOrderMail(buyerId, () =>
+      this.notifications.notify({
+        userId: buyerId,
+        category: NotificationCategory.ORDER_PLACED,
+        title: 'Orders placed',
+        body: [
+          `You placed ${orders.length} orders. Each seller will accept or reject their order. You can pay after they accept.`,
+          ...orders.map(orderMailLine),
+          `Total ${formatNaira(total)}.`,
+        ].join('\n\n'),
+        deepLink: 'reworth://orders',
+        channels: [NotificationChannel.EMAIL],
+        meta: { orderIds: orders.map((order) => order.id) },
+      }),
+    );
+
+    const bySeller = new Map<string, PlacedOrderMail[]>();
+    for (const order of orders) {
+      const group = bySeller.get(order.sellerId) ?? [];
+      group.push(order);
+      bySeller.set(order.sellerId, group);
+    }
+    for (const [sellerId, sellerOrders] of bySeller) {
+      if (sellerOrders.length === 1) {
+        await this.sendOrderMail(sellerId, () =>
+          this.emailSellerNewOrder(sellerOrders[0]),
+        );
+        continue;
+      }
+      await this.sendOrderMail(sellerId, () =>
+        this.notifications.notify({
+          userId: sellerId,
+          category: NotificationCategory.ORDER_PLACED,
+          title: 'New orders to accept',
+          body: [
+            `A buyer placed ${sellerOrders.length} orders with you. Open them to accept or reject. Those units stay reserved until you respond.`,
+            ...sellerOrders.map(orderMailLine),
+          ].join('\n\n'),
+          deepLink: 'reworth://orders',
+          channels: [NotificationChannel.EMAIL],
+          meta: { orderIds: sellerOrders.map((order) => order.id) },
+        }),
+      );
+    }
+  }
+
+  private async sendOrderMail(
+    userId: string,
+    send: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await send();
+    } catch (err) {
+      this.logger.warn(
+        `Order email failed for ${userId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async emailSingleOrderPlaced(
+    buyerId: string,
+    order: PlacedOrderMail,
+  ): Promise<void> {
+    const title = order.title.trim() || 'your listing';
+    const orderLink = `reworth://orders/${order.id}`;
+    await this.sendOrderMail(buyerId, () =>
+      this.notifications.notify({
+        userId: buyerId,
+        category: NotificationCategory.ORDER_PLACED,
+        title: 'Order placed',
+        body: `You ordered ${order.quantity} × ${title}. The seller will accept or reject it. You can pay after they accept.`,
+        deepLink: orderLink,
+        channels: [NotificationChannel.EMAIL],
+        meta: { orderId: order.id, quantity: order.quantity },
+      }),
+    );
+    await this.sendOrderMail(order.sellerId, () =>
+      this.emailSellerNewOrder(order),
+    );
+  }
+
+  private async emailSellerNewOrder(order: PlacedOrderMail): Promise<void> {
+    const title = order.title.trim() || 'your listing';
+    await this.notifications.notify({
+      userId: order.sellerId,
+      category: NotificationCategory.ORDER_PLACED,
+      title: 'New order to accept',
+      body: `A buyer ordered ${order.quantity} × ${title}. Open this to accept the order or reject it with a reason. Those units stay reserved until you respond.`,
+      deepLink: `reworth://orders/${order.id}`,
+      channels: [NotificationChannel.EMAIL],
+      meta: { orderId: order.id, quantity: order.quantity },
+    });
   }
 
   async listForUser(userId: string): Promise<OrderDto[]> {
@@ -386,7 +591,7 @@ export class OrdersService {
       where: { OR: [{ buyerId: userId }, { sellerId: userId }] },
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map(toOrderDto);
+    return Promise.all(rows.map((r) => this.toEnrichedOrderDto(r.id, userId)));
   }
 
   async getById(
@@ -405,7 +610,8 @@ export class OrdersService {
     if (order.buyerId !== userId && order.sellerId !== userId) {
       throw new ForbiddenException('Not a participant');
     }
-    return { ...toOrderDto(order), events: order.events };
+    const dto = await this.toEnrichedOrderDto(orderId, userId);
+    return { ...dto, events: order.events };
   }
 
   async markHandedOver(orderId: string, sellerId: string): Promise<OrderDto> {
@@ -421,18 +627,24 @@ export class OrdersService {
       this.luxuryAuth.assertCanHandOver(listing, order.status);
     }
 
-    OrderStateMachine.assertTransition(order.status, 'HANDED_OVER');
+    // Delivery → SHIPPED; meet/pickup → HANDED_OVER
+    const nextStatus: OrderStatus =
+      order.fulfilmentMethod === FulfilmentMethod.DELIVERY
+        ? 'SHIPPED'
+        : 'HANDED_OVER';
+    OrderStateMachine.assertTransition(order.status, nextStatus);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.order.update({
         where: { id: orderId },
-        data: { status: 'HANDED_OVER' },
+        data: { status: nextStatus },
       });
       await tx.orderEvent.create({
         data: {
           orderId,
-          type: 'HANDED_OVER',
+          type: nextStatus,
           actorUserId: sellerId,
+          payload: { fulfilmentMethod: order.fulfilmentMethod },
         },
       });
       return row;
@@ -442,8 +654,21 @@ export class OrdersService {
       orderId,
       buyerId: order.buyerId,
       sellerId,
+      status: nextStatus,
     });
-    return toOrderDto(updated);
+    await this.notifications.notify({
+      userId: order.buyerId,
+      category: NotificationCategory.DELIVERY_UPDATE,
+      title:
+        nextStatus === 'SHIPPED' ? 'Order shipped' : 'Item handed over',
+      body:
+        nextStatus === 'SHIPPED'
+          ? 'Your order is on the way. Confirm receipt when it arrives.'
+          : 'The seller marked the item as handed over. Confirm when you have it.',
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId, status: nextStatus },
+    });
+    return this.toEnrichedOrderDto(updated.id);
   }
 
   async confirmReceipt(orderId: string, buyerId: string): Promise<OrderDto> {
@@ -456,15 +681,33 @@ export class OrdersService {
     if (order.status === 'DISPUTE_HOLD') {
       throw new ConflictException('Order is in dispute hold');
     }
+    if (order.status === 'COMPLETED') {
+      return toOrderDto(order);
+    }
+    // A previous attempt may have saved RECEIVED and then failed to release.
+    if (order.status === 'RECEIVED') {
+      return this.releaseEscrow(orderId, buyerId, 'confirm_receipt');
+    }
     OrderStateMachine.assertTransition(order.status, 'RECEIVED');
 
     const coverageEndsAt = new Date(
       Date.now() + this.coverageDays() * 24 * 60 * 60 * 1000,
     );
 
+    const fromStatuses: OrderStatus[] = [
+      'HANDED_OVER',
+      'DELIVERED',
+      'SHIPPED',
+    ];
+    if (!fromStatuses.includes(order.status)) {
+      throw new ConflictException(
+        `Cannot confirm receipt from status ${order.status}`,
+      );
+    }
+
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.order.updateMany({
-        where: { id: orderId, status: 'HANDED_OVER' },
+        where: { id: orderId, status: { in: fromStatuses } },
         data: {
           status: 'RECEIVED',
           coverageEndsAt,
@@ -478,7 +721,7 @@ export class OrdersService {
           orderId,
           type: 'RECEIVED',
           actorUserId: buyerId,
-          payload: { coverageEndsAt },
+          payload: { coverageEndsAt, previousStatus: order.status },
         },
       });
     });
@@ -489,8 +732,166 @@ export class OrdersService {
     return this.releaseEscrow(orderId, buyerId, 'confirm_receipt');
   }
 
+  async confirm(
+    orderId: string,
+    sellerId: string,
+    dto: ConfirmOrderDto,
+  ): Promise<OrderDto> {
+    const order = await this.requireOrder(orderId);
+    if (order.sellerId !== sellerId) {
+      throw new ForbiddenException('Only the seller can confirm');
+    }
+    if (order.confirmationStatus === 'CONFIRMED' && order.status === 'PAYMENT_PENDING') {
+      return toOrderDto(order);
+    }
+    if (order.confirmationStatus !== 'PENDING' || order.status !== 'CREATED') {
+      throw new ConflictException('This order is not awaiting confirmation');
+    }
+    const deliveryDate = new Date(dto.deliveryDate);
+    if (Number.isNaN(deliveryDate.getTime())) {
+      throw new BadRequestException('Delivery date is invalid');
+    }
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    if (deliveryDate < startOfToday) {
+      throw new BadRequestException('Delivery date must be today or later');
+    }
+
+    OrderStateMachine.assertTransition('CREATED', 'PAYMENT_PENDING');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: 'PAYMENT_PENDING',
+          confirmationStatus: 'CONFIRMED',
+          deliveryDate,
+          sellerNote: dto.sellerNote?.trim() || null,
+        },
+      });
+      await tx.orderEvent.create({
+        data: {
+          orderId,
+          type: 'CONFIRMED',
+          actorUserId: sellerId,
+          payload: {
+            deliveryDate: deliveryDate.toISOString(),
+            sellerNote: dto.sellerNote?.trim() || null,
+          },
+        },
+      });
+      return row;
+    });
+
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: order.listingId },
+      select: { title: true },
+    });
+    const title = listing?.title?.trim() || 'your item';
+    const when = deliveryDate.toLocaleDateString('en-NG', {
+      timeZone: 'Africa/Lagos',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+    const note = dto.sellerNote?.trim();
+    await this.notifications.notify({
+      userId: order.buyerId,
+      category: NotificationCategory.ORDER_CONFIRMED,
+      title: 'Awaiting payment',
+      body: note
+        ? `The seller accepted ${order.quantity} × ${title}. Delivery date: ${when}. Note: ${note}. Complete payment to confirm, or cancel.`
+        : `The seller accepted ${order.quantity} × ${title}. Delivery date: ${when}. Complete payment to confirm, or cancel.`,
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId, deliveryDate: deliveryDate.toISOString() },
+    });
+
+    return toOrderDto(updated);
+  }
+
+  async reject(
+    orderId: string,
+    sellerId: string,
+    dto: RejectOrderDto,
+  ): Promise<OrderDto> {
+    const order = await this.requireOrder(orderId);
+    if (order.sellerId !== sellerId) {
+      throw new ForbiddenException('Only the seller can reject');
+    }
+    if (order.confirmationStatus === 'REJECTED') {
+      return toOrderDto(order);
+    }
+    if (order.confirmationStatus !== 'PENDING' || order.status !== 'CREATED') {
+      throw new ConflictException('This order is not awaiting confirmation');
+    }
+    const reason = dto.reason.trim();
+    if (reason.length < 3) {
+      throw new BadRequestException('A reason is required');
+    }
+
+    OrderStateMachine.assertTransition(order.status, 'CANCELLED');
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (this.inventory && !order.inventoryCommitted) {
+        await this.inventory.releaseStock(
+          tx,
+          order.listingId,
+          order.quantity ?? 1,
+          sellerId,
+        );
+      }
+      const row = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: 'CANCELLED',
+          confirmationStatus: 'REJECTED',
+          rejectionReason: reason,
+        },
+      });
+      await tx.orderEvent.create({
+        data: {
+          orderId,
+          type: 'REJECTED',
+          actorUserId: sellerId,
+          payload: { reason },
+        },
+      });
+      return row;
+    });
+
+    await this.refreshHomeRails();
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: order.listingId },
+      select: { title: true },
+    });
+    const title = listing?.title?.trim() || 'your item';
+    await this.notifications.notify({
+      userId: order.buyerId,
+      category: NotificationCategory.ORDER_REJECTED,
+      title: 'Order rejected',
+      body: `The seller rejected your order for ${title}. Reason: ${reason}`,
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId, reason },
+    });
+
+    return toOrderDto(updated);
+  }
+
   async cancel(orderId: string, buyerId: string): Promise<OrderDto> {
     const order = await this.requireOrder(orderId);
+    if (
+      order.transactionType === 'SWAP' &&
+      order.swapProposalId &&
+      this.swaps
+    ) {
+      if (order.buyerId !== buyerId && order.sellerId !== buyerId) {
+        throw new ForbiddenException('Not a swap participant');
+      }
+      if (!['CREATED', 'PAYMENT_PENDING'].includes(order.status)) {
+        throw new ConflictException('Can only cancel before payment');
+      }
+      await this.swaps.cancel(order.swapProposalId, buyerId);
+      await this.refreshHomeRails();
+      return toOrderDto(await this.requireOrder(orderId));
+    }
     if (order.buyerId !== buyerId) {
       throw new ForbiddenException('Only the buyer can cancel');
     }
@@ -500,6 +901,14 @@ export class OrdersService {
     OrderStateMachine.assertTransition(order.status, 'CANCELLED');
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (this.inventory && !order.inventoryCommitted) {
+        await this.inventory.releaseStock(
+          tx,
+          order.listingId,
+          order.quantity ?? 1,
+          buyerId,
+        );
+      }
       const row = await tx.order.update({
         where: { id: orderId },
         data: { status: 'CANCELLED' },
@@ -512,6 +921,21 @@ export class OrdersService {
         },
       });
       return row;
+    });
+
+    await this.refreshHomeRails();
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: order.listingId },
+      select: { title: true },
+    });
+    const title = listing?.title?.trim() || 'a listing';
+    await this.notifications.notify({
+      userId: order.sellerId,
+      category: NotificationCategory.ORDER_CANCELLED,
+      title: 'Order cancelled',
+      body: `The buyer cancelled ${order.quantity ?? 1} × ${title} before paying. Those units are available again.`,
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId },
     });
 
     this.notifications.log('order.cancelled', { orderId, buyerId });
@@ -540,6 +964,7 @@ export class OrdersService {
           status: 'FUNDED',
           fundedAt,
           autoReleaseAt,
+          ...(this.inventory ? { inventoryCommitted: true } : {}),
         },
       });
       if (claimed.count === 0) {
@@ -550,25 +975,81 @@ export class OrdersService {
         data: {
           orderId,
           type: 'FUNDED',
-          payload: { paymentReference, autoReleaseAt },
+          payload: {
+            paymentReference,
+            payerId: order.buyerId,
+            autoReleaseAt,
+          },
         },
       });
 
-      // Keep listing RESERVED until completed (MVP)
-      const listing = await tx.listing.findUnique({
-        where: { id: order.listingId },
-      });
-      if (listing && listing.status === 'LIVE') {
-        ListingStateMachine.assertTransition(listing.status, 'RESERVED');
-        await tx.listing.update({
-          where: { id: listing.id },
-          data: { status: 'RESERVED' },
+      if (order.transactionType === TransactionType.GIVEAWAY) {
+        const qty = 1;
+        const taken = await tx.listing.updateMany({
+          where: {
+            id: order.listingId,
+            quantityAvailable: { gte: qty },
+            status: { in: ['LIVE', 'RESERVED'] },
+          },
+          data: {
+            quantityAvailable: { decrement: qty },
+            quantitySold: { increment: qty },
+          },
         });
+        if (taken.count !== 1) {
+          throw new ConflictException('This gift has already been claimed');
+        }
+        if (order.giveawayClaimId) {
+          await tx.giveawayClaim.update({
+            where: { id: order.giveawayClaimId },
+            data: { status: 'APPROVED', reviewedAt: fundedAt },
+          });
+        }
+        await tx.orderEvent.create({
+          data: {
+            orderId,
+            type: 'GIFT_UNIT_DEDUCTED',
+            actorUserId: order.buyerId,
+            payload: {
+              payerId: order.buyerId,
+              listingId: order.listingId,
+              units: qty,
+              paymentReference,
+            },
+          },
+        });
+        if (this.inventory) {
+          await this.inventory.syncVisibility(
+            tx,
+            order.listingId,
+            order.buyerId,
+            'gift_paid',
+          );
+        }
+      } else if (this.inventory) {
+        await this.inventory.commitSale(
+          tx,
+          order.listingId,
+          order.quantity ?? 1,
+          null,
+        );
+      } else {
+        const listing = await tx.listing.findUnique({
+          where: { id: order.listingId },
+        });
+        if (listing && listing.status === 'LIVE') {
+          ListingStateMachine.assertTransition(listing.status, 'RESERVED');
+          await tx.listing.update({
+            where: { id: listing.id },
+            data: { status: 'RESERVED' },
+          });
+        }
       }
 
       return tx.order.findUniqueOrThrow({ where: { id: orderId } });
     });
 
+    await this.refreshHomeRails();
     this.notifications.log('order.funded', {
       orderId,
       buyerId: order.buyerId,
@@ -606,15 +1087,6 @@ export class OrdersService {
       );
     }
 
-    // Instant Buy: start platform fulfilment when listing is eligible
-    if (this.instantBuy) {
-      await this.instantBuy.afterOrderFunded(orderId).catch((err) =>
-        this.logger.warn(
-          `Instant Buy after fund failed: ${(err as Error).message}`,
-        ),
-      );
-    }
-
     if (this.luxuryAuth) {
       const refreshed = await this.requireOrder(orderId);
       if (refreshed.status === 'IN_AUTHENTICATION') {
@@ -622,15 +1094,7 @@ export class OrdersService {
       }
     }
 
-    // Swap+cash: if both legs already RECEIVED, release + complete now
-    if (
-      updated.transactionType === TransactionType.SWAP_CASH &&
-      this.legsFullyReceived(updated)
-    ) {
-      return this.completeSwapOrGiveaway(orderId, null);
-    }
-
-    return toOrderDto(updated);
+    return this.toEnrichedOrderDto(orderId);
   }
 
   /**
@@ -672,6 +1136,13 @@ export class OrdersService {
     }
     if (payment.status === 'RELEASED') {
       return this.finalizeCompleted(orderId, actorUserId, reason);
+    }
+
+    if (this.psp instanceof MockPsp || this.psp.name === 'mock-psp') {
+      (this.psp as MockPsp).ensureFunded({
+        reference: payment.reference,
+        amountKobo: payment.amountKobo,
+      });
     }
 
     const releaseResult = await this.psp.release({
@@ -734,6 +1205,8 @@ export class OrdersService {
     if (
       order.status !== 'RECEIVED' &&
       order.status !== 'HANDED_OVER' &&
+      order.status !== 'SHIPPED' &&
+      order.status !== 'DELIVERED' &&
       order.status !== 'FUNDED' &&
       order.status !== 'DISPUTE_HOLD' &&
       order.status !== 'CREATED'
@@ -752,6 +1225,8 @@ export class OrdersService {
       OrderStateMachine.assertTransition(order.status, 'COMPLETED');
     } else if (
       order.status === 'HANDED_OVER' ||
+      order.status === 'SHIPPED' ||
+      order.status === 'DELIVERED' ||
       order.status === 'FUNDED'
     ) {
       // Auto-release may skip RECEIVED
@@ -764,8 +1239,10 @@ export class OrdersService {
       new Date(Date.now() + this.coverageDays() * 24 * 60 * 60 * 1000);
 
     const listingIds = new Set<string>([order.listingId]);
-    if (order.swapListingAId) listingIds.add(order.swapListingAId);
-    if (order.swapListingBId) listingIds.add(order.swapListingBId);
+    if (order.legBStatus != null) {
+      if (order.swapListingAId) listingIds.add(order.swapListingAId);
+      if (order.swapListingBId) listingIds.add(order.swapListingBId);
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.order.update({
@@ -786,6 +1263,20 @@ export class OrdersService {
       });
 
       for (const listingId of listingIds) {
+        const qty = listingId === order.listingId ? (order.quantity ?? 1) : 1;
+        if (this.inventory) {
+          if (!order.inventoryCommitted) {
+            await this.inventory.commitSale(tx, listingId, qty, actorUserId);
+          } else if (listingId === order.listingId) {
+            await this.inventory.syncVisibility(
+              tx,
+              listingId,
+              actorUserId,
+              'order_completed',
+            );
+          }
+          continue;
+        }
         const listing = await tx.listing.findUnique({
           where: { id: listingId },
         });
@@ -795,6 +1286,7 @@ export class OrdersService {
             where: { id: listing.id },
             data: { status: 'SOLD' },
           });
+          await tx.favourite.deleteMany({ where: { listingId: listing.id } });
           await tx.listingEvent.create({
             data: {
               listingId: listing.id,
@@ -808,6 +1300,13 @@ export class OrdersService {
             },
           });
         }
+      }
+
+      if (this.inventory && !order.inventoryCommitted) {
+        await tx.order.update({
+          where: { id: orderId },
+          data: { inventoryCommitted: true },
+        });
       }
 
       if (order.swapProposalId) {
@@ -826,6 +1325,7 @@ export class OrdersService {
       return row;
     });
 
+    await this.refreshHomeRails();
     this.notifications.log('order.completed', {
       orderId,
       reason,
@@ -873,23 +1373,12 @@ export class OrdersService {
     return toOrderDto(updated);
   }
 
-  private isNonCashTransaction(order: Order): boolean {
-    return (
-      order.transactionType === TransactionType.SWAP ||
-      order.transactionType === TransactionType.GIVEAWAY ||
-      (order.transactionType === TransactionType.SWAP_CASH &&
-        order.amountKobo === 0)
-    );
-  }
-
   private legsFullyReceived(order: Order): boolean {
     if (order.transactionType === TransactionType.GIVEAWAY) {
       return order.legAStatus === 'RECEIVED';
     }
-    if (
-      order.transactionType === TransactionType.SWAP ||
-      order.transactionType === TransactionType.SWAP_CASH
-    ) {
+    if (order.transactionType === TransactionType.SWAP) {
+      if (order.legBStatus == null) return order.legAStatus === 'RECEIVED';
       return order.legAStatus === 'RECEIVED' && order.legBStatus === 'RECEIVED';
     }
     return false;
@@ -919,7 +1408,6 @@ export class OrdersService {
     }
     if (
       order.transactionType !== TransactionType.SWAP &&
-      order.transactionType !== TransactionType.SWAP_CASH &&
       order.transactionType !== TransactionType.GIVEAWAY
     ) {
       throw new BadRequestException('Order is not a swap/give-away');
@@ -981,7 +1469,6 @@ export class OrdersService {
     }
     if (
       order.transactionType !== TransactionType.SWAP &&
-      order.transactionType !== TransactionType.SWAP_CASH &&
       order.transactionType !== TransactionType.GIVEAWAY
     ) {
       throw new BadRequestException('Order is not a swap/give-away');
@@ -1047,7 +1534,6 @@ export class OrdersService {
     }
     if (
       order.transactionType !== TransactionType.SWAP &&
-      order.transactionType !== TransactionType.SWAP_CASH &&
       order.transactionType !== TransactionType.GIVEAWAY
     ) {
       throw new BadRequestException('Order is not a swap/give-away');
@@ -1098,6 +1584,16 @@ export class OrdersService {
       return row;
     });
 
+    await this.alerts?.notify({
+      roles: SUPPORT,
+      kind: 'SUPPORT',
+      title: 'Swap leg failed',
+      body: `Leg ${leg} failed and needs support.`,
+      href: '/support',
+      entityType: 'Order',
+      entityId: orderId,
+    });
+
     await this.notifications.notify({
       userId: order.buyerId,
       category: NotificationCategory.DISPUTE_UPDATE,
@@ -1119,9 +1615,8 @@ export class OrdersService {
   }
 
   /**
-   * Complete swap/give-away when required legs are RECEIVED.
-   * Pure swap / give-away: skip payment release.
-   * SWAP_CASH with funded escrow: release then complete.
+   * Complete a swap or give-away once the required legs are received.
+   * Delivery is paid on its own and is not released as a seller payout.
    */
   async completeSwapOrGiveaway(
     orderId: string,
@@ -1132,35 +1627,15 @@ export class OrdersService {
       throw new ConflictException('Not all required legs are RECEIVED');
     }
     if (order.status === 'COMPLETED') return toOrderDto(order);
-
-    if (this.isNonCashTransaction(order) || order.amountKobo === 0) {
-      // Pure swap / give-away — no PaymentsService calls
-      return this.finalizeCompleted(orderId, actorUserId, 'swap_legs_complete');
-    }
-
-    // SWAP_CASH: release escrow if funded; otherwise wait for payment
-    const payment = await this.prisma.payment.findFirst({
-      where: { orderId, status: { in: ['SUCCESS', 'RELEASED'] } },
-    });
-    if (payment && payment.status !== 'RELEASED') {
-      return this.releaseEscrow(orderId, actorUserId, 'swap_legs_complete');
-    }
-    if (payment?.status === 'RELEASED') {
-      return this.finalizeCompleted(orderId, actorUserId, 'swap_legs_complete');
-    }
-
-    // Legs done but cash not funded yet — leave PAYMENT_PENDING; complete after fund
-    this.notifications.log('order.swap_legs_awaiting_payment', {
-      orderId,
-      status: order.status,
-    });
-    return toOrderDto(order);
+    return this.finalizeCompleted(orderId, actorUserId, 'swap_legs_complete');
   }
 
   async autoReleaseDue(now = new Date()): Promise<number> {
+    // Only after dispatch/delivery progress — never release from FUNDED alone
+    // (buyer must have had a chance to receive, or seller marked handover).
     const due = await this.prisma.order.findMany({
       where: {
-        status: { in: ['FUNDED', 'HANDED_OVER'] },
+        status: { in: ['SHIPPED', 'HANDED_OVER', 'DELIVERED'] },
         autoReleaseAt: { lte: now },
       },
       select: { id: true },
@@ -1192,12 +1667,132 @@ export class OrdersService {
   private isPostFunded(status: OrderStatus): boolean {
     return [
       'IN_AUTHENTICATION',
+      'SHIPPED',
       'HANDED_OVER',
+      'DELIVERED',
       'RECEIVED',
       'COMPLETED',
       'DISPUTE_HOLD',
       'REFUND_REQUESTED',
       'REFUND_ISSUED',
     ].includes(status);
+  }
+
+  /** Load order with escrow/lifecycle enrichment for API responses. */
+  async toEnrichedOrderDto(
+    orderId: string,
+    viewerId?: string,
+  ): Promise<OrderDto> {
+    const order = await this.prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      include: {
+        meetPoint: true,
+        addressDisclosure: true,
+        payments: { orderBy: { createdAt: 'desc' }, take: 1 },
+        payouts: { orderBy: { createdAt: 'desc' }, take: 1 },
+        deliveryShipment: { select: { status: true } },
+        listing: { select: { title: true } },
+      },
+    });
+    const paymentStatus = order.payments?.[0]?.status ?? null;
+    const payoutStatus = order.payouts?.[0] ? 'RELEASED' : null;
+    const deliveryStatus = order.deliveryShipment?.status ?? null;
+    const base = toOrderDto(order);
+    return {
+      ...base,
+      listingTitle: order.listing?.title?.trim() || null,
+      deliveryStatus,
+      lifecycle: buildOrderLifecycle({
+        status: order.status,
+        fulfilmentMethod: order.fulfilmentMethod,
+        deliveryStatus,
+      }),
+      escrow: buildEscrowSnapshot({
+        orderStatus: order.status,
+        paymentStatus,
+        payoutStatus,
+      }),
+      swap: await this.swapPairForOrder(order, viewerId),
+    };
+  }
+
+  /** Both items on a swap order: what this payer sends and what they receive. */
+  private async swapPairForOrder(
+    order: {
+      transactionType: string;
+      listingId: string;
+      buyerId: string;
+      swapProposalId?: string | null;
+      swapListingAId: string | null;
+      swapListingBId: string | null;
+      deliveryDate: Date | null;
+    },
+    viewerId?: string,
+  ): Promise<OrderDto['swap']> {
+    if (
+      order.transactionType !== 'SWAP' ||
+      !order.swapListingAId ||
+      !order.swapListingBId
+    ) {
+      return null;
+    }
+    const rows = await this.prisma.listing.findMany({
+      where: { id: { in: [order.swapListingAId, order.swapListingBId] } },
+      include: {
+        images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      },
+    });
+    const card = (row: (typeof rows)[number]) => {
+      const image = row.images[0];
+      const variants = (image?.variants ?? {}) as {
+        original?: string;
+        w640?: { webp?: string };
+        w1080?: { webp?: string };
+      };
+      const imageUrl =
+        variants.w1080?.webp ?? variants.w640?.webp ?? variants.original ?? null;
+      return {
+        id: row.id,
+        title: row.title?.trim() || 'Item',
+        imageUrl: imageUrl && /^https?:\/\//i.test(imageUrl) ? imageUrl : null,
+      };
+    };
+    const byId = new Map(rows.map((row) => [row.id, card(row)]));
+    const buyerReceives = byId.get(order.listingId);
+    const sendId =
+      order.listingId === order.swapListingAId
+        ? order.swapListingBId
+        : order.swapListingAId;
+    const buyerSends = byId.get(sendId);
+    if (!buyerReceives || !buyerSends) return null;
+    const viewerIsSeller = Boolean(viewerId && viewerId !== order.buyerId);
+    const youReceive = viewerIsSeller ? buyerSends : buyerReceives;
+    const youSend = viewerIsSeller ? buyerReceives : buyerSends;
+    const legs = order.swapProposalId
+      ? await this.prisma.order.findMany({
+          where: { swapProposalId: order.swapProposalId },
+          select: { id: true, status: true, buyerId: true },
+        })
+      : [];
+    const cancellable =
+      legs.length > 0 &&
+      legs.every(
+        (leg) => leg.status === 'CREATED' || leg.status === 'PAYMENT_PENDING',
+      );
+    const payable = viewerId
+      ? legs.find(
+          (leg) =>
+            leg.buyerId === viewerId && leg.status === 'PAYMENT_PENDING',
+        )
+      : undefined;
+    return {
+      deliveryOn: order.deliveryDate
+        ? order.deliveryDate.toISOString().slice(0, 10)
+        : null,
+      youReceive,
+      youSend,
+      cancellable,
+      payableOrderId: payable?.id ?? null,
+    };
   }
 }

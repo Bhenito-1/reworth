@@ -1,11 +1,42 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+declare function atob(data: string): string;
+
 const ACCESS_KEY = "rw_access_token";
 const REFRESH_KEY = "rw_refresh_token";
-const PHONE_KEY = "rw_onboarding_phone";
+
+const API_URL =
+  (
+    globalThis as {
+      process?: { env?: Record<string, string | undefined> };
+    }
+  ).process?.env?.EXPO_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
+
+const REFRESH_SKEW_MS = 30_000;
+
+export type RefreshOutcome = "ok" | "rejected" | "offline";
+
+type UnauthorizedHandler = () => void;
+
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+/** App registers this to return to the landing screen on session loss. */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
+  unauthorizedHandler = handler;
+}
+
+export function notifyUnauthorized() {
+  unauthorizedHandler?.();
+}
 
 export async function getAccessToken(): Promise<string | null> {
-  return AsyncStorage.getItem(ACCESS_KEY);
+  const token = await AsyncStorage.getItem(ACCESS_KEY);
+  if (token && !accessTokenNeedsRefresh(token)) return token;
+  if (!token && !(await getRefreshToken())) return null;
+  const outcome = await refreshSession();
+  if (outcome === "ok") return AsyncStorage.getItem(ACCESS_KEY);
+  if (outcome === "offline" && token) return token;
+  return null;
 }
 
 export async function getRefreshToken(): Promise<string | null> {
@@ -20,51 +51,97 @@ export async function setTokens(accessToken: string, refreshToken: string) {
 }
 
 export async function clearTokens() {
-  await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, PHONE_KEY]);
+  await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY]);
 }
 
-export async function setOnboardingPhone(phone: string) {
-  await AsyncStorage.setItem(PHONE_KEY, phone);
-}
-
-export async function getOnboardingPhone(): Promise<string | null> {
-  return AsyncStorage.getItem(PHONE_KEY);
-}
-
-/**
- * Returns a usable access token, refreshing when needed.
- * Prefer refresh when present so boot + long sessions stay valid.
- * Lazy-imports api to avoid circular init issues.
- */
-export async function ensureAccessToken(): Promise<string | null> {
-  const existing = await getAccessToken();
-  const refresh = await getRefreshToken();
-  if (!existing && !refresh) return null;
-
-  if (refresh) {
-    try {
-      const { refreshAccessToken } = await import("./api");
-      const next = await refreshAccessToken();
-      if (next) return next;
-    } catch {
-      /* fall through to existing access token */
-    }
+function accessExpiryMs(token: string): number | "none" | "bad" {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return "bad";
+    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(json) as { exp?: number };
+    if (typeof payload.exp !== "number") return "none";
+    return payload.exp * 1000;
+  } catch {
+    return "bad";
   }
+}
 
+/** Usable access token, refreshing the email session when needed. */
+export async function ensureAccessToken(): Promise<string | null> {
   return getAccessToken();
 }
 
-export function normalizeNgPhone(input: string): string {
-  const trimmed = input.trim().replace(/[\s()-]/g, "");
-  if (trimmed.startsWith("+")) return trimmed;
-  if (trimmed.startsWith("234")) return `+${trimmed}`;
-  if (trimmed.startsWith("0") && trimmed.length === 11) {
-    return `+234${trimmed.slice(1)}`;
-  }
-  if (/^\d{10}$/.test(trimmed)) return `+234${trimmed}`;
-  return trimmed.startsWith("+") ? trimmed : `+${trimmed}`;
+export function isAccessTokenExpired(token: string): boolean {
+  const exp = accessExpiryMs(token);
+  if (exp === "none") return false;
+  if (exp === "bad") return true;
+  return exp <= Date.now();
 }
 
-export function isValidNgPhone(phone: string): boolean {
-  return /^\+234\d{10}$/.test(phone);
+export function accessTokenNeedsRefresh(token: string): boolean {
+  const exp = accessExpiryMs(token);
+  if (exp === "none") return false;
+  if (exp === "bad") return true;
+  return exp <= Date.now() + REFRESH_SKEW_MS;
+}
+
+let refreshInFlight: { force: boolean; promise: Promise<RefreshOutcome> } | null =
+  null;
+
+/** One renewal at a time. A reused refresh token revokes the whole session family. */
+export function refreshSession(force = false): Promise<RefreshOutcome> {
+  if (refreshInFlight) {
+    if (refreshInFlight.force || !force) return refreshInFlight.promise;
+    return refreshInFlight.promise.then((outcome) =>
+      outcome === "ok" ? refreshSession(true) : outcome,
+    );
+  }
+  const promise = performRefresh(force).finally(() => {
+    refreshInFlight = null;
+  });
+  refreshInFlight = { force, promise };
+  return promise;
+}
+
+async function performRefresh(force: boolean): Promise<RefreshOutcome> {
+  const current = await AsyncStorage.getItem(ACCESS_KEY);
+  if (!force && current && !accessTokenNeedsRefresh(current)) return "ok";
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    if (current) {
+      await clearTokens();
+      notifyUnauthorized();
+    }
+    return "rejected";
+  }
+  try {
+    const res = await fetch(`${API_URL}/auth/refresh`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (res.status === 401 || res.status === 403) {
+      await clearTokens();
+      notifyUnauthorized();
+      return "rejected";
+    }
+    if (!res.ok) return "offline";
+    const data = (await res.json()) as {
+      accessToken?: string;
+      refreshToken?: string;
+    };
+    if (!data.accessToken || !data.refreshToken) {
+      await clearTokens();
+      notifyUnauthorized();
+      return "rejected";
+    }
+    await setTokens(data.accessToken, data.refreshToken);
+    return "ok";
+  } catch {
+    return "offline";
+  }
 }

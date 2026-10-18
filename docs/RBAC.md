@@ -77,7 +77,7 @@ Catalog “communities” tab remains for quick create; membership queue lives o
 
 | Level | Meaning |
 | --- | --- |
-| L1_PHONE | Phone OTP verified |
+| L1_PHONE | Deferred — SMS OTP removed (ADR-010); email registration is the consumer path |
 | L2_EMAIL | Email verified (password or OAuth) |
 | L3_IDENTITY | Licensed ID check (NIN/BVN/gov ID) — **hash only**, never raw |
 

@@ -7,12 +7,12 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { EmptyState } from "./components/EmptyState";
 import { ListingCard } from "./components/ListingCard";
 import { ApiError } from "./lib/api";

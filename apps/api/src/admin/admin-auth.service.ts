@@ -12,6 +12,7 @@ import { AuthService } from '../auth/auth.service';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { verifyPassword } from '../auth/crypto.util';
+import { suspendedAccountMessage } from '../auth/suspended-account';
 import type { AdminLoginDto, AdminTotpVerifyDto } from './dto/admin-ops.dto';
 
 type AdminLoginResult =
@@ -47,6 +48,11 @@ export class AdminAuthService {
     });
     if (!user?.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+    if (user.status === UserStatus.SUSPENDED) {
+      throw new UnauthorizedException(
+        suspendedAccountMessage(),
+      );
     }
     if (user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException('Account unavailable');

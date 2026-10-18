@@ -69,21 +69,14 @@ function buildMockVariants(
   key: string,
   publicUrl: (k: string) => string,
 ): ImageVariants {
-  const base = key.replace(/\.[^.]+$/, '');
+  // Point every size at the original object so mock/local storage works
+  // without generating real WebP/AVIF derivatives.
+  const url = publicUrl(key);
   return {
-    original: publicUrl(key),
-    w640: {
-      webp: publicUrl(`${base}_640.webp`),
-      avif: publicUrl(`${base}_640.avif`),
-    },
-    w1080: {
-      webp: publicUrl(`${base}_1080.webp`),
-      avif: publicUrl(`${base}_1080.avif`),
-    },
-    w1600: {
-      webp: publicUrl(`${base}_1600.webp`),
-      avif: publicUrl(`${base}_1600.avif`),
-    },
+    original: url,
+    w640: { webp: url, avif: url },
+    w1080: { webp: url, avif: url },
+    w1600: { webp: url, avif: url },
   };
 }
 

@@ -3,15 +3,16 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { AppButton } from "./components/AppButton";
 import { EmptyState } from "./components/EmptyState";
 import { ApiError } from "./lib/api";
+import { sentenceCaseLabel } from "./lib/discovery";
 import { ensureAccessToken, getAccessToken } from "./lib/auth";
 import {
   decidePartnerMembership,
@@ -272,7 +273,7 @@ export function PartnerConsoleModal({ visible, onClose, onNeedAuth }: Props) {
                           "Member"}
                       </Text>
                       <Text style={{ color: c.muted, fontSize: type.meta }}>
-                        {m.status}
+                        {sentenceCaseLabel(m.status)}
                         {m.createdAt
                           ? ` · ${new Date(m.createdAt).toLocaleDateString("en-NG")}`
                           : ""}

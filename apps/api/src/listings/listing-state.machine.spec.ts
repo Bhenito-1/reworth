@@ -35,4 +35,16 @@ describe('ListingStateMachine', () => {
   it('allows LIVE → EXPIRED', () => {
     expect(ListingStateMachine.canTransition('LIVE', 'EXPIRED')).toBe(true);
   });
+
+  it('allows a rejected listing to be published again', () => {
+    expect(ListingStateMachine.canTransition('REJECTED', 'LIVE')).toBe(true);
+    expect(ListingStateMachine.canTransition('REJECTED', 'UNDER_REVIEW')).toBe(
+      true,
+    );
+  });
+
+  it('allows a removed listing back to the marketplace or to rejected', () => {
+    expect(ListingStateMachine.canTransition('REMOVED', 'LIVE')).toBe(true);
+    expect(ListingStateMachine.canTransition('REMOVED', 'REJECTED')).toBe(true);
+  });
 });

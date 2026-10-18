@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { adminFetch } from "../../lib/api";
+import { Button } from "@reworth/ui-web";
+import { adminFetch, ApiError } from "../../lib/api";
 import {
   ActionButton,
   PageHeader,
@@ -19,6 +20,7 @@ type RiskItem = {
   listing?: { title?: string } | null;
   user?: {
     id?: string;
+    status?: string;
     profile?: { displayName?: string } | null;
   } | null;
   assessment?: {
@@ -36,6 +38,7 @@ export default function FraudPage() {
   );
   const [expanded, setExpanded] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
 
   const rows =
     data?.items.map((e) => ({
@@ -46,6 +49,7 @@ export default function FraudPage() {
       listing: e.listing?.title ?? "—",
       user: e.user?.profile?.displayName ?? "—",
       userId: e.userId ?? e.user?.id ?? null,
+      userStatus: e.user?.status ?? null,
       level: e.assessment?.level ?? "—",
       rules:
         Array.isArray(e.assessment?.rulesFired)
@@ -85,16 +89,38 @@ export default function FraudPage() {
           ]}
           rows={rows}
           expandedId={expanded}
-          onRowClick={(row) =>
-            setExpanded(expanded === String(row.id) ? null : String(row.id))
-          }
+          onRowClick={(row) => {
+            const next = expanded === String(row.id) ? null : String(row.id);
+            setExpanded(next);
+            setReason("");
+          }}
           renderExpanded={(row) => {
             const userId = row.userId as string | null;
+            const alreadySuspended = row.userStatus === "SUSPENDED";
+            const reasonOk = reason.trim().length >= 3;
             return (
               <div className="space-y-3">
                 <p className="text-xs text-[var(--rw-ink-muted)]">
                   Rules fired: {String(row.rules)}
                 </p>
+                {userId && alreadySuspended ? (
+                  <p>This account is already suspended.</p>
+                ) : null}
+                {userId && !alreadySuspended ? (
+                  <label className="flex max-w-md flex-col gap-1 text-sm">
+                    Reason for the user
+                    <textarea
+                      className="min-h-24 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm text-[var(--rw-ink)]"
+                      value={reason}
+                      maxLength={500}
+                      placeholder="Tell them why the account is being suspended"
+                      onChange={(e) => setReason(e.target.value)}
+                    />
+                    <span className="text-xs text-[var(--rw-ink-muted)]">
+                      This is emailed to them. They will not be able to sign in.
+                    </span>
+                  </label>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   <ActionButton
                     label="Mark reviewed"
@@ -109,23 +135,37 @@ export default function FraudPage() {
                   />
                   {userId ? (
                     <>
-                      <ActionButton
-                        label="Suspend user"
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={alreadySuspended || !reasonOk}
                         onClick={async () => {
-                          await adminFetch(
-                            `/admin/risk-events/${row.id}/review`,
-                            { method: "POST" },
-                          );
-                          await adminFetch(`/admin/users/${userId}/suspend`, {
-                            method: "POST",
-                            body: { reason: "Fraud alert review" },
-                          });
-                          setMsg(
-                            "User suspended — sessions revoked and notification queued",
-                          );
-                          await reload();
+                          try {
+                            await adminFetch(
+                              `/admin/risk-events/${row.id}/review`,
+                              { method: "POST" },
+                            );
+                            await adminFetch(`/admin/users/${userId}/suspend`, {
+                              method: "POST",
+                              body: { reason: reason.trim() },
+                            });
+                            setReason("");
+                            setMsg(
+                              "User suspended — sessions revoked and notification queued",
+                            );
+                            await reload();
+                          } catch (err) {
+                            setMsg(
+                              err instanceof ApiError
+                                ? err.message
+                                : "Could not suspend this user",
+                            );
+                          }
                         }}
-                      />
+                      >
+                        Suspend user
+                      </Button>
                       <ActionButton
                         label="Whitelist user"
                         onClick={async () => {

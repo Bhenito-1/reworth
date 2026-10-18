@@ -158,6 +158,32 @@ export class MockPsp implements PaymentProvider {
     };
   }
 
+  /**
+   * The database is the record of a successful charge. Mock memory is
+   * per process and can miss a payment another instance already accepted.
+   */
+  ensureFunded(input: {
+    reference: string;
+    amountKobo: number;
+    email?: string;
+  }): void {
+    const existing = this.store.get(input.reference);
+    if (existing) {
+      if (existing.status !== 'success') existing.status = 'success';
+      return;
+    }
+    this.store.set(input.reference, {
+      paymentId: `pay_mock_${input.reference}`,
+      reference: input.reference,
+      status: 'success',
+      checkoutUrl: `https://mock-psp.local/checkout/${input.reference}`,
+      amountKobo: input.amountKobo,
+      email: input.email ?? 'buyer@reworth.local',
+      releasedKobo: 0,
+      refundedKobo: 0,
+    });
+  }
+
   /** Test helper: mark payment successful (idempotent / replay-safe). */
   simulateWebhookSuccess(reference: string): PaymentResult {
     const existing = this.store.get(reference);

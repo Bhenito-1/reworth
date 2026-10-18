@@ -11,23 +11,58 @@
     "OTHER_PH"
   ],
   "geocoding": {
-    "GRA_PH": { "lat": 4.829, "lng": 7.013, "label": "GRA Port Harcourt" },
-    "OLD_GRA": { "lat": 4.815, "lng": 7.0, "label": "Old GRA" },
-    "RUMUOLA": { "lat": 4.84, "lng": 7.01, "label": "Rumuola" },
-    "ADA_GEORGE": { "lat": 4.845, "lng": 6.98, "label": "Ada George" },
-    "TRANS_AMADI": { "lat": 4.81, "lng": 7.04, "label": "Trans Amadi" },
-    "OTHER_PH": { "lat": 4.8156, "lng": 7.0498, "label": "Port Harcourt" }
+    "GRA_PH": {
+      "lat": 4.829,
+      "lng": 7.013,
+      "label": "GRA Port Harcourt"
+    },
+    "OLD_GRA": {
+      "lat": 4.815,
+      "lng": 7,
+      "label": "Old GRA"
+    },
+    "RUMUOLA": {
+      "lat": 4.84,
+      "lng": 7.01,
+      "label": "Rumuola"
+    },
+    "ADA_GEORGE": {
+      "lat": 4.845,
+      "lng": 6.98,
+      "label": "Ada George"
+    },
+    "TRANS_AMADI": {
+      "lat": 4.81,
+      "lng": 7.04,
+      "label": "Trans Amadi"
+    },
+    "OTHER_PH": {
+      "lat": 4.8156,
+      "lng": 7.0498,
+      "label": "Port Harcourt"
+    }
   },
   "logistics": {
     "baseFeeKobo": 130000,
     "perKmKobo": 13000
   },
   "priceBands": {
-    "budget": { "minKobo": 0, "maxKobo": 4000000 },
-    "mid": { "minKobo": 4000000, "maxKobo": 35000000 },
-    "premium": { "minKobo": 35000000, "maxKobo": null }
+    "budget": {
+      "minKobo": 0,
+      "maxKobo": 4000000
+    },
+    "mid": {
+      "minKobo": 4000000,
+      "maxKobo": 35000000
+    },
+    "premium": {
+      "minKobo": 35000000,
+      "maxKobo": null
+    }
   },
-  "sms": { "enabled": true, "provider": "termii" },
-  "psp": { "enabled": true, "provider": "paystack" },
+  "psp": {
+    "enabled": true,
+    "provider": "paystack"
+  },
   "status": "pilot"
 }

@@ -87,11 +87,6 @@ export function whatsappShareHref(code: string, shareUrl: string): string {
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
-export function smsShareHref(code: string, shareUrl: string): string {
-  const text = `Join ReWorth with my code ${code}: ${shareUrl}`;
-  return `sms:?&body=${encodeURIComponent(text)}`;
-}
-
 export function referralStatusLabel(status: string): string {
   switch (status) {
     case "REGISTERED":
@@ -109,6 +104,10 @@ export function referralStatusLabel(status: string): string {
     case "PENDING":
       return "Pending";
     default:
-      return status.replace(/_/g, " ");
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
   }
 }

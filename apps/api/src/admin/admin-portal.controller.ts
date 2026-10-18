@@ -56,10 +56,13 @@ import {
   AdminMeetPointDto,
   AdminPromotionCreateDto,
   AdminRefundDto,
+  AdminApproveListingDto,
+  AdminFlagListingDto,
   AdminRejectListingDto,
   AdminRejectVerificationDto,
   AdminReportActionDto,
   AdminSuspendDto,
+  AdminUnsuspendDto,
   AdminSupportNoteDto,
   AdminSupportPatchDto,
   AdminSupportRespondDto,
@@ -100,9 +103,10 @@ export class AdminPortalController {
   unsuspend(
     @CurrentUser() actor: AuthUser,
     @Param('id') id: string,
+    @Body() dto: AdminUnsuspendDto,
     @Req() req: { ip?: string },
   ) {
-    return this.portal.unsuspendUser(actor, id, req.ip);
+    return this.portal.unsuspendUser(actor, id, dto.reason, req.ip);
   }
 
   @Post('users/:id/reset-verification')
@@ -137,14 +141,21 @@ export class AdminPortalController {
     return this.portal.listListings(status, flag);
   }
 
+  @Get('listings/:id')
+  @Roles(...LISTINGS_MOD, ...USERS_READ)
+  getListing(@Param('id') id: string) {
+    return this.portal.getListingDetail(id);
+  }
+
   @Post('listings/:id/approve')
   @Roles(...LISTINGS_MOD)
   approveListing(
     @CurrentUser() actor: AuthUser,
     @Param('id') id: string,
+    @Body() dto: AdminApproveListingDto,
     @Req() req: { ip?: string },
   ) {
-    return this.portal.approveListing(actor, id, req.ip);
+    return this.portal.approveListing(actor, id, dto, req.ip);
   }
 
   @Post('listings/:id/reject')
@@ -166,6 +177,17 @@ export class AdminPortalController {
     @Req() req: { ip?: string },
   ) {
     return this.portal.removeListing(actor, id, req.ip);
+  }
+
+  @Post('listings/:id/flag')
+  @Roles(...LISTINGS_MOD, ...FRAUD)
+  flagListing(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AdminFlagListingDto,
+    @Req() req: { ip?: string },
+  ) {
+    return this.portal.flagListing(actor, id, dto, req.ip);
   }
 
   @Post('listings/:id/feature')

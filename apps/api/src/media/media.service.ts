@@ -198,6 +198,17 @@ export class MediaService {
       body = await this.storage.getObject(this.bucket, job.key);
     }
 
+    if (!body || body.length === 0) {
+      await this.prisma.listingImage.update({
+        where: { id: job.listingImageId },
+        data: { status: 'FAILED' },
+      });
+      throw new PipelineValidationError(
+        'Uploaded file not found in storage — re-upload the photo',
+        'OTHER',
+      );
+    }
+
     try {
       const result = await runImagePipeline({
         key: job.key,
@@ -238,6 +249,55 @@ export class MediaService {
       });
       throw err;
     }
+  }
+
+  /**
+   * Authenticated direct upload — stores bytes then runs the image pipeline.
+   * Preferred over silent-failing browser PUT to presigned URLs.
+   */
+  async uploadDirect(
+    userId: string,
+    opts: {
+      listingId: string;
+      sortOrder: number;
+      fileName: string;
+      contentType: string;
+      body: Buffer;
+    },
+  ) {
+    if (!ALLOWED_IMAGE_MIMES.has(opts.contentType)) {
+      throw new BadRequestException(
+        `Unsupported contentType: ${opts.contentType}`,
+      );
+    }
+    if (!opts.body?.length) {
+      throw new BadRequestException('Empty upload body');
+    }
+    if (opts.body.length > MAX_IMAGE_BYTES) {
+      throw new BadRequestException('File exceeds 10MB limit');
+    }
+
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: opts.listingId },
+    });
+    if (!listing || listing.sellerId !== userId) {
+      throw new BadRequestException('Listing not found or not owned');
+    }
+
+    const safeName = opts.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const key = `uploads/${userId}/${randomUUID()}-${safeName}`;
+    await this.storage.putObject({
+      bucket: this.bucket,
+      key,
+      body: opts.body,
+      contentType: opts.contentType,
+    });
+
+    return this.complete(userId, {
+      key,
+      listingId: opts.listingId,
+      sortOrder: opts.sortOrder,
+    });
   }
 
   /** Attach already-uploaded keys to a listing (creates PENDING then processes). */

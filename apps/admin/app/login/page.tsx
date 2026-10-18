@@ -28,6 +28,7 @@ export default function AdminLoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [totp, setTotp] = useState("");
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -133,6 +134,7 @@ export default function AdminLoginPage() {
           onSubmit={onSubmit}
           className="flex flex-col gap-5 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6 shadow-sm"
           noValidate
+          suppressHydrationWarning
         >
           {!challengeToken ? (
             <>
@@ -149,12 +151,33 @@ export default function AdminLoginPage() {
               <Input
                 label="Password"
                 name="password"
-                type="password"
+                type={passwordVisible ? "text" : "password"}
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}
                 required
+                trailing={
+                  <button
+                    type="button"
+                    className="rounded p-1 text-[var(--rw-ink-muted)] hover:text-[var(--rw-accent)]"
+                    aria-pressed={passwordVisible}
+                    aria-label={passwordVisible ? "Hide password" : "Show password"}
+                    onClick={() => setPasswordVisible((visible) => !visible)}
+                  >
+                    {passwordVisible ? (
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                        <path d="M2.5 12s3.45-6.25 9.5-6.25 9.5 6.25 9.5 6.25-3.45 6.25-9.5 6.25S2.5 12 2.5 12Z" />
+                        <circle cx="12" cy="12" r="2.7" />
+                      </svg>
+                    ) : (
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                        <path d="M3 14.2c2.25 2.55 5.25 3.8 9 3.8s6.75-1.25 9-3.8" />
+                        <path d="m6.2 16.6-1.35 1.65m5.05-.3-.55 2m4.95-2 .55 2m3.25-3.35 1.35 1.65" />
+                      </svg>
+                    )}
+                  </button>
+                }
               />
             </>
           ) : (
@@ -185,7 +208,7 @@ export default function AdminLoginPage() {
             size="lg"
             className="w-full"
             disabled={loading}
-            aria-busy={loading}
+            aria-busy={loading ? true : undefined}
           >
             {loading
               ? "Please wait…"

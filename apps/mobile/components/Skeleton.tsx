@@ -54,7 +54,7 @@ export function Skeleton({ width = "100%", height = 16, style, circle }: Props) 
 export function ListingCardSkeleton() {
   return (
     <View style={styles.card}>
-      <Skeleton height={200} style={{ borderRadius: radius.lg }} />
+      <Skeleton height={160} style={{ borderRadius: radius.lg }} />
       <View style={{ gap: 8, marginTop: 12 }}>
         <Skeleton height={20} width="50%" />
         <Skeleton height={15} width="80%" />
@@ -79,7 +79,7 @@ export function HomeSkeleton() {
 }
 
 const styles = StyleSheet.create({
-  card: { width: 160 },
+  card: { width: 120 },
   home: { paddingTop: 8 },
   row: { flexDirection: "row", gap: 12, marginTop: 24 },
 });

@@ -4,12 +4,12 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { AppButton } from "./components/AppButton";
 import { EmptyState } from "./components/EmptyState";
 import { ListingCard } from "./components/ListingCard";

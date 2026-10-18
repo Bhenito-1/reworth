@@ -13,25 +13,68 @@
     "OTHER_LAGOS"
   ],
   "geocoding": {
-    "LEKKI_PH1": { "lat": 6.4474, "lng": 3.4721, "label": "Lekki Phase 1" },
-    "IKOYI": { "lat": 6.4541, "lng": 3.4358, "label": "Ikoyi" },
-    "VI": { "lat": 6.4281, "lng": 3.4219, "label": "Victoria Island" },
-    "ONIRU": { "lat": 6.435, "lng": 3.45, "label": "Oniru" },
-    "VGC": { "lat": 6.4698, "lng": 3.565, "label": "VGC" },
-    "CHEVRON": { "lat": 6.441, "lng": 3.52, "label": "Chevron" },
-    "AJAH": { "lat": 6.4667, "lng": 3.5667, "label": "Ajah" },
-    "OTHER_LAGOS": { "lat": 6.5244, "lng": 3.3792, "label": "Lagos" }
+    "LEKKI_PH1": {
+      "lat": 6.4474,
+      "lng": 3.4721,
+      "label": "Lekki Phase 1"
+    },
+    "IKOYI": {
+      "lat": 6.4541,
+      "lng": 3.4358,
+      "label": "Ikoyi"
+    },
+    "VI": {
+      "lat": 6.4281,
+      "lng": 3.4219,
+      "label": "Victoria Island"
+    },
+    "ONIRU": {
+      "lat": 6.435,
+      "lng": 3.45,
+      "label": "Oniru"
+    },
+    "VGC": {
+      "lat": 6.4698,
+      "lng": 3.565,
+      "label": "VGC"
+    },
+    "CHEVRON": {
+      "lat": 6.441,
+      "lng": 3.52,
+      "label": "Chevron"
+    },
+    "AJAH": {
+      "lat": 6.4667,
+      "lng": 3.5667,
+      "label": "Ajah"
+    },
+    "OTHER_LAGOS": {
+      "lat": 6.5244,
+      "lng": 3.3792,
+      "label": "Lagos"
+    }
   },
   "logistics": {
     "baseFeeKobo": 150000,
     "perKmKobo": 15000
   },
   "priceBands": {
-    "budget": { "minKobo": 0, "maxKobo": 5000000 },
-    "mid": { "minKobo": 5000000, "maxKobo": 50000000 },
-    "premium": { "minKobo": 50000000, "maxKobo": null }
+    "budget": {
+      "minKobo": 0,
+      "maxKobo": 5000000
+    },
+    "mid": {
+      "minKobo": 5000000,
+      "maxKobo": 50000000
+    },
+    "premium": {
+      "minKobo": 50000000,
+      "maxKobo": null
+    }
   },
-  "sms": { "enabled": true, "provider": "termii" },
-  "psp": { "enabled": true, "provider": "paystack" },
+  "psp": {
+    "enabled": true,
+    "provider": "paystack"
+  },
   "status": "pilot"
 }

@@ -99,7 +99,11 @@ export function consignmentStatusLabel(status: string): string {
     case "CANCELLED":
       return "Cancelled";
     default:
-      return status;
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
   }
 }
 
@@ -118,7 +122,11 @@ export function pickupStatusLabel(status: string): string {
     case "CANCELLED":
       return "Cancelled";
     default:
-      return status.replace(/_/g, " ");
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
   }
 }
 
@@ -164,46 +172,6 @@ export function generateWatPickupSlots(count = 6): ManagedPickupSlot[] {
     if (cursor.getTime() - now.getTime() > 14 * 24 * 60 * 60 * 1000) break;
   }
   return slots;
-}
-
-export type InstantBuyFulfilment = {
-  id: string;
-  orderId: string;
-  listingId?: string;
-  status: string;
-  slotStartAt?: string | null;
-  slotEndAt?: string | null;
-  slaDeadlineAt?: string | null;
-};
-
-export async function getInstantBuyByOrder(
-  token: string,
-  orderId: string,
-): Promise<InstantBuyFulfilment> {
-  return apiFetch(`/instant-buy/by-order/${orderId}`, { token });
-}
-
-export async function scheduleInstantBuy(
-  token: string,
-  fulfilmentId: string,
-  body: { slotStartAt: string; slotEndAt: string },
-): Promise<unknown> {
-  return apiFetch(`/instant-buy/fulfilments/${fulfilmentId}/schedule`, {
-    method: "POST",
-    token,
-    body,
-  });
-}
-
-export async function confirmInstantBuy(
-  token: string,
-  fulfilmentId: string,
-): Promise<unknown> {
-  return apiFetch(`/instant-buy/fulfilments/${fulfilmentId}/confirm`, {
-    method: "POST",
-    token,
-    body: {},
-  });
 }
 
 export async function bookManagedPickup(

@@ -3,16 +3,23 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button, Chip, EmptyState, Input, Skeleton } from "@reworth/ui-web";
+import { Button, EmptyState, Input, Skeleton } from "@reworth/ui-web";
 import { apiFetch, ApiError } from "../../lib/api";
 import {
   clearTokens,
+  forceLandingRedirect,
   getAccessToken,
   getRefreshToken,
 } from "../../lib/auth";
+import { areaChoices, FALLBACK_AREAS, type AreaChoice } from "../../lib/areas";
 import { brandPublic } from "../../lib/brand";
-import { COMMUNITIES, communitiesForCity, type Community } from "../../lib/communities";
-import { listRegions, type RegionCity } from "../../lib/region";
+import { verifyNin } from "../../lib/identity";
+import {
+  getPayoutSetup,
+  payoutDisplayName,
+  type PayoutAccountView,
+} from "../../lib/payout";
+import { getRegion, listRegions, type RegionCity } from "../../lib/region";
 import type { DeviceRow, MeResponse } from "../../lib/types";
 
 const ACCOUNT_LINKS: {
@@ -23,7 +30,6 @@ const ACCOUNT_LINKS: {
   { href: "/ask", label: "Ask ReWorth", icon: "actionChat" },
   { href: "/worth", label: "Worth", icon: "actionOffer" },
   { href: "/consign", label: "Consign", icon: "actionDelivery" },
-  { href: "/pickup", label: "Pickup", icon: "actionLocation" },
   { href: "/account/communities", label: "Communities", icon: "invite" },
   { href: "/sell/analytics", label: "Seller analytics", icon: "actionSell" },
   { href: "/pro", label: "Pro seller", icon: "verifiedSeller" },
@@ -77,44 +83,56 @@ export default function AccountPage() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [devices, setDevices] = useState<DeviceRow[] | null>(null);
   const [displayName, setDisplayName] = useState("");
-  const [community, setCommunity] = useState<Community | "">("");
+  const [community, setCommunity] = useState("");
   const [cities, setCities] = useState<RegionCity[]>([]);
-  const [city, setCity] = useState("Lagos");
+  const [city, setCity] = useState("");
+  const [areas, setAreas] = useState<AreaChoice[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveOk, setSaveOk] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [payout, setPayout] = useState<PayoutAccountView | null>(null);
+  const [nin, setNin] = useState("");
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding/phone");
+      router.replace("/");
       return;
     }
     setLoading(true);
     setLoadError(null);
     try {
-      const [profile, deviceRes, regions] = await Promise.all([
+      const [profile, deviceRes, regions, payoutSetup] = await Promise.all([
         apiFetch<MeResponse>("/me", { token }),
         apiFetch<{ devices: DeviceRow[] }>("/me/devices", { token }),
         listRegions().catch(() => [] as RegionCity[]),
+        getPayoutSetup(token).catch(() => ({ account: null })),
       ]);
       setMe(profile);
+      setPayout(payoutSetup.account);
       setDisplayName(profile.profile?.displayName ?? "");
-      const pref = profile.profile?.preferredCommunity ?? "";
-      setCommunity(
-        (COMMUNITIES as readonly string[]).includes(pref)
-          ? (pref as Community)
-          : "",
-      );
+      const pref = profile.profile?.preferredCommunity?.trim() ?? "";
+      setCommunity(pref);
       setDevices(deviceRes.devices);
       setCities(regions);
-      const profileCity =
-        (profile.profile as { preferredCity?: string } | null)?.preferredCity;
-      if (profileCity) setCity(profileCity);
-      else if (regions.length) setCity(regions[0].displayName || regions[0].key);
+      let matched = "";
+      for (const region of regions) {
+        const detail = await getRegion(region.key).catch(() => null);
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[region.key] ?? []);
+        if (pref && areaChoices(region.key, source).some((area) => area.value === pref)) {
+          matched = region.key;
+          break;
+        }
+      }
+      setCity(matched || regions[0]?.key || "");
     } catch (err) {
       setLoadError(
         err instanceof ApiError ? err.message : "Could not load account.",
@@ -128,6 +146,75 @@ export default function AccountPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!city) {
+      setAreas([]);
+      return;
+    }
+    let cancelled = false;
+    void getRegion(city)
+      .then((detail) => {
+        if (cancelled) return;
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[city] ?? []);
+        setAreas(areaChoices(city, source));
+      })
+      .catch(() => {
+        if (!cancelled) setAreas(areaChoices(city, FALLBACK_AREAS[city] ?? []));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [city]);
+
+  const savedName = (me?.profile?.displayName ?? "").trim();
+  const savedCommunity = (me?.profile?.preferredCommunity ?? "").trim();
+  const areaChanged =
+    community.trim().length > 0 && community.trim() !== savedCommunity;
+  const profileDirty = displayName.trim() !== savedName || areaChanged;
+
+  async function onVerifyNin(e: FormEvent) {
+    e.preventDefault();
+    setVerifyError(null);
+    const token = getAccessToken();
+    if (!token || me?.verificationLevels.L3_IDENTITY) return;
+    const digits = nin.replace(/\D/g, "");
+    if (!/^\d{11}$/.test(digits)) {
+      setVerifyError("Enter your 11-digit NIN.");
+      return;
+    }
+    setVerifyBusy(true);
+    try {
+      const result = await verifyNin(token, digits);
+      setNin("");
+      if (!result.identityVerifiedBadge) {
+        setVerifyError("Identity check was not approved.");
+        return;
+      }
+      setMe((current) =>
+        current
+          ? {
+              ...current,
+              identityVerifiedBadge: true,
+              verificationLevels: {
+                ...current.verificationLevels,
+                L3_IDENTITY: true,
+              },
+            }
+          : current,
+      );
+    } catch (err) {
+      setNin("");
+      setVerifyError(
+        err instanceof ApiError ? err.message : "Identity check failed.",
+      );
+    } finally {
+      setVerifyBusy(false);
+    }
+  }
+
   async function onSave(e: FormEvent) {
     e.preventDefault();
     setSaveError(null);
@@ -135,13 +222,10 @@ export default function AccountPage() {
     const token = getAccessToken();
     if (!token) return;
 
+    if (!profileDirty) return;
     const name = displayName.trim();
     if (!name) {
       setSaveError("Display name is required");
-      return;
-    }
-    if (!community) {
-      setSaveError("Select a community");
       return;
     }
 
@@ -152,8 +236,9 @@ export default function AccountPage() {
         token,
         body: {
           displayName: name,
-          preferredCommunity: community,
-          ...(cities.length ? { preferredCity: city } : {}),
+          ...(community.trim()
+            ? { preferredCommunity: community.trim() }
+            : {}),
         },
       });
       setMe(updated);
@@ -170,16 +255,14 @@ export default function AccountPage() {
   async function signOut() {
     setBusyAction("logout");
     const refreshToken = getRefreshToken();
-    try {
-      await apiFetch("/auth/logout", {
-        method: "POST",
-        body: refreshToken ? { refreshToken } : {},
-      });
-    } catch {
-      /* clear local anyway */
-    }
+    const leaving = window.location.pathname !== "/";
     clearTokens();
-    router.push("/");
+    void apiFetch("/auth/logout", {
+      method: "POST",
+      keepalive: true,
+      body: refreshToken ? { refreshToken } : {},
+    }).catch(() => undefined);
+    if (leaving) window.location.replace("/");
   }
 
   async function requestDelete() {
@@ -195,8 +278,7 @@ export default function AccountPage() {
     setBusyAction("delete");
     try {
       await apiFetch("/me/delete-request", { method: "POST", token });
-      clearTokens();
-      router.push("/");
+      forceLandingRedirect();
     } catch (err) {
       setSaveError(
         err instanceof ApiError
@@ -214,7 +296,7 @@ export default function AccountPage() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 60% 40% at 100% 0%, rgba(14,159,110,0.1), transparent 50%), linear-gradient(180deg, #FCFAF6, #F3F0EA)",
+            "radial-gradient(ellipse 60% 40% at 100% 0%, rgba(217,106,50,0.1), transparent 50%), linear-gradient(180deg, #FCFAF6, #F3F0EA)",
         }}
       />
 
@@ -290,31 +372,18 @@ export default function AccountPage() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className="flex items-center gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-3 text-sm font-semibold text-[var(--rw-ink)] transition hover:border-[var(--rw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                  className="flex min-w-0 items-center gap-2 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-3 text-sm font-semibold leading-tight text-[var(--rw-ink)] transition hover:border-[var(--rw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={brandPublic[item.icon]}
                     alt=""
-                    className="h-7 w-7 object-contain"
+                    className="h-7 w-7 shrink-0 object-contain"
                   />
-                  <span>{item.label}</span>
+                  <span className="min-w-0">{item.label}</span>
                 </Link>
               ))}
             </nav>
-
-            <section aria-labelledby="verify-heading">
-              <h2
-                id="verify-heading"
-                className="mb-3 text-lg font-semibold tracking-tight"
-              >
-                Verification
-              </h2>
-              <VerificationBadges
-                levels={me.verificationLevels}
-                identityBadge={me.identityVerifiedBadge}
-              />
-            </section>
 
             <section aria-labelledby="profile-heading">
               <h2
@@ -336,53 +405,43 @@ export default function AccountPage() {
                   disabled={saving}
                   required
                 />
-                {cities.length > 0 ? (
-                  <label className="flex flex-col gap-1.5 text-sm font-medium">
-                    City
-                    <select
-                      className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-                      value={city}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setCity(next);
-                        const allowed = communitiesForCity(next);
-                        if (
-                          community &&
-                          !(allowed as readonly string[]).includes(community)
-                        ) {
-                          setCommunity("");
-                        }
-                      }}
-                      disabled={saving}
-                    >
-                      {cities.map((c) => (
-                        <option key={c.key} value={c.key}>
-                          {c.displayName || c.key}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-                <fieldset>
-                  <legend className="mb-3 text-sm font-medium">
-                    Preferred community
-                  </legend>
-                  <div className="flex flex-wrap gap-2">
-                    {(cities.length
-                      ? communitiesForCity(city)
-                      : COMMUNITIES
-                    ).map((c) => (
-                      <Chip
-                        key={c}
-                        selected={community === c}
-                        onClick={() => setCommunity(c as Community)}
-                        disabled={saving}
-                      >
-                        {c}
-                      </Chip>
+                <label className="flex flex-col gap-1.5 text-sm font-medium">
+                  State
+                  <select
+                    className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                    value={city}
+                    onChange={(e) => {
+                      setCity(e.target.value);
+                      setCommunity("");
+                    }}
+                    disabled={saving}
+                  >
+                    <option value="">Select a state</option>
+                    {cities.map((c) => (
+                      <option key={c.key} value={c.key}>
+                        {c.displayName || c.key}
+                      </option>
                     ))}
-                  </div>
-                </fieldset>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1.5 text-sm font-medium">
+                  Preferred area
+                  <select
+                    className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                    value={areas.some((area) => area.value === community) ? community : ""}
+                    onChange={(e) => setCommunity(e.target.value)}
+                    disabled={saving || !city}
+                  >
+                    <option value="">
+                      {city ? "Select an area" : "Select a state first"}
+                    </option>
+                    {areas.map((area) => (
+                      <option key={area.value} value={area.value}>
+                        {area.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 {saveError ? (
                   <p className="text-sm text-[var(--rw-error)]" role="alert">
                     {saveError}
@@ -396,12 +455,92 @@ export default function AccountPage() {
                 <Button
                   type="submit"
                   variant="primary"
-                  disabled={saving}
+                  disabled={saving || !profileDirty}
                   aria-busy={saving}
                 >
                   {saving ? "Saving…" : "Save changes"}
                 </Button>
               </form>
+            </section>
+
+            <section aria-labelledby="verify-heading">
+              <h2
+                id="verify-heading"
+                className="mb-3 text-lg font-semibold tracking-tight"
+              >
+                Verification
+              </h2>
+              <VerificationBadges
+                levels={me.verificationLevels}
+                identityBadge={me.identityVerifiedBadge}
+              />
+              <div className="mt-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6">
+                {me.verificationLevels.L3_IDENTITY ? (
+                  <p className="text-sm text-[var(--rw-ink)]">
+                    Your NIN is verified. You are an L3 member.
+                  </p>
+                ) : (
+                  <form onSubmit={onVerifyNin} className="flex flex-col gap-4" noValidate>
+                    <Input
+                      label="National Identification Number (NIN)"
+                      name="nin"
+                      type="password"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      maxLength={11}
+                      value={nin}
+                      onChange={(e) => setNin(e.target.value.replace(/\D/g, "").slice(0, 11))}
+                      disabled={verifyBusy}
+                      hint="11 digits. ReWorth keeps a hash of this number, not the number itself."
+                    />
+                    {verifyError ? (
+                      <p className="text-sm text-[var(--rw-error)]" role="alert">
+                        {verifyError}
+                      </p>
+                    ) : null}
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      disabled={verifyBusy || nin.length !== 11}
+                      aria-busy={verifyBusy}
+                    >
+                      {verifyBusy ? "Checking…" : "Verify identity"}
+                    </Button>
+                  </form>
+                )}
+              </div>
+            </section>
+
+            <section aria-labelledby="bank-heading">
+              <h2
+                id="bank-heading"
+                className="mb-4 text-lg font-semibold tracking-tight"
+              >
+                Bank details
+              </h2>
+              {payout ? (
+                <dl className="grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6 text-sm">
+                  <div>
+                    <dt className="text-[var(--rw-ink-muted)]">Name on account</dt>
+                    <dd className="mt-0.5 font-medium">{payoutDisplayName(payout)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[var(--rw-ink-muted)]">Bank</dt>
+                    <dd className="mt-0.5 font-medium">{payout.bankName}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[var(--rw-ink-muted)]">Account number</dt>
+                    <dd className="mt-0.5 font-medium tracking-wide">
+                      {payout.accountNumberMasked}
+                    </dd>
+                  </div>
+                </dl>
+              ) : (
+                <EmptyState
+                  title="No bank account yet"
+                  description="Bank details appear here after you save a payout account while selling."
+                />
+              )}
             </section>
 
             <section aria-labelledby="devices-heading">

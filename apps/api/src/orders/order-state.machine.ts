@@ -2,12 +2,14 @@ import { ConflictException } from '@nestjs/common';
 import { OrderStatus } from '@prisma/client';
 
 const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  // CREATED → COMPLETED / DISPUTE_HOLD: pure swap & give-away (no payment)
+  // CREATED can complete or enter a dispute. A swap usually starts at PAYMENT_PENDING for the delivery fee.
   CREATED: ['PAYMENT_PENDING', 'CANCELLED', 'COMPLETED', 'DISPUTE_HOLD'],
   PAYMENT_PENDING: ['FUNDED', 'CANCELLED', 'DISPUTE_HOLD'],
   FUNDED: [
     'IN_AUTHENTICATION',
+    'SHIPPED',
     'HANDED_OVER',
+    'DELIVERED',
     'DISPUTE_HOLD',
     'COMPLETED',
     'CANCELLED',
@@ -16,12 +18,15 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   ],
   IN_AUTHENTICATION: [
     'FUNDED',
+    'SHIPPED',
     'HANDED_OVER',
     'CANCELLED',
     'REFUND_REQUESTED',
     'DISPUTE_HOLD',
   ],
-  HANDED_OVER: ['RECEIVED', 'DISPUTE_HOLD', 'COMPLETED'],
+  SHIPPED: ['DELIVERED', 'HANDED_OVER', 'RECEIVED', 'DISPUTE_HOLD', 'COMPLETED'],
+  HANDED_OVER: ['DELIVERED', 'RECEIVED', 'DISPUTE_HOLD', 'COMPLETED'],
+  DELIVERED: ['RECEIVED', 'DISPUTE_HOLD', 'COMPLETED'],
   RECEIVED: ['COMPLETED', 'DISPUTE_HOLD'],
   COMPLETED: ['DISPUTE_HOLD'],
   CANCELLED: [],
@@ -30,6 +35,7 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     'REFUND_REQUESTED',
     'REFUND_ISSUED',
     'RECEIVED',
+    'DELIVERED',
   ],
   REFUND_REQUESTED: ['REFUND_ISSUED', 'COMPLETED'],
   REFUND_ISSUED: [],

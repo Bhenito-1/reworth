@@ -18,42 +18,76 @@ export type DashboardKpis = {
 
 @Injectable()
 export class AdminDashboardService {
+  /** Concurrent dashboard loads (React strict mode) share one read. */
+  private readonly inflight = new Map<number, Promise<DashboardKpis>>();
+
   constructor(private readonly prisma: PrismaService) {}
 
-  async kpis(days = 30): Promise<DashboardKpis> {
+  kpis(days = 30): Promise<DashboardKpis> {
+    const existing = this.inflight.get(days);
+    if (existing) return existing;
+    const pending = this.computeKpis(days).finally(() => {
+      this.inflight.delete(days);
+    });
+    this.inflight.set(days, pending);
+    return pending;
+  }
+
+  private async computeKpis(days: number): Promise<DashboardKpis> {
     const since = new Date(Date.now() - days * 86_400_000);
+    const completedWhere = {
+      status: 'COMPLETED' as const,
+      completedAt: { gte: since },
+    };
 
     const [
       listingActors,
-      orderActors,
+      orderBuyers,
+      orderSellers,
       messageActors,
       newListings,
       activeListings,
+      soldOrLive,
+      sold,
       completedOrders,
       openDisputes,
       riskEvents,
-      listingCount,
+      communityListings,
     ] = await Promise.all([
-      this.prisma.listingEvent.findMany({
+      this.prisma.listingEvent.groupBy({
+        by: ['actorUserId'],
         where: { createdAt: { gte: since }, actorUserId: { not: null } },
-        select: { actorUserId: true },
-        distinct: ['actorUserId'],
+        _count: { _all: true },
       }),
-      this.prisma.order.findMany({
+      this.prisma.order.groupBy({
+        by: ['buyerId'],
         where: { createdAt: { gte: since } },
-        select: { buyerId: true, sellerId: true },
+        _count: { _all: true },
       }),
-      this.prisma.message.findMany({
+      this.prisma.order.groupBy({
+        by: ['sellerId'],
         where: { createdAt: { gte: since } },
-        select: { senderId: true },
-        distinct: ['senderId'],
+        _count: { _all: true },
+      }),
+      this.prisma.message.groupBy({
+        by: ['senderId'],
+        where: { createdAt: { gte: since } },
+        _count: { _all: true },
       }),
       this.prisma.listing.count({ where: { createdAt: { gte: since } } }),
       this.prisma.listing.count({ where: { status: 'LIVE' } }),
+      this.prisma.listing.count({
+        where: {
+          createdAt: { gte: since },
+          status: { in: ['SOLD', 'LIVE', 'RESERVED'] },
+        },
+      }),
+      this.prisma.listing.count({
+        where: { createdAt: { gte: since }, status: 'SOLD' },
+      }),
       this.prisma.order.findMany({
-        where: { status: 'COMPLETED', completedAt: { gte: since } },
+        where: completedWhere,
         select: {
-          amountKobo: true,
           totalKobo: true,
           createdAt: true,
           completedAt: true,
@@ -64,33 +98,23 @@ export class AdminDashboardService {
         where: { status: { not: 'RESOLVED' } },
       }),
       this.prisma.riskEvent.count({ where: { createdAt: { gte: since } } }),
-      this.prisma.listing.count({ where: { createdAt: { gte: since } } }),
+      this.prisma.listing.groupBy({
+        by: ['community'],
+        where: { createdAt: { gte: since } },
+        _count: { _all: true },
+      }),
     ]);
 
     const mauSet = new Set<string>();
     for (const r of listingActors) {
       if (r.actorUserId) mauSet.add(r.actorUserId);
     }
-    for (const o of orderActors) {
-      mauSet.add(o.buyerId);
-      mauSet.add(o.sellerId);
-    }
-    for (const m of messageActors) {
-      mauSet.add(m.senderId);
-    }
+    for (const o of orderBuyers) mauSet.add(o.buyerId);
+    for (const o of orderSellers) mauSet.add(o.sellerId);
+    for (const m of messageActors) mauSet.add(m.senderId);
 
     const gmvKobo = completedOrders.reduce((s, o) => s + o.totalKobo, 0);
     const transactionsCompleted = completedOrders.length;
-
-    const soldOrLive = await this.prisma.listing.count({
-      where: {
-        createdAt: { gte: since },
-        status: { in: ['SOLD', 'LIVE', 'RESERVED'] },
-      },
-    });
-    const sold = await this.prisma.listing.count({
-      where: { createdAt: { gte: since }, status: 'SOLD' },
-    });
     const sellThroughRate = soldOrLive > 0 ? sold / soldOrLive : 0;
 
     const durations = completedOrders
@@ -109,17 +133,12 @@ export class AdminDashboardService {
               durations[durations.length / 2]!) /
             2;
 
-    const fraudRate = listingCount > 0 ? riskEvents / listingCount : 0;
+    const fraudRate = newListings > 0 ? riskEvents / newListings : 0;
 
     const byCommunityMap = new Map<
       string,
       { community: string; listings: number; gmvKobo: number }
     >();
-    const communityListings = await this.prisma.listing.groupBy({
-      by: ['community'],
-      where: { createdAt: { gte: since } },
-      _count: { _all: true },
-    });
     for (const row of communityListings) {
       byCommunityMap.set(row.community || 'unknown', {
         community: row.community || 'unknown',
@@ -176,11 +195,12 @@ export function buildKpiShape(
 }
 
 export type PrismaLike = {
-  listingEvent: { findMany: (args: unknown) => Promise<unknown[]> };
+  listingEvent: { groupBy: (args: unknown) => Promise<unknown[]> };
   order: {
+    groupBy: (args: unknown) => Promise<unknown[]>;
     findMany: (args: unknown) => Promise<unknown[]>;
   };
-  message: { findMany: (args: unknown) => Promise<unknown[]> };
+  message: { groupBy: (args: unknown) => Promise<unknown[]> };
   listing: {
     count: (args: unknown) => Promise<number>;
     groupBy: (args: unknown) => Promise<unknown[]>;

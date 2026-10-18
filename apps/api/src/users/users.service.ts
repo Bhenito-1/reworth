@@ -224,7 +224,7 @@ export class UsersService {
       where: { userId },
     });
     const byChannel = new Map(rows.map((r) => [r.channel, r]));
-    const channels: ConsentChannel[] = ['SMS', 'MARKETING', 'EMAIL'];
+    const channels: ConsentChannel[] = ['MARKETING', 'EMAIL'];
     return {
       consents: channels.map((channel) => {
         const row = byChannel.get(channel);
@@ -241,11 +241,11 @@ export class UsersService {
     for (const item of dto.consents) {
       await this.prisma.consentRecord.upsert({
         where: {
-          userId_channel: { userId, channel: item.channel },
+          userId_channel: { userId, channel: item.channel as ConsentChannel },
         },
         create: {
           userId,
-          channel: item.channel,
+          channel: item.channel as ConsentChannel,
           granted: item.granted,
         },
         update: { granted: item.granted },
@@ -368,10 +368,19 @@ export class UsersService {
         },
       });
 
-      // Clear private meetup addresses on seller listings
+      // Drop unsold listings with no order. Sold listings, orders, and
+      // payments stay so completed sales remain on record.
       await tx.listing.updateMany({
         where: { sellerId: userId },
         data: { addressPrivate: null },
+      });
+      await tx.listing.updateMany({
+        where: {
+          sellerId: userId,
+          status: { not: 'SOLD' },
+          orders: { none: {} },
+        },
+        data: { status: 'REMOVED' },
       });
 
       // Null/redact address disclosures created by this user

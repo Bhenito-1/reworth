@@ -24,7 +24,6 @@ export type RegionConfig = {
   geocoding: Record<string, RegionGeocodeEntry>;
   logistics: RegionLogistics;
   priceBands: Record<string, RegionPriceBand>;
-  sms: { enabled: boolean; provider?: string };
   psp: { enabled: boolean; provider?: string };
   /** Public picker: pilot cities only. supply = ops/config-ready, not marketed. */
   status?: RegionStatus;
@@ -38,7 +37,6 @@ export const REGION_REQUIRED_KEYS = [
   'geocoding',
   'logistics',
   'priceBands',
-  'sms',
   'psp',
 ] as const;
 

@@ -26,6 +26,8 @@ export type ReviewDto = {
   transactionExperience: number;
   body: string | null;
   photoKeys: string[];
+  listingTitle?: string | null;
+  similar?: boolean;
   status: ReviewStatus | string;
   reply: string | null;
   repliedAt: string | null;
@@ -105,6 +107,24 @@ export async function getPublicProfile(
 
 export async function listUserReviews(userId: string): Promise<ReviewDto[]> {
   return apiFetch<ReviewDto[]>(`/users/${userId}/reviews`);
+}
+
+export type ListingReviewsResponse = {
+  soldUnits: number;
+  average: number | null;
+  count: number;
+  items: ReviewDto[];
+  seller: {
+    average: number | null;
+    count: number;
+    items: ReviewDto[];
+  };
+};
+
+export async function listListingReviews(
+  listingId: string,
+): Promise<ListingReviewsResponse> {
+  return apiFetch<ListingReviewsResponse>(`/listings/${listingId}/reviews`);
 }
 
 export async function createOrderReview(

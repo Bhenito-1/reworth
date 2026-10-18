@@ -81,9 +81,26 @@ Mobile: `apps/mobile/assets/brand/`. See `apps/web/public/brand/README.md`.
 
 `packages/ui-web` + `apps/mobile/components` — ListingCard, BottomNav (orange SELL FAB), Button, Chip, Skeleton, EmptyState, BottomSheet.
 
+## Auth / onboarding
+
+Email only (ADR-010). No phone or SMS step.
+
+1. Welcome slides (skippable)
+2. Email register/login (+ OAuth where enabled)
+3. Profile customise: avatar (optional), name, bio, community
+
 ## Chat
 
 Buyer bubbles: Warm Beige · Seller / mine: soft orange wash · Send: Burnt Orange · Unread: Orange.
+
+## Do / don’t
+
+| Do | Don’t |
+| --- | --- |
+| Burnt Orange for primary actions | Gold for CTAs or marketing |
+| Bottom sheets for filters/offers | Nested page stacks for tiny tasks |
+| Skeleton loaders | Spinners on content screens |
+| 44pt tap targets | Tiny icon-only hits |
 
 ## A11y
 

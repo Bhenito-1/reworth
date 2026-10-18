@@ -4,11 +4,11 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { AppButton } from "./components/AppButton";
 import { EmptyState } from "./components/EmptyState";
 import { ApiError } from "./lib/api";

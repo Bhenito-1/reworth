@@ -6,7 +6,9 @@
 
 import {
   clearTokens,
+  getAccessToken,
   getRefreshToken,
+  refreshSession,
   setTokens,
 } from "./auth";
 
@@ -85,22 +87,33 @@ export async function apiFetch<T>(
     method?: string;
     body?: unknown;
     token?: string | null;
+    cache?: RequestCache;
     /** Extra request headers (e.g. partner API key) */
     headers?: Record<string, string>;
-    /** Internal: avoid refresh loops */
-    _retried?: boolean;
+    /** Internal: do not rotate again after one renewal attempt. */
+    retried?: boolean;
   } = {},
 ): Promise<T> {
-  const { method = "GET", body, token, headers } = options;
+  const { method = "GET", body, token, retried, cache, headers } = options;
+  const isFormData =
+    typeof FormData !== "undefined" && body instanceof FormData;
   const res = await fetch(`${API_URL}${path.startsWith("/") ? path : `/${path}`}`, {
     method,
+    cache,
     headers: {
       Accept: "application/json",
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(body !== undefined && !isFormData
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : isFormData
+          ? (body as FormData)
+          : JSON.stringify(body),
   });
 
   const text = await res.text();
@@ -114,10 +127,14 @@ export async function apiFetch<T>(
   }
 
   if (!res.ok) {
-    if (res.status === 401 && token && !options._retried) {
-      const next = await refreshAccessToken();
-      if (next) {
-        return apiFetch<T>(path, { ...options, token: next, _retried: true });
+    if (res.status === 401 && token && !retried) {
+      const outcome = await refreshSession(true);
+      if (outcome === "ok") {
+        return apiFetch<T>(path, {
+          ...options,
+          token: await getAccessToken(),
+          retried: true,
+        });
       }
     }
     throw new ApiError(

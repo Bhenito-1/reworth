@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { EmailMessage, EmailProvider } from './email.provider';
+import { parseFromAddress } from './email-templates';
 
 @Injectable()
 export class MockEmailProvider implements EmailProvider {
@@ -32,6 +33,7 @@ export class MailhogEmailProvider implements EmailProvider {
   ) {}
 
   async send(message: EmailMessage): Promise<void> {
+    const envelopeFrom = parseFromAddress(this.from);
     try {
       // Lazy require to avoid hard dep on nodemailer in unit tests
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -40,16 +42,33 @@ export class MailhogEmailProvider implements EmailProvider {
         const socket = net.createConnection(
           { host: this.host, port: this.port },
           () => {
+            const boundary = `reworth_${Date.now()}`;
+            const body = message.html
+              ? [
+                  `Content-Type: multipart/alternative; boundary="${boundary}"`,
+                  ``,
+                  `--${boundary}`,
+                  `Content-Type: text/plain; charset=utf-8`,
+                  ``,
+                  message.text,
+                  `--${boundary}`,
+                  `Content-Type: text/html; charset=utf-8`,
+                  ``,
+                  message.html,
+                  `--${boundary}--`,
+                ].join('\r\n')
+              : message.text;
+
             const payload = [
               `EHLO reworth.local`,
-              `MAIL FROM:<${this.from}>`,
+              `MAIL FROM:<${envelopeFrom}>`,
               `RCPT TO:<${message.to}>`,
               `DATA`,
               `From: ${this.from}`,
               `To: ${message.to}`,
               `Subject: ${message.subject}`,
-              ``,
-              message.text,
+              `MIME-Version: 1.0`,
+              body,
               `.`,
               `QUIT`,
             ].join('\r\n');

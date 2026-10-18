@@ -11,7 +11,12 @@
     "audit:prod": "pnpm audit --prod --audit-level=critical",
     "seed:staging": "pnpm --filter @reworth/api seed:staging",
     "test:e2e": "playwright test",
-    "validate:cities": "node scripts/validate-city-config.mjs"
+    "validate:cities": "node scripts/validate-city-config.mjs",
+    "db:generate": "pnpm --filter @reworth/api run prisma:generate",
+    "db:migrate": "pnpm --filter @reworth/api run prisma:migrate",
+    "db:deploy": "pnpm --filter @reworth/api run prisma:deploy",
+    "db:seed": "pnpm --filter @reworth/api run prisma:seed",
+    "db:studio": "pnpm --filter @reworth/api run prisma:studio"
   },
   "pnpm": {
     "overrides": {
@@ -21,7 +26,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "turbo": "^2.3.3",
-    "typescript": "^5.7.2"
+    "turbo": "2.10.12",
+    "typescript": "^5.9.3"
   }
 }

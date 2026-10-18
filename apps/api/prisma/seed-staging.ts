@@ -21,6 +21,7 @@ import {
   AdminRole,
   ItemCondition,
   ListingEventType,
+  ListingImageStatus,
   ListingStatus,
   NotificationChannel,
   OrderStatus,
@@ -853,7 +854,7 @@ async function seedListings(opts: {
         riskFlags: r.riskFlags,
         publishedAt: r.publishedAt,
         expiresAt: r.publishedAt
-          ? new Date(r.publishedAt.getTime() + 14 * 86_400_000)
+          ? new Date(r.publishedAt.getTime() + 60 * 86_400_000)
           : null,
         views: r.views,
       })),
@@ -888,6 +889,69 @@ async function seedListings(opts: {
   }
 
   return listingIds;
+}
+
+/** Public CDN placeholders — staging visuals do not require adobe/s3mock. */
+function stagingImageVariants(seed: string) {
+  const base = `https://picsum.photos/seed/rw-${seed}`;
+  return {
+    original: `${base}/1200/900`,
+    w640: { webp: `${base}/640/480` },
+    w1080: { webp: `${base}/1080/810` },
+    w1600: { webp: `${base}/1600/1200` },
+  };
+}
+
+async function seedListingImages(listingIds: string[]) {
+  let ids = listingIds;
+  if (!ids.length) {
+    const existing = await prisma.listing.findMany({
+      where: { brand: STAGING_BRAND },
+      select: { id: true },
+      take: 5000,
+    });
+    ids = existing.map((l) => l.id);
+  }
+  if (!ids.length) return;
+
+  const already = await prisma.listingImage.findMany({
+    where: { listingId: { in: ids } },
+    select: { listingId: true },
+    distinct: ['listingId'],
+  });
+  const has = new Set(already.map((r) => r.listingId));
+  const need = ids.filter((id) => !has.has(id));
+  if (!need.length) {
+    // eslint-disable-next-line no-console
+    console.info('[seed-staging] Listing images already present; skipping');
+    return;
+  }
+
+  const BATCH = 200;
+  for (let offset = 0; offset < need.length; offset += BATCH) {
+    const slice = need.slice(offset, offset + BATCH);
+    await prisma.listingImage.createMany({
+      data: slice.map((listingId, i) => {
+        const seed = `${listingId.slice(0, 8)}-${offset + i}`;
+        return {
+          id: randomUUID(),
+          listingId,
+          sortOrder: 0,
+          originalKey: `staging/${seed}.jpg`,
+          variants: stagingImageVariants(seed),
+          width: 1200,
+          height: 900,
+          mime: 'image/jpeg',
+          status: ListingImageStatus.READY,
+          exifStripped: true,
+        };
+      }),
+    });
+    // eslint-disable-next-line no-console
+    console.info(
+      `[seed-staging] Listing images ${Math.min(offset + BATCH, need.length)}/${need.length}`,
+    );
+  }
 }
 
 async function seedOrdersAndNotifications(opts: {
@@ -1118,8 +1182,9 @@ async function main() {
   if (listingCount >= TARGET_LISTINGS && !skipHeavy) {
     // eslint-disable-next-line no-console
     console.info(
-      `[seed-staging] listings=${listingCount} >= ${TARGET_LISTINGS}; skipping bulk, demos refreshed`,
+      `[seed-staging] listings=${listingCount} >= ${TARGET_LISTINGS}; refreshing demos + images only`,
     );
+    await seedListingImages([]);
     return;
   }
 
@@ -1147,6 +1212,8 @@ async function main() {
     });
     listingIds = existing.map((l) => l.id);
   }
+
+  await seedListingImages(listingIds);
 
   if (!skipHeavy) {
     const orderCount = intBetween(rng, ORDER_COUNT_MIN, ORDER_COUNT_MAX);

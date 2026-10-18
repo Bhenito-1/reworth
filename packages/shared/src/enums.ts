@@ -12,14 +12,12 @@ export enum ListingStatus {
 export enum SellingMode {
   Sell = "SELL",
   Swap = "SWAP",
-  SwapCash = "SWAP_CASH",
   GiveAway = "GIVE_AWAY",
 }
 
 export enum TransactionType {
   Cash = "CASH",
   Swap = "SWAP",
-  SwapCash = "SWAP_CASH",
   GiveAway = "GIVEAWAY",
 }
 
@@ -130,7 +128,9 @@ export enum OrderStatus {
   PaymentPending = "PAYMENT_PENDING",
   Funded = "FUNDED",
   InAuthentication = "IN_AUTHENTICATION",
+  Shipped = "SHIPPED",
   HandedOver = "HANDED_OVER",
+  Delivered = "DELIVERED",
   Received = "RECEIVED",
   Completed = "COMPLETED",
   Cancelled = "CANCELLED",
@@ -203,17 +203,6 @@ export enum RoomScanStatus {
   Ready = "READY",
   DraftsCreated = "DRAFTS_CREATED",
   Failed = "FAILED",
-  Cancelled = "CANCELLED",
-}
-
-export enum InstantBuyFulfilmentStatus {
-  PendingPickup = "PENDING_PICKUP",
-  PickedUp = "PICKED_UP",
-  InTransit = "IN_TRANSIT",
-  Delivered = "DELIVERED",
-  Confirmed = "CONFIRMED",
-  SlaBreached = "SLA_BREACHED",
-  Refunded = "REFUNDED",
   Cancelled = "CANCELLED",
 }
 

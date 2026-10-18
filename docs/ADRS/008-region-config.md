@@ -15,7 +15,7 @@ National expansion was previously assumed to arrive via a mythical `v1.0.1-multi
 3. **Required keys** — `city`, `displayName`, `timezone` (`Africa/Lagos`), `communities[]`, `geocoding` (lat/lng per community), `logistics.baseFeeKobo` / `perKmKobo`, `priceBands`, `sms.enabled`, `psp.enabled`. Optional: `status`.
 4. **Runtime** — `RegionConfigService` loads all JSON at boot; `getCity`, `listCities` (pilot-filtered), `getCommunityGeo`, `getDeliveryRates`. Geocoding + delivery quote resolve via this service with Lagos fallback.
 5. **Automation** — `scripts/validate-city-config.mjs` + `docs/CITY_PLAYBOOK.md` for supply-first launch ops.
-6. **No code change for core listing/search** when adding a city that only needs geo + logistics + SMS/PSP flags — drop a JSON file and validate.
+6. **No code change for core listing/search** when adding a city that only needs geo + logistics + PSP flags — drop a JSON file and validate.
 
 ## Consequences
 

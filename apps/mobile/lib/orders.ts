@@ -4,13 +4,19 @@
 
 import { apiFetch } from "./api";
 
+/** Every swap charges ₦500 per person, separate from that person's delivery fee. */
+export const SWAP_FEE_KOBO = 50_000;
+
 export type FulfilmentMethod = "PICKUP" | "MEET_POINT" | "DELIVERY";
 
 export type OrderStatus =
   | "CREATED"
   | "PAYMENT_PENDING"
   | "FUNDED"
+  | "IN_AUTHENTICATION"
+  | "SHIPPED"
   | "HANDED_OVER"
+  | "DELIVERED"
   | "RECEIVED"
   | "COMPLETED"
   | "CANCELLED"
@@ -28,6 +34,7 @@ export type DisputeReason =
 export type OrderDto = {
   id: string;
   listingId: string;
+  listingTitle?: string | null;
   buyerId: string;
   sellerId: string;
   offerId: string | null;
@@ -35,9 +42,27 @@ export type OrderDto = {
   amountKobo: number;
   protectionFeeKobo: number;
   deliveryFeeKobo: number;
+  swapFeeKobo?: number;
   totalKobo: number;
+  quantity?: number;
+  unitPriceKobo?: number;
   fulfilmentMethod: FulfilmentMethod | string;
   status: OrderStatus | string;
+  confirmationStatus?: "PENDING" | "CONFIRMED" | "REJECTED" | string;
+  rejectionReason?: string | null;
+  sellerNote?: string | null;
+  deliveryDate?: string | null;
+  swapProposalId?: string | null;
+  swapListingAId?: string | null;
+  swapListingBId?: string | null;
+  transactionType?: string;
+  swap?: {
+    deliveryOn: string | null;
+    youReceive: { id: string; title: string; imageUrl: string | null };
+    youSend: { id: string; title: string; imageUrl: string | null };
+    cancellable?: boolean;
+    payableOrderId?: string | null;
+  } | null;
   buyerProtection: boolean;
   coverageEndsAt: string | null;
   autoReleaseAt: string | null;
@@ -121,30 +146,82 @@ export function newIdempotencyKey(): string {
   return `idem-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+const DELIVERED_STATUSES = new Set(["DELIVERED", "RECEIVED", "COMPLETED"]);
+
+export function isCancelledOrder(order: {
+  status: string;
+  confirmationStatus?: string | null;
+}): boolean {
+  return order.status === "CANCELLED" || order.confirmationStatus === "REJECTED";
+}
+
+export function isDeliveredOrder(order: { status: string }): boolean {
+  return DELIVERED_STATUSES.has(order.status);
+}
+
+function orderTime(value: string | null | undefined): number {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+/** Ongoing orders first, then delivered orders with the newest date first. */
+export function sortMyOrders<
+  T extends {
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt?: string | null;
+  },
+>(orders: T[]): T[] {
+  const ongoing = orders.filter((order) => !isDeliveredOrder(order));
+  const delivered = orders.filter((order) => isDeliveredOrder(order));
+  ongoing.sort((a, b) => orderTime(b.createdAt) - orderTime(a.createdAt));
+  delivered.sort(
+    (a, b) =>
+      orderTime(b.completedAt || b.updatedAt || b.createdAt) -
+      orderTime(a.completedAt || a.updatedAt || a.createdAt),
+  );
+  return [...ongoing, ...delivered];
+}
+
+/** First word capital, remaining words lower. `PAYMENT_PENDING` → `Payment pending`. */
+export function sentenceCaseLabel(value: string): string {
+  const words = value.trim().replace(/_/g, " ").toLowerCase();
+  if (!words) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function orderStatusLabel(status: string): string {
   switch (status) {
     case "CREATED":
-      return "Created";
+      return "Order placed";
     case "PAYMENT_PENDING":
       return "Awaiting payment";
     case "FUNDED":
-      return "Paid — protected";
+      return "Paid — held in escrow";
+    case "IN_AUTHENTICATION":
+      return "In authentication";
+    case "SHIPPED":
+      return "Out for delivery";
     case "HANDED_OVER":
       return "Handed over";
+    case "DELIVERED":
+      return "Delivered";
     case "RECEIVED":
-      return "Received";
+      return "Receipt confirmed";
     case "COMPLETED":
-      return "Completed";
+      return "Completed — funds released";
     case "CANCELLED":
       return "Cancelled";
     case "DISPUTE_HOLD":
-      return "Dispute hold";
+      return "On hold — dispute";
     case "REFUND_REQUESTED":
       return "Refund requested";
     case "REFUND_ISSUED":
       return "Refund issued";
     default:
-      return status;
+      return sentenceCaseLabel(status);
   }
 }
 
@@ -157,7 +234,7 @@ export function fulfilmentLabel(method: string): string {
     case "DELIVERY":
       return "Delivery";
     default:
-      return method;
+      return sentenceCaseLabel(method);
   }
 }
 
@@ -174,7 +251,7 @@ export function disputeReasonLabel(reason: string): string {
     case "INCORRECT_PRODUCT":
       return "Incorrect product";
     default:
-      return reason;
+      return sentenceCaseLabel(reason);
   }
 }
 
@@ -189,7 +266,7 @@ export function disputeStatusLabel(status: string): string {
     case "RESOLVED":
       return "Resolved";
     default:
-      return status;
+      return sentenceCaseLabel(status);
   }
 }
 
@@ -197,15 +274,25 @@ export function paymentStatusFromOrder(order: OrderDto): string {
   switch (order.status) {
     case "PAYMENT_PENDING":
     case "CREATED":
-      return "Pending";
+      return "Awaiting payment";
+    case "FUNDED":
+    case "IN_AUTHENTICATION":
+    case "SHIPPED":
+    case "HANDED_OVER":
+    case "DELIVERED":
+    case "RECEIVED":
+    case "COMPLETED":
+      return "Paid";
     case "CANCELLED":
       return "Cancelled";
+    case "DISPUTE_HOLD":
+      return "On hold";
     case "REFUND_REQUESTED":
       return "Refund requested";
     case "REFUND_ISSUED":
       return "Refunded";
     default:
-      return order.fundedAt ? "Success" : "Unknown";
+      return order.fundedAt ? "Paid" : "Unknown";
   }
 }
 
@@ -241,6 +328,7 @@ export function createOrder(
     offerId?: string;
     orderIntentId?: string;
     buyNow?: boolean;
+    quantity?: number;
   },
 ): Promise<OrderDto> {
   return apiFetch<OrderDto>("/orders", { method: "POST", token, body });
@@ -278,6 +366,30 @@ export function cancelOrder(token: string, orderId: string): Promise<OrderDto> {
   return apiFetch<OrderDto>(`/orders/${orderId}/cancel`, {
     method: "POST",
     token,
+  });
+}
+
+export function confirmSellerOrder(
+  token: string,
+  orderId: string,
+  body: { deliveryDate: string; sellerNote?: string },
+): Promise<OrderDto> {
+  return apiFetch<OrderDto>(`/orders/${orderId}/confirm`, {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export function rejectSellerOrder(
+  token: string,
+  orderId: string,
+  reason: string,
+): Promise<OrderDto> {
+  return apiFetch<OrderDto>(`/orders/${orderId}/reject`, {
+    method: "POST",
+    token,
+    body: { reason },
   });
 }
 

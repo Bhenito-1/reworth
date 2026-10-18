@@ -19,6 +19,13 @@ export const NOTIFICATION_CATEGORIES = [
   "DELIVERY_UPDATE",
   "VERIFICATION_UPDATE",
   "DISPUTE_UPDATE",
+  "REVIEW_RECEIVED",
+  "COMMUNITY_NEW_LISTING",
+  "MOVING_SALE_UPDATE",
+  "ORDER_PLACED",
+  "ORDER_CONFIRMED",
+  "ORDER_REJECTED",
+  "ORDER_CANCELLED",
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -35,11 +42,19 @@ export const CRITICAL_CATEGORIES = new Set<string>([
   "PAYMENT_RELEASED",
   "DELIVERY_UPDATE",
   "DISPUTE_UPDATE",
+  "ORDER_PLACED",
+  "ORDER_CONFIRMED",
+  "ORDER_REJECTED",
+  "ORDER_CANCELLED",
 ]);
 
 export function isCriticalCategory(category: string): boolean {
   return (
-    CRITICAL_CATEGORIES.has(category) || category.startsWith("PAYMENT_")
+    CRITICAL_CATEGORIES.has(category) ||
+    category.startsWith("PAYMENT_") ||
+    category.startsWith("ORDER_") ||
+    category === "DELIVERY_UPDATE" ||
+    category === "DISPUTE_UPDATE"
   );
 }
 
@@ -61,8 +76,28 @@ export type NotificationPreference = {
   enabled: boolean;
 };
 
+function sentenceCaseLabel(value: string): string {
+  const words = value.trim().replace(/_/g, " ").toLowerCase();
+  if (!words) return "";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 export function categoryLabel(category: string): string {
-  return category.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return sentenceCaseLabel(category);
+}
+
+export function channelLabel(channel: string): string {
+  if (channel === "IN_APP") return "In-app";
+  return sentenceCaseLabel(channel);
+}
+
+/** Older swap alerts point at the listing. The chat is the right place to open. */
+export function swapListingIdFromDeepLink(
+  deepLink: string | null | undefined,
+): string | null {
+  if (!deepLink) return null;
+  const match = deepLink.match(/listings\/([\w-]+)\/swap\b/i);
+  return match?.[1] ?? null;
 }
 
 /** Parse reworth:// or path deep links for in-app routing. */
@@ -74,6 +109,7 @@ export function parseDeepLink(
     | "dispute"
     | "chat"
     | "listing"
+    | "selling"
     | "moving_sale"
     | "community"
     | "bundle"
@@ -112,12 +148,24 @@ export function parseDeepLink(
     path.match(/^\/disputes\/([\w-]+)/i) ||
     path.match(/^\/chats\/([\w-]+)/i) ||
     path.match(/^\/listings\/([\w-]+)/i);
+  if (/^\/selling\/?$/i.test(path)) return { kind: "selling" };
+  const selling = path.match(/^\/selling\/([\w-]+)/i);
+  if (selling) return { kind: "selling", id: selling[1] };
   if (!m) return { kind: "other" };
   if (/orders/i.test(path)) return { kind: "order", id: m[1] };
   if (/disputes/i.test(path)) return { kind: "dispute", id: m[1] };
   if (/chats/i.test(path)) return { kind: "chat", id: m[1] };
   if (/listings/i.test(path)) return { kind: "listing", id: m[1] };
   return { kind: "other" };
+}
+
+export function unreadNotificationCount(
+  token: string,
+): Promise<{ count: number }> {
+  return apiFetch("/notifications/unread-count", {
+    token,
+    cache: "no-store",
+  });
 }
 
 export function listNotifications(
@@ -129,7 +177,10 @@ export function listNotifications(
   if (opts?.unread === true) q.set("unread", "true");
   if (opts?.unread === false) q.set("unread", "false");
   const qs = q.toString();
-  return apiFetch(`/notifications${qs ? `?${qs}` : ""}`, { token });
+  return apiFetch(`/notifications${qs ? `?${qs}` : ""}`, {
+    token,
+    cache: "no-store",
+  });
 }
 
 export function markNotificationRead(
@@ -139,16 +190,40 @@ export function markNotificationRead(
   return apiFetch(`/notifications/${id}/read`, { method: "POST", token });
 }
 
+export function clearNotifications(
+  token: string,
+): Promise<{ deleted: number }> {
+  return apiFetch(`/notifications`, {
+    method: "DELETE",
+    token,
+    cache: "no-store",
+  });
+}
+
 export function markAllNotificationsRead(
   token: string,
 ): Promise<{ updated: number }> {
-  return apiFetch(`/notifications/read-all`, { method: "POST", token });
+  return apiFetch(`/notifications/read-all`, {
+    method: "POST",
+    token,
+    cache: "no-store",
+  });
 }
 
 export function getNotificationPreferences(
   token: string,
 ): Promise<NotificationPreference[]> {
   return apiFetch(`/notifications/preferences`, { token });
+}
+
+/** Leaves orders, payments, delivery, and disputes on. Turns the rest off. */
+export function disableNonEssentialNotifications(
+  token: string,
+): Promise<{ disabled: number }> {
+  return apiFetch(`/notifications/preferences/essential-only`, {
+    method: "POST",
+    token,
+  });
 }
 
 export function patchNotificationPreference(

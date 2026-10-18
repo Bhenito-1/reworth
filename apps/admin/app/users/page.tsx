@@ -24,11 +24,19 @@ type UsersRes = {
   }[];
 };
 
+function statusLabel(status: string) {
+  if (status === "SUSPENDED") return "Suspended";
+  if (status === "ACTIVE") return "Active";
+  if (status === "DELETED") return "Deleted";
+  return status;
+}
+
 export default function UsersPage() {
   const [q, setQ] = useState("");
   const path = `/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`;
   const { data, error, loading, reload } = useAdminQuery<UsersRes>(path);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -80,33 +88,75 @@ export default function UsersPage() {
           ]}
           rows={data.items.map((u) => ({
             ...u,
+            status: statusLabel(u.status),
+            accountStatus: u.status,
             roles: u.roles.join(", "),
           }))}
           expandedId={expanded}
-          onRowClick={(row) =>
-            setExpanded(expanded === String(row.id) ? null : String(row.id))
-          }
-          renderExpanded={(row) => (
-            <div className="flex flex-wrap gap-2">
-              <ActionButton
-                label="Suspend"
+          onRowClick={(row) => {
+            const next = expanded === String(row.id) ? null : String(row.id);
+            setExpanded(next);
+            setReason("");
+          }}
+          renderExpanded={(row) => {
+            const suspended =
+              String(row.accountStatus ?? row.status ?? "").toUpperCase() ===
+              "SUSPENDED";
+            const reasonOk = reason.trim().length >= 3;
+            return (
+            <div className="flex flex-col gap-3">
+              <label className="flex max-w-md flex-col gap-1 text-sm">
+                {suspended ? "Reason for lifting the suspension" : "Reason for the user"}
+                <textarea
+                  className="min-h-24 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm text-[var(--rw-ink)]"
+                  value={reason}
+                  maxLength={500}
+                  placeholder={
+                    suspended
+                      ? "Tell them why the suspension is being lifted"
+                      : "Tell them why the account is being suspended"
+                  }
+                  onChange={(e) => setReason(e.target.value)}
+                />
+                <span className="text-xs text-[var(--rw-ink-muted)]">
+                  {suspended
+                    ? "Unsuspend turns on after this reason. Their listings go back on the marketplace."
+                    : "This is emailed to them. They will not be able to sign in."}
+                </span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={suspended || !reasonOk}
                 onClick={async () => {
                   await adminFetch(`/admin/users/${row.id}/suspend`, {
                     method: "POST",
-                    body: { reason: "Admin action" },
+                    body: { reason: reason.trim() },
                   });
+                  setReason("");
                   await reload();
                 }}
-              />
-              <ActionButton
-                label="Unsuspend"
+              >
+                Suspend
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="primary"
+                disabled={!suspended || !reasonOk}
                 onClick={async () => {
                   await adminFetch(`/admin/users/${row.id}/unsuspend`, {
                     method: "POST",
+                    body: { reason: reason.trim() },
                   });
+                  setReason("");
                   await reload();
                 }}
-              />
+              >
+                Unsuspend
+              </Button>
               <ActionButton
                 label="Reset verification"
                 onClick={async () => {
@@ -127,8 +177,10 @@ export default function UsersPage() {
                   await reload();
                 }}
               />
+              </div>
             </div>
-          )}
+            );
+          }}
         />
       ) : null}
     </div>

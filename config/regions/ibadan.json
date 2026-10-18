@@ -11,23 +11,58 @@
     "OTHER_IBADAN"
   ],
   "geocoding": {
-    "BODIJA": { "lat": 7.4326, "lng": 3.9085, "label": "Bodija" },
-    "UI": { "lat": 7.4443, "lng": 3.8995, "label": "University of Ibadan" },
-    "RING_ROAD": { "lat": 7.3878, "lng": 3.8766, "label": "Ring Road" },
-    "IWO_ROAD": { "lat": 7.4051, "lng": 3.9447, "label": "Iwo Road" },
-    "CHALLENGE": { "lat": 7.3705, "lng": 3.8802, "label": "Challenge" },
-    "OTHER_IBADAN": { "lat": 7.3775, "lng": 3.947, "label": "Ibadan" }
+    "BODIJA": {
+      "lat": 7.4326,
+      "lng": 3.9085,
+      "label": "Bodija"
+    },
+    "UI": {
+      "lat": 7.4443,
+      "lng": 3.8995,
+      "label": "University of Ibadan"
+    },
+    "RING_ROAD": {
+      "lat": 7.3878,
+      "lng": 3.8766,
+      "label": "Ring Road"
+    },
+    "IWO_ROAD": {
+      "lat": 7.4051,
+      "lng": 3.9447,
+      "label": "Iwo Road"
+    },
+    "CHALLENGE": {
+      "lat": 7.3705,
+      "lng": 3.8802,
+      "label": "Challenge"
+    },
+    "OTHER_IBADAN": {
+      "lat": 7.3775,
+      "lng": 3.947,
+      "label": "Ibadan"
+    }
   },
   "logistics": {
     "baseFeeKobo": 120000,
     "perKmKobo": 12000
   },
   "priceBands": {
-    "budget": { "minKobo": 0, "maxKobo": 4000000 },
-    "mid": { "minKobo": 4000000, "maxKobo": 35000000 },
-    "premium": { "minKobo": 35000000, "maxKobo": null }
+    "budget": {
+      "minKobo": 0,
+      "maxKobo": 4000000
+    },
+    "mid": {
+      "minKobo": 4000000,
+      "maxKobo": 35000000
+    },
+    "premium": {
+      "minKobo": 35000000,
+      "maxKobo": null
+    }
   },
-  "sms": { "enabled": true, "provider": "termii" },
-  "psp": { "enabled": true, "provider": "paystack" },
+  "psp": {
+    "enabled": true,
+    "provider": "paystack"
+  },
   "status": "pilot"
 }

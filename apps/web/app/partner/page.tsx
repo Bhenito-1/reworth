@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
+import { sentenceCaseLabel } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
 import {
   decidePartnerMembership,
@@ -34,7 +35,7 @@ export default function PartnerConsolePage() {
     const token = getAccessToken();
     const partnerKey = getStoredPartnerKey();
     if (!token && !partnerKey) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -250,7 +251,7 @@ export default function PartnerConsolePage() {
                           {m.displayName || m.phoneMasked || m.userId?.slice(0, 8) || "Member"}
                         </p>
                         <p className="text-sm text-[var(--rw-ink-muted)]">
-                          {m.status}
+                          {sentenceCaseLabel(m.status)}
                           {m.createdAt
                             ? ` · ${new Date(m.createdAt).toLocaleDateString("en-NG")}`
                             : ""}

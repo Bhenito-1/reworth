@@ -141,6 +141,9 @@ export type PublicListing = {
   model: string | null;
   condition: string;
   priceKobo: number;
+  quantityAvailable?: number;
+  quantityTotal?: number;
+  donateIfUnsoldDays?: number | null;
   negotiable: boolean;
   sellingMode: string;
   status: string;
@@ -188,8 +191,6 @@ export type PublicListing = {
   authRequired?: boolean;
   authenticationStatus?: string | null;
   certificateId?: string | null;
-  /** Phase 3.1 — Instant Buy eligible. */
-  instantBuyEligible?: boolean;
   /** Phase 3.3 — seller promotions */
   boosted?: boolean;
   featured?: boolean;
@@ -197,6 +198,7 @@ export type PublicListing = {
   featuredUntil?: string | null;
   /** Owner publish path — moderation rejection reasons. */
   moderationReasons?: string[];
+  rejectionReason?: string | null;
 };
 
 export type PriceIntelligence = {

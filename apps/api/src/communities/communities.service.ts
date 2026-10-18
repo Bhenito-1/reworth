@@ -322,6 +322,8 @@ export class CommunitiesService {
       where: {
         communityId: community.id,
         status: { in: ['LIVE', 'RESERVED'] },
+        quantityAvailable: { gt: 0 },
+        NOT: { riskFlags: { has: 'swap-response' } },
         AND: [this.visibility.visibleListingWhere(viewerId)],
       },
       include: {

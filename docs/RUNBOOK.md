@@ -10,11 +10,11 @@ Detection → mitigation → rollback → comms. Placeholders only — wire real
 - **Rollback:** Revert to last known good Paystack keys; replay webhooks from Paystack dashboard  
 - **Comms:** “Payments temporarily unavailable — listings still browsable.”
 
-### 2. SMS delivery degradation
-- **Detect:** OTP success rate &lt; 80%; provider balance alert  
-- **Mitigate:** Fail over Termii ↔ Twilio; raise OTP expiry; show console OTP in staging only  
-- **Rollback:** Restore primary SMS provider credentials  
-- **Comms:** “Login codes delayed — retry in 2 minutes.”
+### 2. Auth / session degradation
+- **Detect:** Login/register error rate ↑; refresh reuse detections spike  
+- **Mitigate:** Check JWT secrets/TTL; clear bad refresh families; confirm email provider for register welcome mail  
+- **Rollback:** Roll back API auth deploy; keep email auth  
+- **Comms:** “Sign-in temporarily slow — try again shortly.”
 
 ### 3. Search index lag / OpenSearch down
 - **Detect:** Search p95 ↑; empty results vs Postgres count  
@@ -42,7 +42,7 @@ Detection → mitigation → rollback → comms. Placeholders only — wire real
 
 ### 7. Push notification failures
 - **Detect:** Mock-only in MVP; FCM/APNs error rate when live  
-- **Mitigate:** Fall back to SMS for critical (OTP, payment); disable non-critical push  
+- **Mitigate:** Fall back to email/in-app for critical alerts; disable non-critical push  
 - **Rollback:** Previous FCM key  
 - **Comms:** In-app bell still works.
 
@@ -72,7 +72,7 @@ Detection → mitigation → rollback → comms. Placeholders only — wire real
 
 ### 12. CDN / media 404s
 - **Detect:** Broken images on PDP  
-- **Mitigate:** Check S3_PUBLIC_URL / CDN purge; MinIO bucket policy  
+- **Mitigate:** Check S3_PUBLIC_URL / CDN purge; s3mock or S3 bucket policy  
 - **Rollback:** Prior CDN config  
 - **Comms:** Soft.
 

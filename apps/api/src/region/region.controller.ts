@@ -71,8 +71,8 @@ export class RegionController {
       displayName: cfg.displayName,
       timezone: cfg.timezone,
       communities: cfg.communities,
+      areas: this.regions.listAreas(cfg.city),
       logistics: cfg.logistics,
-      smsEnabled: cfg.sms.enabled,
       pspEnabled: cfg.psp.enabled,
       status: cfg.status ?? 'supply',
     };

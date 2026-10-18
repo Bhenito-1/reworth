@@ -1,34 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
-import {
-  BottomNav,
-  Chip,
-  EmptyState,
-  Skeleton,
-} from "@reworth/ui-web";
+import { Button, Chip, EmptyState, Modal, Skeleton } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
   conversationThumbUrl,
+  deleteConversation,
   listConversations,
   offerStatusLabel,
+  safeChatPreview,
   type ConversationListItem,
 } from "../../lib/chat";
+import { subscribeChat, type InboxUpdate } from "../../lib/chat-socket";
 
 export default function ChatsPage() {
   const router = useRouter();
   const [items, setItems] = useState<ConversationListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ConversationListItem | null>(
+    null,
+  );
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -38,10 +41,16 @@ export default function ChatsPage() {
       setItems(rows);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
-      setError(err instanceof ApiError ? err.message : "Could not load chats");
+      setError(
+        err instanceof ApiError && err.status === 429
+          ? "Chats are busy for a moment. Trying again…"
+          : err instanceof ApiError
+            ? err.message
+            : "Could not load chats",
+      );
     } finally {
       setLoading(false);
     }
@@ -54,16 +63,95 @@ export default function ChatsPage() {
   useEffect(() => {
     const token = getAccessToken();
     if (!token) return;
+    let live = false;
+
+    const applyInbox = (update: InboxUpdate) => {
+      setItems((prev) => {
+        const index = prev.findIndex((row) => row.id === update.conversationId);
+        if (index < 0) {
+          void listConversations(token)
+            .then((rows) => {
+              setItems(rows);
+              setError(null);
+              setLoading(false);
+            })
+            .catch(() => undefined);
+          return prev;
+        }
+        const row = prev[index];
+        const incoming = update.senderId === row.counterpart.id;
+        const next = [...prev];
+        next[index] = {
+          ...row,
+          lastMessageAt: update.lastMessageAt,
+          lastMessagePreview: update.preview,
+          unreadCount: incoming ? row.unreadCount + 1 : row.unreadCount,
+        };
+        next.sort(
+          (a, b) =>
+            new Date(b.lastMessageAt ?? 0).getTime() -
+            new Date(a.lastMessageAt ?? 0).getTime(),
+        );
+        return next;
+      });
+    };
+
+    const stop = subscribeChat(token, {
+      onConnect: () => {
+        live = true;
+      },
+      onDisconnect: () => {
+        live = false;
+      },
+      onInbox: applyInbox,
+    });
+
     const id = window.setInterval(() => {
+      if (live || document.visibilityState === "hidden") return;
       void listConversations(token)
-        .then(setItems)
+        .then((rows) => {
+          setItems(rows);
+          setError(null);
+          setLoading(false);
+        })
         .catch(() => undefined);
-    }, 8000);
-    return () => window.clearInterval(id);
+    }, 30000);
+
+    return () => {
+      stop();
+      window.clearInterval(id);
+    };
   }, []);
 
+  function askDelete(item: ConversationListItem) {
+    setDeleteError(null);
+    setPendingDelete(item);
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const token = getAccessToken();
+    if (!token) {
+      router.replace("/");
+      return;
+    }
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteConversation(token, pendingDelete.id);
+      setItems((prev) => prev.filter((row) => row.id !== pendingDelete.id));
+      setPendingDelete(null);
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError ? err.message : "Could not delete this chat",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
-    <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] pb-28 text-[var(--rw-ink)]">
+    <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-40"
@@ -123,10 +211,7 @@ export default function ChatsPage() {
               const thumb = conversationThumbUrl(c.listingThumb);
               return (
                 <li key={c.id}>
-                  <Link
-                    href={`/chats/${c.id}`}
-                    className="flex gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-3 transition-colors hover:border-[var(--rw-accent)]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-                  >
+                  <ConversationLink item={c} onLongPress={askDelete}>
                     <div className="h-14 w-14 shrink-0 overflow-hidden rounded-[var(--rw-radius)] bg-[var(--rw-border)]">
                       {thumb ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -162,7 +247,7 @@ export default function ChatsPage() {
                       <p className="mt-0.5 truncate text-sm text-[var(--rw-ink-muted)]">
                         {c.counterpart.displayName}
                         {c.lastMessagePreview
-                          ? ` · ${c.lastMessagePreview}`
+                          ? ` · ${safeChatPreview(c.lastMessagePreview)}`
                           : " · No messages yet"}
                       </p>
                       {c.activeOffer ? (
@@ -179,7 +264,7 @@ export default function ChatsPage() {
                         </div>
                       ) : null}
                     </div>
-                  </Link>
+                  </ConversationLink>
                 </li>
               );
             })}
@@ -187,16 +272,93 @@ export default function ChatsPage() {
         )}
       </div>
 
-      <BottomNav
-        active="chats"
-        onNavigate={(tab) => {
-          if (tab === "chats") return;
-          if (tab === "home") router.push("/");
-          else if (tab === "discover") router.push("/search");
-          else if (tab === "sell") router.push("/sell");
-          else if (tab === "profile") router.push("/account");
+      <Modal
+        open={Boolean(pendingDelete)}
+        onClose={() => {
+          if (!deleting) setPendingDelete(null);
         }}
-      />
+        title="Delete chat"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-[var(--rw-ink-muted)]">
+            Delete this chat with{" "}
+            {pendingDelete?.counterpart.displayName ?? "this member"} on your
+            side? They still have their messages.
+          </p>
+          {deleteError ? (
+            <p className="text-sm text-[var(--rw-error)]" role="alert">
+              {deleteError}
+            </p>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              disabled={deleting}
+              onClick={() => setPendingDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={deleting}
+              onClick={() => void confirmDelete()}
+            >
+              {deleting ? "Deleting…" : "Delete chat"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </main>
+  );
+}
+
+function ConversationLink({
+  item: c,
+  onLongPress,
+  children,
+}: {
+  item: ConversationListItem;
+  onLongPress: (item: ConversationListItem) => void;
+  children: ReactNode;
+}) {
+  const holdTimer = useRef<number | null>(null);
+  const held = useRef(false);
+
+  function clearHold() {
+    if (holdTimer.current != null) {
+      window.clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  }
+
+  return (
+    <Link
+      href={`/chats/${c.id}`}
+      onPointerDown={() => {
+        held.current = false;
+        clearHold();
+        holdTimer.current = window.setTimeout(() => {
+          held.current = true;
+          onLongPress(c);
+        }, 500);
+      }}
+      onPointerUp={clearHold}
+      onPointerLeave={clearHold}
+      onPointerCancel={clearHold}
+      onClick={(event) => {
+        if (held.current) {
+          event.preventDefault();
+          held.current = false;
+        }
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        clearHold();
+        onLongPress(c);
+      }}
+      className="flex select-none gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-3 transition-colors hover:border-[var(--rw-accent)]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+    >
+      {children}
+    </Link>
   );
 }

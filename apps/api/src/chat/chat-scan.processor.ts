@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { FRAUD } from '../admin/admin-roles';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatScanService, type ScanHit } from './chat-scan.service';
 
@@ -12,6 +14,7 @@ export class ChatScanProcessor {
   constructor(
     private readonly scan: ChatScanService,
     private readonly prisma: PrismaService,
+    @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
   async processMessage(params: {
@@ -39,6 +42,15 @@ export class ChatScanProcessor {
           kind: hit.kind,
         },
       },
+    });
+    await this.alerts?.notify({
+      roles: FRAUD,
+      kind: 'RISK',
+      title: 'Chat scam signal',
+      body: `A message matched ${hit.kind}.`,
+      href: '/fraud',
+      entityType: 'Message',
+      entityId: params.messageId,
     });
     this.logger.warn(
       `Scam scan hit on message ${params.messageId}: ${hit.kind}`,

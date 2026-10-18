@@ -89,6 +89,14 @@ export class ChatGateway implements OnGatewayConnection {
     if (!c || (c.buyerId !== userId && c.sellerId !== userId)) {
       return { ok: false };
     }
+    const suspended = await this.prisma.user.findFirst({
+      where: {
+        id: { in: [c.buyerId, c.sellerId] },
+        status: 'SUSPENDED',
+      },
+      select: { id: true },
+    });
+    if (suspended) return { ok: false };
     await client.join(`conversation:${body.conversationId}`);
     return { ok: true };
   }
@@ -112,6 +120,14 @@ export class ChatGateway implements OnGatewayConnection {
     this.server
       .to(`conversation:${conversationId}`)
       .emit(event, payload);
+  }
+
+  /** Lightweight inbox hint for people already connected. No database read. */
+  emitToUsers(userIds: string[], event: string, payload: unknown) {
+    if (!this.server) return;
+    for (const userId of userIds) {
+      this.server.to(`user:${userId}`).emit(event, payload);
+    }
   }
 
   emitOfferUpdated(conversationId: string | null | undefined, payload: unknown) {

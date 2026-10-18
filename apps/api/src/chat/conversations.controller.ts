@@ -37,6 +37,7 @@ import { MessagesService } from './messages.service';
  *     sender?:{id,displayName} } — never phone/email
  * - POST /conversations/:id/messages → MessageDto (clientMsgId deduped)
  * - POST /conversations/:id/read · POST /delivered · POST/DELETE mute
+ * - DELETE /conversations/:id → hide the chat for the caller only
  */
 @Controller()
 @UseGuards(JwtAuthGuard)
@@ -118,6 +119,11 @@ export class ConversationsController {
   @Delete('conversations/:id/mute')
   unmute(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.messages.unmuteConversation(id, user.id);
+  }
+
+  @Delete('conversations/:id')
+  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.messages.deleteForViewer(id, user.id);
   }
 
   @Post('users/:id/block')

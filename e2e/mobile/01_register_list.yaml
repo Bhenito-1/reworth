@@ -1,45 +1,25 @@
 # ReWorth Maestro — 01 Register / List (stub for device/sim UAT)
 # Requires Expo app + Metro; not run in default CI.
-# Demo seller (after seed): Ori +2348010000001
-# OTP: dual-channel SMS + WhatsApp; mock returns debugCode on POST /auth/otp/request
-# Replace OTP_CODE below with debugCode (or live Termii code).
+# Demo seller (after seed:staging): ori@demo.reworth.ng / DemoOri!2026
 appId: com.reworth.app
 ---
 - launchApp
 - assertVisible: "ReWorth"
+# Register or login path (email/password)
+- tapOn: "Log in"
 - tapOn:
-    text: "Get started|Continue with phone|Phone"
-    optional: true
+    id: "email-input"
+- inputText: "ori@demo.reworth.ng"
 - tapOn:
-    text: "Continue with phone"
-    optional: true
-- tapOn:
-    id: "phone-input"
-- eraseText
-- inputText: "+2348010000001"
-- tapOn:
-    id: "send-otp"
-- assertVisible:
-    text: "SMS|WhatsApp|Enter code"
-    optional: true
-- tapOn:
-    id: "otp-input"
-- inputText: "${OTP_CODE}"
-- tapOn:
-    id: "verify-otp"
-# Sell — camera / mock filmstrip
-- tapOn:
-    text: "SELL|Sell"
-- tapOn:
-    id: "sell-mock-photos"
-- tapOn:
-    id: "sell-analyze"
-- assertVisible:
-    text: "Title|AI draft|Reading"
-    optional: true
-- tapOn:
-    text: "Continue|Publish"
-    optional: true
-- assertVisible:
-    text: "live|Live|Under review|Your item"
-    optional: true
+    id: "password-input"
+- inputText: "DemoOri!2026"
+- tapOn: "Log in"
+# Sell flow
+- tapOn: "Sell"
+- tapOn: "Add photos"
+# … attach fixture image …
+- tapOn: "Continue"
+- assertVisible: "Title"
+- inputText: "Maestro test chair"
+- tapOn: "AI assist"
+- tapOn: "Publish"

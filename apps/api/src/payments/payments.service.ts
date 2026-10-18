@@ -23,10 +23,12 @@ import {
   computeProtectionFeeKoboFromRates,
 } from '../monetization/fee-rates';
 import { InitiatePaymentDto } from './dto/payments.dto';
+import { SWAP_FEE_PER_USER_KOBO } from '../swap/swap-fees';
 
 export type PaymentDto = {
   id: string;
   orderId: string;
+  payerId: string | null;
   provider: string;
   reference: string;
   amountKobo: number;
@@ -82,21 +84,27 @@ export class PaymentsService {
     const email = buyer?.email ?? `${buyerId}@reworth.local`;
     const reference = `rw_${order.id.replace(/-/g, '').slice(0, 16)}_${Date.now()}`;
 
+    const amountKobo =
+      order.transactionType === 'SWAP'
+        ? order.deliveryFeeKobo + SWAP_FEE_PER_USER_KOBO
+        : order.totalKobo;
+
     const result = await this.psp.initiate({
-      amountKobo: order.totalKobo,
+      amountKobo,
       currency: 'NGN',
       reference,
       email,
-      metadata: { orderId: order.id },
+      metadata: { orderId: order.id, payerId: buyerId },
       idempotencyKey: dto.idempotencyKey,
     });
 
     const payment = await this.prisma.payment.create({
       data: {
         orderId: order.id,
+        payerId: buyerId,
         provider: this.psp.name,
         reference: result.reference,
-        amountKobo: order.totalKobo,
+        amountKobo,
         status: 'PENDING',
         idempotencyKey: dto.idempotencyKey,
         providerPayload: {
@@ -201,7 +209,15 @@ export class PaymentsService {
         },
       });
 
-      await this.orders.markFunded(payment.orderId, payment.reference);
+      try {
+        await this.orders.markFunded(payment.orderId, payment.reference);
+      } catch (err) {
+        await this.prisma.payment.update({
+          where: { id: payment.id },
+          data: { status: 'FAILED' },
+        });
+        throw err;
+      }
       await this.recordOrderRevenue(payment.orderId, payment.reference);
       this.notifications.log('payment.success', {
         paymentId: payment.id,
@@ -280,6 +296,7 @@ export class PaymentsService {
     return {
       id: p.id,
       orderId: p.orderId,
+      payerId: p.payerId,
       provider: p.provider,
       reference: p.reference,
       amountKobo: p.amountKobo,

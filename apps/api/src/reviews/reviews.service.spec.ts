@@ -51,9 +51,14 @@ describe('ReviewsService', () => {
           return row;
         }),
         findMany: jest.fn(async () =>
-          [...state.reviews.values()].filter(
-            (r) => r.status === ReviewStatus.PUBLISHED,
-          ),
+          [...state.reviews.values()]
+            .filter((r) => r.status === ReviewStatus.PUBLISHED)
+            .map((r) => ({
+              ...r,
+              order: (r.order as { buyerId: string } | undefined) ?? {
+                buyerId: r.reviewerId,
+              },
+            })),
         ),
         create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
           const row = {
@@ -175,7 +180,7 @@ describe('ReviewsService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('mutual publication — one pending invisible; both → published', async () => {
+  it('publishes a buyer rating immediately and refuses a seller rating', async () => {
     const state = {
       order: {
         id: 'order-1',
@@ -200,23 +205,22 @@ describe('ReviewsService', () => {
       punctuality: 4,
       transactionExperience: 5,
     });
-    expect(first.status).toBe(ReviewStatus.PENDING_MUTUAL);
+    expect(first.status).toBe(ReviewStatus.PUBLISHED);
+    expect(first.revieweeId).toBe('seller-1');
 
     const published = await service.listPublishedForUser('seller-1');
-    expect(published).toHaveLength(0);
+    expect(published).toHaveLength(1);
 
-    const second = await service.createForOrder('order-1', 'seller-1', {
-      overall: 4,
-      accuracy: 4,
-      communication: 4,
-      punctuality: 5,
-      transactionExperience: 4,
-    });
-    expect(second.status).toBe(ReviewStatus.PUBLISHED);
-
-    const buyerReview = state.reviews.get('order-1:buyer-1');
-    expect(buyerReview?.status).toBe(ReviewStatus.PUBLISHED);
-    expect(trust.recompute).toHaveBeenCalled();
+    await expect(
+      service.createForOrder('order-1', 'seller-1', {
+        overall: 4,
+        accuracy: 4,
+        communication: 4,
+        punctuality: 5,
+        transactionExperience: 4,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(trust.recompute).toHaveBeenCalledWith('seller-1', 'review_published');
   });
 
   it('single reply rule', async () => {
@@ -290,6 +294,86 @@ describe('ReviewsService', () => {
         transactionExperience: 5,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('averages buyer process ratings from other and similar items', async () => {
+    const state = {
+      order: {
+        id: 'order-1',
+        status: 'COMPLETED',
+        buyerId: 'buyer-1',
+        sellerId: 'seller-1',
+      },
+      reviews: new Map<string, Record<string, unknown>>(),
+    };
+    const prisma = makePrisma(state) as ReturnType<typeof makePrisma> & {
+      listing: {
+        findMany: jest.Mock;
+        findUnique: jest.Mock;
+      };
+    };
+    prisma.listing.findUnique = jest.fn(async () => ({
+      id: 'listing-open',
+      sellerId: 'seller-1',
+      categoryId: 'cat-a',
+      quantitySold: 0,
+    }));
+    const reviewFields = {
+      accuracy: 5,
+      communication: 5,
+      punctuality: 5,
+      overall: 5,
+      body: 'Smooth handover',
+      photoKeys: [],
+      status: ReviewStatus.PUBLISHED,
+      reply: null,
+      repliedAt: null,
+      publishedAt: new Date(),
+      createdAt: new Date(),
+    };
+    prisma.review.findMany = jest.fn(async () => [
+      {
+        ...reviewFields,
+        id: 'rev-similar',
+        orderId: 'order-9',
+        reviewerId: 'buyer-2',
+        revieweeId: 'seller-1',
+        transactionExperience: 4,
+        order: {
+          id: 'order-9',
+          buyerId: 'buyer-2',
+          checkoutId: null,
+          listing: { id: 'other', title: 'Side lamp', categoryId: 'cat-a' },
+        },
+        reviewer: { id: 'buyer-2', profile: { displayName: 'Tunde', avatarUrl: null } },
+      },
+      {
+        ...reviewFields,
+        id: 'rev-from-seller',
+        orderId: 'order-8',
+        reviewerId: 'seller-1',
+        revieweeId: 'buyer-2',
+        transactionExperience: 1,
+        order: {
+          buyerId: 'buyer-2',
+          listing: { id: 'other', title: 'Side lamp', categoryId: 'cat-a' },
+        },
+        reviewer: { id: 'seller-1', profile: { displayName: 'Seller', avatarUrl: null } },
+      },
+    ]);
+    const service = new ReviewsService(
+      prisma as never,
+      notifications as never,
+      { recompute: jest.fn() } as never,
+    );
+
+    const result = await service.listForListing('listing-open');
+    expect(result.soldUnits).toBe(0);
+    expect(result.seller.count).toBe(1);
+    expect(result.seller.average).toBe(4);
+    expect(result.seller.items[0]?.similar).toBe(true);
+    expect(result.seller.items[0]?.listingTitle).toBe('Side lamp');
+    expect(result.count).toBe(0);
   });
 
   it('public profile DTO has no phone/email/score when tier low', async () => {

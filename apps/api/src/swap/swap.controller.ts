@@ -59,6 +59,11 @@ export class SwapController {
     return this.proposals.listForListing(listingId, user.id);
   }
 
+  @Post('listings/:id/swap-offer')
+  startOffer(@CurrentUser() user: AuthUser, @Param('id') listingId: string) {
+    return this.proposals.startOffer(listingId, user.id);
+  }
+
   @Post('swap-proposals/:id/accept')
   acceptProposal(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.proposals.accept(id, user.id);
@@ -78,9 +83,22 @@ export class SwapController {
     return this.proposals.counter(id, user.id, dto);
   }
 
+  @Post('swap-proposals/:id/cancel')
+  cancelProposal(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.proposals.cancel(id, user.id);
+  }
+
   @Delete('swap-proposals/:id')
   withdrawProposal(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.proposals.withdraw(id, user.id);
+  }
+
+  @Get('listings/:id/gift-delivery-quote')
+  giftDeliveryQuote(
+    @CurrentUser() user: AuthUser,
+    @Param('id') listingId: string,
+  ) {
+    return this.claims.previewDelivery(listingId, user.id);
   }
 
   @Post('listings/:id/giveaway-claims')

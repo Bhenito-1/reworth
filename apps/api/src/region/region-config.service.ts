@@ -143,9 +143,6 @@ export class RegionConfigService implements OnModuleInit {
     ) {
       throw new Error(`${label}: logistics.baseFeeKobo/perKmKobo required`);
     }
-    if (typeof raw.sms?.enabled !== 'boolean') {
-      throw new Error(`${label}: sms.enabled required`);
-    }
     if (typeof raw.psp?.enabled !== 'boolean') {
       throw new Error(`${label}: psp.enabled required`);
     }
@@ -215,6 +212,16 @@ export class RegionConfigService implements OnModuleInit {
   getCity(key: string): RegionConfig | null {
     this.ensureLoaded();
     return this.byCity.get(normalizeCityKey(key)) ?? null;
+  }
+
+  /** Areas inside a state/city. Empty until that region is selected. */
+  listAreas(city: string): Array<{ key: string; label: string }> {
+    const cfg = this.getCity(city);
+    if (!cfg) return [];
+    return cfg.communities.map((key) => ({
+      key,
+      label: cfg.geocoding[key]?.label?.trim() || key,
+    }));
   }
 
   /** Fallback to Lagos when city unknown. */
@@ -311,10 +318,6 @@ export class RegionConfigService implements OnModuleInit {
     return this.requireCity(city).city;
   }
 
-  smsEnabled(city?: string | null): boolean {
-    return this.requireCity(city).sms.enabled;
-  }
-
   pspEnabled(city?: string | null): boolean {
     return this.requireCity(city).psp.enabled;
   }
@@ -350,7 +353,6 @@ export class RegionConfigService implements OnModuleInit {
       priceBands: {
         budget: { minKobo: 0, maxKobo: 5_000_000 },
       },
-      sms: { enabled: true },
       psp: { enabled: true },
     };
   }

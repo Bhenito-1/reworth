@@ -18,12 +18,12 @@ const TABS: {
 }[] = [
   { id: "home", label: "Home", icon: "appIcon" },
   { id: "discover", label: "Discover", icon: "actionBuy" },
-  { id: "sell", label: "SELL", icon: "actionSell" },
+  { id: "sell", label: "Sell", icon: "actionSell" },
   { id: "chats", label: "Chats", icon: "actionChat" },
   { id: "profile", label: "Profile", icon: "profileAvatar" },
 ];
 
-/** Home · Discover · SELL (elevated orange FAB) · Chats · Profile */
+/** Home · Discover · Sell (elevated orange FAB) · Chats · Profile */
 export function BottomNav({ active, onChange }: Props) {
   const c = useColors();
 
@@ -73,7 +73,7 @@ export function BottomNav({ active, onChange }: Props) {
                   style={styles.sellIcon}
                   resizeMode="contain"
                 />
-                <Text style={styles.sellLabel}>SELL</Text>
+                <Text style={styles.sellLabel}>Sell</Text>
               </View>
             </Pressable>
           );
@@ -183,7 +183,6 @@ const styles = StyleSheet.create({
     color: colors.onAccent,
     fontSize: 10,
     fontWeight: "700",
-    letterSpacing: 0.6,
     marginTop: 1,
   },
 });

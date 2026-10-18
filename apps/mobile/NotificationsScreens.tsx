@@ -4,49 +4,56 @@ import {
   FlatList,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { screenBounds, ScrollView } from "./components/BoundScroll";
 import { ApiError, apiFetch } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import {
-  CRITICAL_CATEGORIES,
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_CHANNELS,
   categoryLabel,
+  channelLabel,
   getNotificationPreferences,
   isCriticalCategory,
+  clearNotifications,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
   parseDeepLink,
+  swapListingIdFromDeepLink,
   patchNotificationPreference,
   type AppNotification,
   type NotificationChannel,
 } from "./lib/notifications";
+import { registerDevicePushToken } from "./lib/push";
 import { useColors } from "./theme/ThemeProvider";
 import { colors } from "./theme/tokens";
 
 type Props = {
   visible: boolean;
+  embedded?: boolean;
   onClose: () => void;
   onOpenOrder?: (orderId: string) => void;
   onOpenDispute?: (disputeId: string) => void;
   onOpenChat?: (conversationId: string) => void;
   onOpenListing?: (listingId: string) => void;
+  onOpenSelling?: (listingId?: string) => void;
 };
 
 export function NotificationsModal({
   visible,
+  embedded = false,
   onClose,
   onOpenOrder,
   onOpenDispute,
   onOpenChat,
   onOpenListing,
+  onOpenSelling,
 }: Props) {
   const theme = useColors();
   const [tab, setTab] = useState<"inbox" | "prefs">("inbox");
@@ -103,10 +110,46 @@ export function NotificationsModal({
   }, []);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible && !embedded) return;
     if (tab === "inbox") void loadInbox();
     else void loadPrefs();
-  }, [visible, tab, loadInbox, loadPrefs]);
+  }, [visible, embedded, tab, loadInbox, loadPrefs]);
+
+  async function onMarkAll() {
+    const token = await getAccessToken();
+    if (!token) return;
+    const stamp = new Date().toISOString();
+    const previous = items;
+    setItems((rows) =>
+      rows.map((row) => ({ ...row, readAt: row.readAt ?? stamp })),
+    );
+    try {
+      const result = await markAllNotificationsRead(token);
+      if (result.updated === 0 && previous.some((row) => !row.readAt)) {
+        setItems(previous);
+        setToast("Could not mark notifications as read");
+        return;
+      }
+      setToast("All marked read");
+    } catch (err) {
+      setItems(previous);
+      setToast(err instanceof ApiError ? err.message : "Could not mark as read");
+    }
+  }
+
+  async function onClear() {
+    const token = await getAccessToken();
+    if (!token || items.length === 0) return;
+    const previous = items;
+    setItems([]);
+    try {
+      await clearNotifications(token);
+      setToast("Notifications cleared");
+    } catch (err) {
+      setItems(previous);
+      setToast(err instanceof ApiError ? err.message : "Could not clear notifications");
+    }
+  }
 
   async function openItem(n: AppNotification) {
     const token = await getAccessToken();
@@ -124,9 +167,32 @@ export function NotificationsModal({
     }
     const parsed = parseDeepLink(n.deepLink);
     if (parsed?.kind === "order" && parsed.id) onOpenOrder?.(parsed.id);
+    const swapListingId = swapListingIdFromDeepLink(n.deepLink);
+    if (parsed?.kind === "order" && parsed.id) onOpenOrder?.(parsed.id);
     else if (parsed?.kind === "dispute" && parsed.id) onOpenDispute?.(parsed.id);
     else if (parsed?.kind === "chat" && parsed.id) onOpenChat?.(parsed.id);
-    else if (parsed?.kind === "listing" && parsed.id) onOpenListing?.(parsed.id);
+    else if (swapListingId) {
+      const access = token ?? (await getAccessToken());
+      if (access) {
+        try {
+          const conversations = await listConversations(access);
+          const match = conversations
+            .filter((conversation) => conversation.listingId === swapListingId)
+            .sort(
+              (a, b) =>
+                Date.parse(b.lastMessageAt ?? "") -
+                Date.parse(a.lastMessageAt ?? ""),
+            )[0];
+          if (match) {
+            onOpenChat?.(match.id);
+            return;
+          }
+        } catch {
+          /* open the listing if the chat cannot be found */
+        }
+      }
+      onOpenListing?.(swapListingId);
+    } else if (parsed?.kind === "listing" && parsed.id) onOpenListing?.(parsed.id);
   }
 
   async function togglePref(
@@ -144,6 +210,9 @@ export function NotificationsModal({
     setPrefs((p) => ({ ...p, [key]: enabled }));
     try {
       await patchNotificationPreference(token, { category, channel, enabled });
+      if (channel === "PUSH" && enabled) {
+        await registerDevicePushToken(token, { requestPermission: true });
+      }
     } catch (err) {
       setPrefs((p) => ({ ...p, [key]: !enabled }));
       setToast(err instanceof ApiError ? err.message : "Save failed");
@@ -178,26 +247,31 @@ export function NotificationsModal({
     }
   }
 
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.root, { backgroundColor: theme.canvas }]}>
+  const body = (
+      <View style={[styles.root, embedded && styles.rootEmbedded, { backgroundColor: theme.canvas }]}>
         <View style={styles.header}>
-          <Pressable onPress={onClose}>
-            <Text style={[styles.link, { color: theme.orange }]}>Close</Text>
-          </Pressable>
+          {embedded ? (
+            <Text style={[styles.link, { color: theme.orange }]}> </Text>
+          ) : (
+            <Pressable onPress={onClose} accessibilityRole="button">
+              <Text style={[styles.link, { color: theme.orange }]}>Close</Text>
+            </Pressable>
+          )}
           <Text style={[styles.brand, { color: theme.ink }]}>Notifications</Text>
-          <Pressable
-            onPress={() =>
-              void (async () => {
-                const token = await getAccessToken();
-                if (!token) return;
-                await markAllNotificationsRead(token);
-                void loadInbox();
-              })()
-            }
-          >
-            <Text style={[styles.link, { color: theme.orange }]}>Read all</Text>
-          </Pressable>
+          {tab === "inbox" ? (
+            <View style={styles.headerActions}>
+              <Pressable onPress={() => void onMarkAll()} disabled={items.length === 0}>
+                <Text style={[styles.link, { color: theme.orange }]}>Read all</Text>
+              </Pressable>
+              <Pressable onPress={() => void onClear()} disabled={items.length === 0}>
+                <Text style={[styles.link, { color: theme.orange }]}>Clear</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable onPress={() => setTab("inbox")}>
+              <Text style={[styles.link, { color: theme.orange }]}>Done</Text>
+            </Pressable>
+          )}
         </View>
 
         <View style={styles.tabs}>
@@ -208,6 +282,8 @@ export function NotificationsModal({
               tab === "inbox" && { backgroundColor: theme.orange },
             ]}
             onPress={() => setTab("inbox")}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab === "inbox" }}
           >
             <Text
               style={[
@@ -226,6 +302,8 @@ export function NotificationsModal({
               tab === "prefs" && { backgroundColor: theme.orange },
             ]}
             onPress={() => setTab("prefs")}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab === "prefs" }}
           >
             <Text
               style={[
@@ -256,6 +334,7 @@ export function NotificationsModal({
             <FlatList
               data={items}
               keyExtractor={(n) => n.id}
+              style={screenBounds}
               contentContainerStyle={styles.pad}
               ListEmptyComponent={
                 <Text style={[styles.muted, { color: theme.muted }]}>
@@ -322,8 +401,8 @@ export function NotificationsModal({
               Categories × channels
             </Text>
             <Text style={styles.muted}>
-              Critical: {Array.from(CRITICAL_CATEGORIES).join(", ")} — in-app
-              always on.
+              Orders, payments, delivery, and disputes stay on in the app.
+              Turn the other categories back on here whenever you want.
             </Text>
             {NOTIFICATION_CATEGORIES.map((cat) => (
               <View key={cat} style={styles.prefBlock}>
@@ -334,7 +413,7 @@ export function NotificationsModal({
                     ch === "IN_APP" && isCriticalCategory(cat);
                   return (
                     <View key={key} style={styles.prefRow}>
-                      <Text style={styles.prefCh}>{ch}</Text>
+                      <Text style={styles.prefCh}>{channelLabel(ch)}</Text>
                       <Switch
                         value={prefs[key] !== false}
                         disabled={locked}
@@ -348,12 +427,20 @@ export function NotificationsModal({
           </ScrollView>
         )}
       </View>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      {body}
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.canvas, paddingTop: 48 },
+  rootEmbedded: { paddingTop: 8 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -362,6 +449,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   brand: { fontSize: 17, fontWeight: "700", color: colors.ink },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 12 },
   link: { color: colors.orange, fontWeight: "600", fontSize: 15 },
   tabs: { flexDirection: "row", gap: 8, paddingHorizontal: 16, marginBottom: 8 },
   tab: {

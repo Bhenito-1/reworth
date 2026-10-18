@@ -3,7 +3,10 @@ import { MessageType } from '@prisma/client';
 import { ChatScanProcessor } from './chat-scan.processor';
 import { ChatScanService } from './chat-scan.service';
 import { toMessageDto } from './message.mapper';
-import { MessagesService } from './messages.service';
+import {
+  conversationHiddenFromViewer,
+  MessagesService,
+} from './messages.service';
 import { redactPhoneEmail, assertNoPiiFields } from './pii.util';
 
 describe('PII redaction', () => {
@@ -92,6 +95,7 @@ describe('MessagesService block + clientMsgId', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 'listing-1',
           sellerId: 'seller-1',
+          status: 'LIVE',
         }),
       },
       userBlock: {
@@ -170,6 +174,7 @@ describe('MessagesService block + clientMsgId', () => {
         update: jest.fn(),
       },
       userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
+      user: { findFirst: jest.fn().mockResolvedValue(null) },
       message: {
         findUnique: jest.fn().mockResolvedValue(existing),
         create: jest.fn(),
@@ -233,6 +238,7 @@ describe('MessagesService block + clientMsgId', () => {
         update: jest.fn(),
       },
       userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
+      user: { findFirst: jest.fn().mockResolvedValue(null) },
       userMute: { findFirst: jest.fn().mockResolvedValue(null) },
       message: {
         findUnique: jest.fn().mockImplementation(async ({ where }: any) => {
@@ -366,6 +372,7 @@ describe('MessagesService block + clientMsgId', () => {
         update: jest.fn(),
       },
       userBlock: { findFirst: jest.fn().mockResolvedValue(null) },
+      user: { findFirst: jest.fn().mockResolvedValue(null) },
       userMute: {
         findFirst: jest.fn().mockResolvedValue({ id: 'mute-1' }),
       },
@@ -384,6 +391,44 @@ describe('MessagesService block + clientMsgId', () => {
       body: 'hi',
     });
     expect(notifications.log).not.toHaveBeenCalled();
+  });
+});
+
+describe('delete chat for the viewer', () => {
+  it('hides a chat until a newer message arrives', () => {
+    const deleted = new Date('2026-10-09T00:00:00Z');
+    expect(conversationHiddenFromViewer(deleted, null)).toBe(true);
+    expect(
+      conversationHiddenFromViewer(deleted, new Date('2026-10-08T00:00:00Z')),
+    ).toBe(true);
+    expect(
+      conversationHiddenFromViewer(deleted, new Date('2026-10-09T00:00:01Z')),
+    ).toBe(false);
+    expect(conversationHiddenFromViewer(null, deleted)).toBe(false);
+  });
+
+  it('stamps only the viewer side', async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      conversation: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'conv-1',
+          buyerId: 'buyer-1',
+          sellerId: 'seller-1',
+        }),
+        update,
+      },
+    };
+    const service = new MessagesService(
+      prisma as never,
+      { processMessage: jest.fn() } as never,
+      { log: jest.fn() } as never,
+    );
+    await service.deleteForViewer('conv-1', 'seller-1');
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'conv-1' },
+      data: { sellerDeletedAt: expect.any(Date) },
+    });
   });
 });
 
