@@ -21,7 +21,7 @@ Companion column notes web’s intended role when mobile is primary.
 
 | Flow | Mobile | Web | Notes |
 | --- | --- | --- | --- |
-| Onboarding (email register + profile) | **full** | **full** | Mobile: in-app steps. Web: `/onboarding/*` |
+| Onboarding (email register + profile) | **full** | **full** | Mobile: in-app steps. Web: `/onboarding/*`. Login and register passwords can be shown. Register asks you to confirm the password |
 | Home / discovery rails | **full** | **full** | `DiscoveryHome` vs `/`. Home starts with every listing. Category chips filter the homepage for this visit only; refresh or the × control shows every item again. Choose a location limits it to one state and area; signing out clears that choice. Signed-in seller's own listings stay out of the marketplace and appear in My listings |
 | Search | **full** | **full** | `SearchPanel` vs `/search`. Query required before search or save alert. Empty results cannot be saved. Price min cannot exceed max. Conditions show in sentence case. Marketplace search omits the signed-in seller's own listings |
 | Favourites / wishlist | **full** | **full** | Heart saves for later. Empty wishlist opens search. A listing with no units left is removed from every wishlist. Profile → Wishlist and web `/wishlist` can add remaining items to the cart |

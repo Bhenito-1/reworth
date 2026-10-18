@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Input } from "@reworth/ui-web";
 import { OnboardingShell } from "../../components/OnboardingShell";
+import { PasswordField } from "../../components/PasswordField";
 import { apiFetch, ApiError } from "../../lib/api";
 import { isAuthed, setTokens } from "../../lib/auth";
 
@@ -70,12 +71,11 @@ function LoginForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <Input
+        <PasswordField
           label="Password"
-          type="password"
           autoComplete="password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={setPassword}
         />
         {error ? (
           <p className="text-sm text-[var(--rw-error)]" role="alert">

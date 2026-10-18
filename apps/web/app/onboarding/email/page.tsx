@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Input } from "@reworth/ui-web";
 import { OnboardingShell } from "../../../components/OnboardingShell";
+import { PasswordField } from "../../../components/PasswordField";
 import { apiFetch, ApiError } from "../../../lib/api";
 import { setTokens } from "../../../lib/auth";
 
@@ -13,9 +14,12 @@ export default function OnboardingEmailPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const passwordsMismatch =
+    confirmPassword.length > 0 && password !== confirmPassword;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -23,6 +27,10 @@ export default function OnboardingEmailPage() {
     const em = email.trim().toLowerCase();
     if (!em.includes("@") || password.length < 8) {
       setError("Email and password (min 8 characters) required");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
       return;
     }
     setLoading(true);
@@ -66,19 +74,29 @@ export default function OnboardingEmailPage() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <Input
+        <PasswordField
           label="Password"
-          type="password"
           autoComplete="new-password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={setPassword}
         />
+        <PasswordField
+          label="Confirm password"
+          autoComplete="new-password"
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+        />
+        {passwordsMismatch ? (
+          <p className="-mt-2 text-sm text-[var(--rw-error)]" role="status">
+            Passwords do not match.
+          </p>
+        ) : null}
         <Input
           label="Display name (optional)"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
         />
-        {error ? (
+        {error && !(passwordsMismatch && error === "Passwords do not match") ? (
           <p className="text-sm text-[var(--rw-error)]" role="alert">
             {error}
           </p>

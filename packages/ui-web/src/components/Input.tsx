@@ -50,7 +50,7 @@ export function Input({
             error
               ? "border-[var(--rw-error)]"
               : "border-[var(--rw-border)]",
-            trailing ? "pr-10" : "",
+            trailing ? "pr-16" : "",
             className,
           ]
             .filter(Boolean)

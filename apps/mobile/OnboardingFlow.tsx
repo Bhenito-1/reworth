@@ -44,6 +44,9 @@ export function OnboardingFlow({
   );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [regions, setRegions] = useState<RegionCity[]>([...FALLBACK_STATES]);
@@ -98,6 +101,10 @@ export function OnboardingFlow({
     const em = email.trim().toLowerCase();
     if (!em.includes("@") || password.length < 8) {
       setError("Email and password (min 8 characters) required");
+      return;
+    }
+    if (intent === "register" && password !== confirmPassword) {
+      setError("Passwords do not match");
       return;
     }
     setLoading(true);
@@ -289,16 +296,26 @@ export function OnboardingFlow({
             accessibilityLabel="Email"
             editable={!loading}
           />
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
+          <PasswordBox
+            label="Password"
             value={password}
             onChangeText={setPassword}
-            secureTextEntry
+            visible={showPassword}
+            onToggle={() => setShowPassword((current) => !current)}
             autoComplete={intent === "login" ? "password" : "new-password"}
-            accessibilityLabel="Password"
             editable={!loading}
           />
+          {intent === "register" ? (
+            <PasswordBox
+              label="Confirm password"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              visible={showConfirmPassword}
+              onToggle={() => setShowConfirmPassword((current) => !current)}
+              autoComplete="new-password"
+              editable={!loading}
+            />
+          ) : null}
           {intent === "register" ? (
             <>
               <Text style={styles.label}>Display name (optional)</Text>
@@ -456,6 +473,50 @@ export function OnboardingFlow({
   );
 }
 
+function PasswordBox({
+  label,
+  value,
+  onChangeText,
+  visible,
+  onToggle,
+  autoComplete,
+  editable,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  visible: boolean;
+  onToggle: () => void;
+  autoComplete: "password" | "new-password";
+  editable: boolean;
+}) {
+  return (
+    <View>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.passwordRow}>
+        <TextInput
+          style={[styles.input, styles.passwordInput]}
+          value={value}
+          onChangeText={onChangeText}
+          secureTextEntry={!visible}
+          autoComplete={autoComplete}
+          autoCapitalize="none"
+          accessibilityLabel={label}
+          editable={editable}
+        />
+        <Pressable
+          onPress={onToggle}
+          accessibilityRole="button"
+          accessibilityLabel={visible ? `Hide ${label}` : `Show ${label}`}
+          style={styles.passwordToggle}
+        >
+          <Text style={styles.passwordToggleText}>{visible ? "◉" : "⌣"}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   pad: {
     padding: space.lg,
@@ -499,6 +560,24 @@ const styles = StyleSheet.create({
     fontSize: typeScale.body,
     color: colors.ink,
     backgroundColor: colors.surface,
+  },
+  passwordRow: {
+    position: "relative",
+    justifyContent: "center",
+  },
+  passwordInput: {
+    paddingRight: 72,
+  },
+  passwordToggle: {
+    position: "absolute",
+    right: space.md,
+    minHeight: tap.min,
+    justifyContent: "center",
+  },
+  passwordToggleText: {
+    color: colors.emerald,
+    fontSize: typeScale.bodySm,
+    fontWeight: "600",
   },
   bio: {
     minHeight: 88,
