@@ -15,7 +15,8 @@ import { ChatScanProcessor } from './chat-scan.processor';
 import { NotificationStub } from './notification.stub';
 import { toMessageDto, type MessageDto } from './message.mapper';
 import { redactPhoneEmail } from './pii.util';
-import type { PostMessageDto } from './dto/chat.dto';
+import type { PostMeetupPinDto, PostMessageDto } from './dto/chat.dto';
+import { encodeMeetupPin, meetupPinPreview } from './meetup-pin';
 
 function swapKindForStatus(status: string): string | null {
   switch (status) {
@@ -252,7 +253,8 @@ export class MessagesService {
         counterpart,
         lastMessageAt: c.lastMessageAt,
         lastMessagePreview: last
-          ? chatPreview(last.type, last.body)
+          ? meetupPinPreview(last.body) ??
+            (last.body ? last.body.slice(0, 120) : `[${last.type}]`)
           : null,
         unreadCount,
         muted,
@@ -476,6 +478,23 @@ export class MessagesService {
     }
 
     return mapped;
+  }
+
+  /** ADR-011 Phase C — share private meetup coordinates in-thread only. */
+  async postMeetupPin(
+    conversationId: string,
+    userId: string,
+    dto: PostMeetupPinDto,
+  ): Promise<MessageDto> {
+    return this.postMessage(conversationId, userId, {
+      type: MessageType.SYSTEM,
+      body: encodeMeetupPin({
+        lat: dto.lat,
+        lng: dto.lng,
+        label: dto.label,
+      }),
+      clientMsgId: dto.clientMsgId,
+    });
   }
 
   /**

@@ -1,10 +1,13 @@
 import { MessageType } from '@prisma/client';
 import {
   IsEnum,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 
@@ -57,4 +60,27 @@ export class MuteConversationDto {
   @IsOptional()
   @IsUUID()
   mutedId?: string;
+}
+
+/** ADR-011 Phase C — private meetup pin (buyer/seller only). */
+export class PostMeetupPinDto {
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  lat!: number;
+
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  lng!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  label?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  clientMsgId?: string;
 }

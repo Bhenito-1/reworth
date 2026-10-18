@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en-NG">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ReWorth — Product description deck</title>
+  <style>
+    :root {
+      --navy: #172A3A;
+      --orange: #D96A32;
+      --beige: #F2E7D5;
+      --white: #FCFAF6;
+      --slate: #59636D;
+      --ink: #172A3A;
+      --line: rgba(23, 42, 58, 0.12);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      background: #0e1a24;
+      color: var(--ink);
+    }
+    .deck {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    .slides {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    .slide {
+      display: none;
+      position: absolute;
+      inset: 0;
+      padding: 56px 72px 88px;
+      background: var(--white);
+    }
+    .slide.on { display: flex; flex-direction: column; }
+    .slide.dark {
+      background: var(--navy);
+      color: var(--white);
+    }
+    .slide.dark .muted { color: rgba(252, 250, 246, 0.68); }
+    .kicker {
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--orange);
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+    h1 {
+      font-size: clamp(36px, 4.4vw, 56px);
+      line-height: 1.08;
+      font-weight: 700;
+      max-width: 16ch;
+    }
+    h2 {
+      font-size: clamp(28px, 3.2vw, 40px);
+      line-height: 1.15;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .lede {
+      margin-top: 18px;
+      font-size: 20px;
+      line-height: 1.45;
+      max-width: 42ch;
+      color: var(--slate);
+    }
+    .slide.dark .lede { color: rgba(252, 250, 246, 0.78); }
+    .muted { color: var(--slate); font-size: 15px; line-height: 1.5; }
+    .tagline {
+      margin-top: 28px;
+      font-size: 18px;
+      font-style: italic;
+      color: var(--beige);
+    }
+    .grid {
+      display: grid;
+      gap: 16px;
+      margin-top: 28px;
+    }
+    .g2 { grid-template-columns: 1fr 1fr; }
+    .g3 { grid-template-columns: 1fr 1fr 1fr; }
+    .card {
+      background: var(--beige);
+      border-radius: 12px;
+      padding: 20px 22px;
+    }
+    .slide.dark .card {
+      background: rgba(252, 250, 246, 0.08);
+    }
+    .card h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+    .card p, .card li {
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--slate);
+    }
+    .slide.dark .card p, .slide.dark .card li {
+      color: rgba(252, 250, 246, 0.78);
+    }
+    ol.flow, ul.plain {
+      margin-top: 20px;
+      padding-left: 22px;
+    }
+    ol.flow li, ul.plain li {
+      margin: 8px 0;
+      font-size: 17px;
+      line-height: 1.4;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 22px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th { color: var(--slate); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 72px;
+      background: #0e1a24;
+      color: var(--beige);
+      font-size: 13px;
+    }
+    .bar button {
+      background: transparent;
+      color: var(--beige);
+      border: 1px solid rgba(242, 231, 213, 0.35);
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .bar button:hover { border-color: var(--orange); color: #fff; }
+    .orange { color: var(--orange); }
+    .small { font-size: 13px; margin-top: 18px; color: var(--slate); }
+    .slide.dark .small { color: rgba(252, 250, 246, 0.55); }
+    @media print {
+      .bar { display: none; }
+      .slides { height: auto; overflow: visible; }
+      .slide { display: flex !important; position: relative; page-break-after: always; height: 100vh; }
+    }
+    @media (max-width: 800px) {
+      .slide { padding: 32px 24px 72px; }
+      .g2, .g3 { grid-template-columns: 1fr; }
+      .bar { padding: 10px 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <div class="slides" id="slides">
+
+      <section class="slide dark on">
+        <p class="kicker">Confidential · Product description</p>
+        <h1>ReWorth</h1>
+        <p class="tagline">Lagos, your unused things are worth something.</p>
+        <p class="lede">Nigeria’s trusted recommerce marketplace — buy, sell, swap, or give away what you already own. Photograph it. List it in about a minute. Trade nearby with more confidence than WhatsApp.</p>
+        <p class="small">For founders, partners, ops, and anyone who needs to understand the product · 2026</p>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">The problem</p>
+        <h2>Useful things sit idle. Resale is messy.</h2>
+        <p class="muted" style="margin-top:12px;max-width:54ch">Households hold furniture, phones, generators, fashion, cars, and office kit they no longer need. Finding a buyer today means WhatsApp status, estate groups, Instagram, or classifieds.</p>
+        <div class="grid g2">
+          <div class="card">
+            <h3>What breaks</h3>
+            <p>Discovery is random. Prices are guesswork. Payments are “transfer to this account.” Meetups feel unsafe. Deals die in the chat. Fraud is easy.</p>
+          </div>
+          <div class="card">
+            <h3>What ReWorth is for</h3>
+            <p>Turn informal resale into structured, local, trusted commerce — the first place people think of before throwing something away or buying the same item new.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">What it is</p>
+        <h2>A Lagos-first recommerce marketplace.</h2>
+        <p class="muted" style="margin-top:12px">Not a classifieds wall. A mobile-first product (iOS + Android) with a web companion for browse, search, listing, and checkout.</p>
+        <div class="grid g3">
+          <div class="card"><h3>Sell</h3><p>Photo → AI draft → price range → publish. Ask, offer, or Instant Buy.</p></div>
+          <div class="card"><h3>Buy</h3><p>See what is nearby. Chat. Offer. Pay with protection. Pickup or delivery.</p></div>
+          <div class="card"><h3>Swap / give away</h3><p>Trade items, or pass them on. Same trust rails as cash deals.</p></div>
+        </div>
+        <p class="small">Promise — Sellers: turn unused things into money quickly. Buyers: useful items nearby at better prices. Both: trade with greater confidence.</p>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">How it works · seller</p>
+        <h2>Open app. Tap Sell. Live in ~60 seconds.</h2>
+        <ol class="flow">
+          <li>Photograph the item (camera or gallery).</li>
+          <li>AI suggests category, title, brand, condition, description, and a price band.</li>
+          <li>Seller sets price and mode: sell, swap, or give away.</li>
+          <li>Pick community (Lagos corridors first, then other pilot cities) and fulfilment: meetup, pickup, or delivery.</li>
+          <li>Publish. Questions, offers, and buy requests arrive in chat.</li>
+          <li>Accept → buyer pays into regulated escrow-shaped flow → handover → buyer confirms → seller is paid → both rate.</li>
+        </ol>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">How it works · buyer</p>
+        <h2>Nearby first. Then pay only when it is real.</h2>
+        <ol class="flow">
+          <li>Home uses city + community so the feed is local, not national noise.</li>
+          <li>Search, filters, saved alerts, and “for you” rails surface items worth opening.</li>
+          <li>Product page: photos, condition, seller trust, fulfilment options.</li>
+          <li>Message or offer. Or buy now / Instant Buy where eligible.</li>
+          <li>Pay via Paystack-shaped protection (hold → deliver → confirm → release). ReWorth does not sit on customer funds outside a regulated PSP.</li>
+          <li>Confirm receipt. Review. Dispute path if something goes wrong.</li>
+        </ol>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">Trust stack</p>
+        <h2>Why this is not “another Jiji clone.”</h2>
+        <div class="grid g2">
+          <div class="card"><h3>Trusted people</h3><p>Phone OTP, optional identity, reviews, trust score, badges. Visible history — not anonymous dump accounts.</p></div>
+          <div class="card"><h3>Trusted items</h3><p>Structured listings, photo checks, condition, vehicle inspection, luxury authentication where it matters.</p></div>
+          <div class="card"><h3>Trusted payments</h3><p>Escrow-shaped orders on Paystack. Buyer protection fee. Disputes and refunds as a product, not a DM argument.</p></div>
+          <div class="card"><h3>Trusted collection</h3><p>Meetup guidance, pickup, platform delivery quotes. Communities and moving sales recreate estate-group density with rules.</p></div>
+        </div>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">Surfaces</p>
+        <h2>Mobile is the product. Web is the companion.</h2>
+        <div class="grid g3">
+          <div class="card"><h3>Consumer app</h3><p>Onboarding, home, search, sell, chat, checkout, orders, communities, moving sales, Ask ReWorth, room scan, referrals, Seller Plus.</p></div>
+          <div class="card"><h3>Web</h3><p>Browse, search, listing detail, checkout, account — same journeys for desktop and share links.</p></div>
+          <div class="card"><h3>Ops</h3><p>Admin: moderation, verification, reports, KPIs. Partner console for estates. Corporate relocation workspace.</p></div>
+        </div>
+        <p class="small">Pilot pickers: Lagos, Ogun, Ibadan, Osun, Ondo, Ekiti, Edo, Abuja, Port Harcourt, Kano. Marketing stays density-first — Lagos corridors before the whole map.</p>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">How we make money</p>
+        <h2>Liquidity first. Then take a thin, fair cut.</h2>
+        <p class="muted">Listings, browse, chat, and offers stay free at launch so the market can fill. Monetisation is already in the product (Phase 3.3), gated so we do not tax empty shelves.</p>
+        <table>
+          <thead>
+            <tr><th>Stream</th><th>How it works</th><th>Default rate</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Buyer protection</td><td>Fee on protected cash orders</td><td>2.5%, cap ₦5,000</td></tr>
+            <tr><td>Boost</td><td>Seller pays for extra visibility</td><td>₦1,500 / 24h · ₦3,500 / 72h · ₦7,500 / 7d</td></tr>
+            <tr><td>Featured listing</td><td>Home / search placement</td><td>₦25,000 / week</td></tr>
+            <tr><td>Seller Plus</td><td>Subscription: more live listings + featured slot</td><td>₦4,999 / month</td></tr>
+            <tr><td>Delivery margin</td><td>On platform delivery quotes</td><td>15%</td></tr>
+            <tr><td>Inspection / auth</td><td>Margin on vehicle inspect &amp; luxury auth</td><td>10%</td></tr>
+            <tr><td>Consignment</td><td>Platform sells on behalf of owner</td><td>15% (1,500 bps)</td></tr>
+            <tr><td>B2B later</td><td>Corporate relocation, estate partnerships, ads / promoted search</td><td>Contract / admin-assigned</td></tr>
+          </tbody>
+        </table>
+        <p class="small">North-star metric: successful transactions completed per month — not downloads. Early GMV quality beats take-rate greed.</p>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">Go-to-market</p>
+        <h2>Density, then geography.</h2>
+        <div class="grid g2">
+          <div class="card">
+            <h3>Where we start</h3>
+            <p>Lekki Phase 1, Ikoyi, VI, Oniru, Chevron, VGC, Ajah. Estates, relocating families, professionals, property managers, corporate movers.</p>
+          </div>
+          <div class="card">
+            <h3>Supply before ads</h3>
+            <p>Seed toward ~500 founding sellers and 2,500–5,000 quality items. Free verification, listings, collection support, featured slots, early-seller badge.</p>
+          </div>
+        </div>
+        <p class="muted" style="margin-top:20px">90-day example targets (Lagos geography, recalibrate after beta): 10,000 registered users · 5,000 active listings · 1,000 completed transactions · &lt;1% confirmed fraud · &lt;3 min median time to list.</p>
+        <p class="small">Sell-well order: Lagos density → live Paystack + Termii → stores + push → founding sellers → then Abuja / PH / Ibadan once those cities have stock. See docs/NIGERIA_MARKET_LAUNCH.md.</p>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">Roadmap · built</p>
+        <h2>The core marketplace is in the product.</h2>
+        <div class="grid g3">
+          <div class="card"><h3>MVP</h3><p>Accounts, OTP, listings, AI assist, search, chat, offers, escrow-shaped pay, pickup/delivery, reviews, admin, risk.</p></div>
+          <div class="card"><h3>Post-launch 1–2</h3><p>Swap, moving sales, communities, alerts, price intel, inspections, luxury auth, pro sellers, referrals, storefronts.</p></div>
+          <div class="card"><h3>Post-launch 3</h3><p>Ask ReWorth, room scan, Instant Buy, consign, managed pickup, corporate + partners, city config, monetization.</p></div>
+        </div>
+        <p class="small">Still mock-default locally: Paystack live keys, Termii live SMS/WhatsApp, store push. That is launch ops — not missing product vision.</p>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">Roadmap · next</p>
+        <h2>Make it real in market. Then deepen.</h2>
+        <table>
+          <thead>
+            <tr><th>Horizon</th><th>What</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Now — sell well</td><td>Founding-seller density in Lagos · live Paystack &amp; Termii · Play/App Store · real push · NDPR &amp; pen-test · staging load gate</td></tr>
+            <tr><td>Next cities</td><td>Turn on marketing only where inventory exists (Abuja, PH, Ibadan, then rest of SW / Edo / Kano)</td></tr>
+            <tr><td>Monetize harder</td><td>Self-serve promoted search (today admin-assigned) · ads · premium estate marketplaces</td></tr>
+            <tr><td>Differentiator</td><td>Room-scale AI: photograph a space → “sell these six items?” → draft listings</td></tr>
+            <tr><td>Later</td><td>Cross-border recommerce (ADR-007 design only) — after Nigeria density and CBN/NDPR review</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="slide">
+        <p class="kicker">Risks &amp; mitigation</p>
+        <h2>Technology will not save an empty or unsafe market.</h2>
+        <table>
+          <thead>
+            <tr><th>Risk</th><th>Why it hurts</th><th>Mitigation</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Empty marketplace</td><td>No listings = no buyers = death spiral</td><td>Supply-first; founding sellers; do not ads-blast 10 cities</td></tr>
+            <tr><td>Payments still mock</td><td>Nigerians will not wire blindly</td><td>Live Paystack, HMAC webhooks, escrow dry-run, merchant sign-off</td></tr>
+            <tr><td>OTP fail</td><td>No login, no trust</td><td>Termii SMS + WhatsApp live; wallet alerts; templates</td></tr>
+            <tr><td>Fraud / disputes</td><td>One public scam story ends the brand</td><td>Risk engine, ID, protection holds, ops rota, watchlists</td></tr>
+            <tr><td>App not installed</td><td>Product lives on phones</td><td>Store submit, App Links, Expo push so chats/offers land</td></tr>
+            <tr><td>NDPR / custody</td><td>Legal stop; we must not hold customer funds</td><td>Counsel, DPAs, PSP-only settlement (ADR-002)</td></tr>
+            <tr><td>Over-expansion</td><td>Thin inventory everywhere</td><td>City playbook: density gate before marketing spend</td></tr>
+            <tr><td>Scale / reliability</td><td>Slow app = abandoned carts</td><td>Staging k6 p95 gate, on-call, backups, rate limits</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="slide dark">
+        <p class="kicker">Close</p>
+        <h2>ReWorth is the infrastructure for Nigerian second-hand that already happens in chats.</h2>
+        <p class="lede">Photograph. List. Trade nearby. Get paid. That is the product. Money comes from protection, visibility, subscriptions, and services — after the market has stock. The work left is live rails and Lagos density, not another feature.</p>
+        <p class="tagline">Lagos, your unused things are worth something.</p>
+        <p class="small">Sources: PRD.md · docs/NIGERIA_MARKET_LAUNCH.md · docs/LAUNCH.md · docs/CITY_PLAYBOOK.md · fee-rates.ts</p>
+      </section>
+
+    </div>
+    <div class="bar">
+      <span>ReWorth product deck</span>
+      <span>
+        <button type="button" id="prev">← Prev</button>
+        <span id="pos">1 / 13</span>
+        <button type="button" id="next">Next →</button>
+      </span>
+    </div>
+  </div>
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    let i = 0;
+    function show(n) {
+      i = (n + slides.length) % slides.length;
+      slides.forEach((s, idx) => s.classList.toggle("on", idx === i));
+      document.getElementById("pos").textContent = i + 1 + " / " + slides.length;
+    }
+    document.getElementById("prev").onclick = () => show(i - 1);
+    document.getElementById("next").onclick = () => show(i + 1);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); show(i + 1); }
+      if (e.key === "ArrowLeft") show(i - 1);
+    });
+    show(0);
+  </script>
+</body>
+</html>

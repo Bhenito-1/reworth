@@ -27,7 +27,10 @@ import {
   listMessages,
   listOffers,
   markConversationRead,
+  meetupMapsUrl,
   muteConversation,
+  parseMeetupPin,
+  postMeetupPin,
   postMessage,
   rejectOffer,
   reportUser,
@@ -108,6 +111,11 @@ export default function ChatThreadPage() {
   const [sending, setSending] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const [offerBusy, setOfferBusy] = useState(false);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pinLabel, setPinLabel] = useState("Meetup point");
+  const [pinLat, setPinLat] = useState("6.4474");
+  const [pinLng, setPinLng] = useState("3.4721");
+  const [pinBusy, setPinBusy] = useState(false);
   const [counterFor, setCounterFor] = useState<OfferDto | null>(null);
   const [counterNaira, setCounterNaira] = useState("");
   const [safetyOpen, setSafetyOpen] = useState(false);
@@ -408,11 +416,55 @@ export default function ChatThreadPage() {
     }
   }
 
-  function showOfferResult(message: string, tone: "success" | "error") {
-    setOfferOpen(false);
-    window.requestAnimationFrame(() => {
-      setToast({ message, tone, durationMs: 6000 });
-    });
+  function useBrowserLocation() {
+    if (!navigator.geolocation) {
+      setToast({ message: "Geolocation not available in this browser", tone: "warn" });
+      return;
+    }
+    setPinBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setPinLat(String(pos.coords.latitude));
+        setPinLng(String(pos.coords.longitude));
+        setPinBusy(false);
+        setToast({ message: "Location filled from GPS", tone: "success" });
+      },
+      () => {
+        setPinBusy(false);
+        setToast({ message: "Could not get location permission", tone: "error" });
+      },
+      { enableHighAccuracy: false, timeout: 15000 },
+    );
+  }
+
+  async function shareMeetupPin() {
+    const token = getAccessToken();
+    if (!token || !conversationId) return;
+    const lat = Number(pinLat);
+    const lng = Number(pinLng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      setToast({ message: "Enter valid lat/lng", tone: "warn" });
+      return;
+    }
+    setPinBusy(true);
+    try {
+      const saved = await postMeetupPin(token, conversationId, {
+        lat,
+        lng,
+        label: pinLabel.trim() || "Meetup point",
+        clientMsgId: clientMsgId(),
+      });
+      setMessages((prev) => [...prev, saved]);
+      setPinOpen(false);
+      setToast({ message: "Meetup pin shared", tone: "success" });
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not share pin",
+        tone: "error",
+      });
+    } finally {
+      setPinBusy(false);
+    }
   }
 
   async function submitOffer(amountKobo: number, note?: string) {
@@ -924,10 +976,28 @@ export default function ChatThreadPage() {
                     <div className={mine ? "flex min-w-0 justify-end" : "flex min-w-0 justify-start"}>
                       {renderOffer(linkedOffer)}
                     </div>
-                  ) : m.type === "SWAP_PROPOSAL_CARD" ? (
-                    <div className="flex min-w-0 justify-center">
-                      {renderSwapProposal(m.body)}
-                    </div>
+                  ) : m.type === "SYSTEM" && parseMeetupPin(m.body) ? (
+                    (() => {
+                      const pin = parseMeetupPin(m.body)!;
+                      return (
+                        <a
+                          href={meetupMapsUrl(pin)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mx-auto block max-w-[85%] rounded-[var(--rw-radius)] border border-[var(--rw-accent)] bg-[var(--rw-beige,#F2E7D5)] px-3.5 py-3 text-left no-underline"
+                        >
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--rw-accent)]">
+                            Meetup pin
+                          </p>
+                          <p className="mt-1 text-sm font-medium text-[var(--rw-ink)]">
+                            {pin.label}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
+                            Private to this chat · Open in Maps
+                          </p>
+                        </a>
+                      );
+                    })()
                   ) : m.type === "SYSTEM" ? (
                     <p className="text-center text-xs text-[var(--rw-ink-muted)]">
                       {m.body}
@@ -1012,8 +1082,26 @@ export default function ChatThreadPage() {
               Make offer
             </Button>
           </div>
-            </>
-          )}
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              className="flex-1"
+              onClick={() => setPinOpen(true)}
+              disabled={!meta || sending}
+            >
+              Meetup pin
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="flex-1"
+              onClick={() => setOfferOpen(true)}
+              disabled={!meta}
+            >
+              Make offer
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1023,6 +1111,53 @@ export default function ChatThreadPage() {
         submitting={offerBusy}
         onSubmit={submitOffer}
       />
+
+      <Modal
+        open={pinOpen}
+        onClose={() => setPinOpen(false)}
+        title="Share meetup pin"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-[var(--rw-ink-muted)]">
+            Private to this chat only — never shown on public listings.
+          </p>
+          <Input
+            label="Label"
+            value={pinLabel}
+            onChange={(e) => setPinLabel(e.target.value)}
+            placeholder="Lekki Mall gate"
+            maxLength={80}
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Latitude"
+              value={pinLat}
+              onChange={(e) => setPinLat(e.target.value)}
+              inputMode="decimal"
+            />
+            <Input
+              label="Longitude"
+              value={pinLng}
+              onChange={(e) => setPinLng(e.target.value)}
+              inputMode="decimal"
+            />
+          </div>
+          <Button
+            variant="secondary"
+            disabled={pinBusy}
+            onClick={() => useBrowserLocation()}
+          >
+            {pinBusy ? "Working…" : "Use my location"}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={pinBusy}
+            onClick={() => void shareMeetupPin()}
+          >
+            {pinBusy ? "Sharing…" : "Share pin in chat"}
+          </Button>
+        </div>
+      </Modal>
 
       <Modal
         open={Boolean(counterFor)}

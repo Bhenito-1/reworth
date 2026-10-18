@@ -14,6 +14,10 @@ import { EmptyState } from "./components/EmptyState";
 import { ListingCard } from "./components/ListingCard";
 import { HomeSkeleton } from "./components/Skeleton";
 import { BottomSheet } from "./components/BottomSheet";
+import {
+  LocateMapSheet,
+  type LocateMapPayload,
+} from "./components/LocateMapSheet";
 import { brandAssets, HOME_CATEGORIES } from "./lib/brandAssets";
 import {
   cacheHome,
@@ -29,17 +33,11 @@ import {
 import { fetchRecommendations } from "./lib/intelligence";
 import { ensureAccessToken, getAccessToken } from "./lib/auth";
 import {
-  areaChoices,
-  FALLBACK_AREAS,
-  FALLBACK_STATES,
-  type AreaChoice,
-} from "./lib/areas";
-import { getRegion, listRegions, type RegionCity } from "./lib/region";
-import {
-  formatNgnFromKobo,
-  listingImageUrl,
-  type PublicListing,
-} from "./lib/types";
+  communityLabelsForCity,
+  type RegionCity,
+} from "./lib/region";
+import { locateMe } from "./lib/locate";
+import { formatNgnFromKobo, type PublicListing } from "./lib/types";
 import { useColors } from "./theme/ThemeProvider";
 import { hapticLight } from "./theme/haptics";
 import { colors } from "./theme/tokens";
@@ -56,6 +54,12 @@ type Props = {
   onApplyAreaFilter?: (filter: HomeAreaFilter) => void;
   onClearAreaFilter?: () => void;
   cityLabel?: string;
+  cityKey?: string;
+  cities?: RegionCity[];
+  onChangeCity?: (
+    city: RegionCity,
+    opts?: { communityLabel?: string },
+  ) => void;
   onOpenSearch: () => void;
   onOpenListing: (id: string) => void;
   onOpenTool?: (tool: "ask" | "worth" | "scan" | "consign" | "pickup") => void;
@@ -179,12 +183,11 @@ export function DiscoveryHome({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fromCache, setFromCache] = useState(false);
-  const [locationOpen, setLocationOpen] = useState(false);
-  const [regions, setRegions] = useState<RegionCity[]>([]);
-  const [draftState, setDraftState] = useState("");
-  const [draftArea, setDraftArea] = useState("");
-  const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
-  const [categoryLabel, setCategoryLabel] = useState<string | null>(null);
+  const [citySheetOpen, setCitySheetOpen] = useState(false);
+  const [locateBusy, setLocateBusy] = useState(false);
+  const [locateHint, setLocateHint] = useState<string | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
+  const [mapPayload, setMapPayload] = useState<LocateMapPayload | null>(null);
 
   const load = useCallback(
     async (opts?: { soft?: boolean }) => {
@@ -665,7 +668,7 @@ export function DiscoveryHome({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.railRow}
           >
-            {visibleForYou.map((item) => {
+            {forYou.map((item, index) => {
               const price =
                 item.sellingMode === "GIVE_AWAY"
                   ? "Free"
@@ -683,6 +686,7 @@ export function DiscoveryHome({
                   verified={Boolean(item.seller?.verificationBadge)}
                   imageUri={listingCoverUrl(item) ?? undefined}
                   onPress={() => onOpenListing(item.id)}
+                  testID={index === 0 ? "listing-card-0" : undefined}
                 />
               );
             })}
@@ -805,33 +809,124 @@ export function DiscoveryHome({
       title="Choose a location"
       onClose={() => setLocationOpen(false)}
     >
-      <Text style={[styles.nlHint, { color: c.muted, marginTop: 0, marginBottom: 12 }]}>
-        Pick a state, then an area. Home keeps showing every listing until you apply this.
+      <Text style={[styles.nlHint, { color: c.muted, marginBottom: 8 }]}>
+        Pilot cities across SW, Edo, Abuja, PH, and Kano. Use your location to
+        snap to the nearest community — we never show your exact home on browse.
       </Text>
-      <Text style={[styles.railTitle, { color: c.ink, marginBottom: 8 }]}>State</Text>
-      <View style={styles.locChips}>
-        {stateChoices.map((item) => {
-          const selected = draftState === item.city;
-          return (
-            <Pressable
-              key={item.city}
-              onPress={() => {
-                void hapticLight();
-                setDraftState(item.city);
-                setDraftArea("");
-              }}
-              style={[
-                styles.locChip,
-                {
-                  borderColor: selected ? c.orange : c.border,
-                  backgroundColor: selected ? c.surfaceWarm : c.surface,
-                },
-              ]}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
-            >
-              <Text style={{ color: selected ? c.orange : c.ink, fontWeight: "600" }}>
-                {item.displayName}
+      <Pressable
+        onPress={() => {
+          if (locateBusy) return;
+          void (async () => {
+            setLocateBusy(true);
+            setLocateHint(null);
+            try {
+              void hapticLight();
+              const hit = await locateMe();
+              onChangeCity?.(hit.city, {
+                communityLabel: hit.communityLabel,
+              });
+              const payload: LocateMapPayload = {
+                userLat: hit.userLat,
+                userLng: hit.userLng,
+                communityLat: hit.communityLat,
+                communityLng: hit.communityLng,
+                communityLabel: hit.communityLabel,
+                cityLabel: hit.city.displayName,
+                distanceKm: hit.distanceKm,
+              };
+              setMapPayload(payload);
+              setLocateHint(
+                `Near ${hit.communityLabel} · ${hit.city.displayName}` +
+                  (hit.distanceKm
+                    ? ` (~${hit.distanceKm.toFixed(1)} km)`
+                    : ""),
+              );
+              setCitySheetOpen(false);
+              setMapOpen(true);
+            } catch (err) {
+              setLocateHint(
+                err instanceof Error ? err.message : "Could not get location",
+              );
+            } finally {
+              setLocateBusy(false);
+            }
+          })();
+        }}
+        style={({ pressed }) => [
+          styles.cityCard,
+          {
+            backgroundColor: pressed ? c.surfaceWarm : c.beige,
+            borderColor: c.orange,
+            marginBottom: 10,
+          },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Use my location"
+        testID="btn-locate-me"
+        disabled={locateBusy}
+      >
+        <Text style={[styles.railTitle, { color: c.ink }]}>
+          {locateBusy ? "Finding your area…" : "Use my location"}
+        </Text>
+        <Text style={[styles.cityAreas, { color: c.muted }]}>
+          GPS once → nearest ReWorth community (Uber-style locate, privacy-safe)
+        </Text>
+      </Pressable>
+      {locateHint ? (
+        <Text
+          style={[styles.nlHint, { color: c.muted, marginBottom: 8 }]}
+          accessibilityLiveRegion="polite"
+        >
+          {locateHint}
+        </Text>
+      ) : null}
+      {(cities.length
+        ? cities
+        : [
+            { city: "lagos", key: "lagos", displayName: "Lagos" },
+            { city: "abuja", key: "abuja", displayName: "Abuja" },
+          ]
+      ).map((city) => {
+        const selected =
+          city.city === cityKey || city.displayName === cityLabel;
+        const areas = communityLabelsForCity(city.city)
+          .filter((a) => !a.startsWith("Other"))
+          .slice(0, 5);
+        return (
+          <Pressable
+            key={city.city}
+            onPress={() => {
+              void hapticLight();
+              onChangeCity?.(city);
+              setCitySheetOpen(false);
+            }}
+            style={({ pressed }) => [
+              styles.cityCard,
+              {
+                backgroundColor: pressed
+                  ? c.surfaceWarm
+                  : selected
+                    ? c.surfaceWarm
+                    : c.surface,
+                borderColor: selected ? c.orange : c.border,
+              },
+            ]}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+            accessibilityLabel={`${city.displayName}. ${areas.join(", ")}`}
+          >
+            <View style={styles.cityCardHeader}>
+              <Text style={[styles.railTitle, { color: c.ink }]}>
+                {city.displayName}
+              </Text>
+              <Text
+                style={{
+                  color: selected ? c.orange : c.muted,
+                  fontSize: 13,
+                  fontWeight: "700",
+                }}
+              >
+                {selected ? "Current" : "Select"}
               </Text>
             </Pressable>
           );
@@ -916,7 +1011,24 @@ export function DiscoveryHome({
       >
         <Text style={{ color: c.orange, fontWeight: "600" }}>Show all areas</Text>
       </Pressable>
+      {mapPayload ? (
+        <Pressable
+          onPress={() => setMapOpen(true)}
+          style={{ marginTop: 4, paddingVertical: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Open area map"
+        >
+          <Text style={{ color: c.orange, fontWeight: "600" }}>
+            View area on map →
+          </Text>
+        </Pressable>
+      ) : null}
     </BottomSheet>
+    <LocateMapSheet
+      visible={mapOpen}
+      payload={mapPayload}
+      onClose={() => setMapOpen(false)}
+    />
     </>
   );
 }

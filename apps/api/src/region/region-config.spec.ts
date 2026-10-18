@@ -118,6 +118,41 @@ describe('RegionConfigService — config-only city expansion', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('snaps GPS near Bodija to Ibadan community (locate)', () => {
+    const dir = join(tmpdir(), `reworth-locate-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'lagos.json'),
+      JSON.stringify({
+        ...IBADAN,
+        city: 'lagos',
+        displayName: 'Lagos',
+        status: 'pilot',
+        communities: ['OTHER_LAGOS'],
+        geocoding: {
+          OTHER_LAGOS: { lat: 6.52, lng: 3.37, label: 'Lagos' },
+        },
+      }),
+    );
+    writeFileSync(
+      join(dir, 'ibadan.json'),
+      JSON.stringify({ ...IBADAN, status: 'pilot' }),
+    );
+
+    const config = {
+      get: (k: string) => (k === 'REGION_CONFIG_DIR' ? dir : undefined),
+    } as unknown as ConfigService;
+    const svc = new RegionConfigService(config);
+    svc.reload(dir);
+
+    const hit = svc.nearestFromLatLng(7.432, 3.913);
+    expect(hit?.city).toBe('ibadan');
+    expect(hit?.community).toBe('BODIJA');
+    expect(hit?.distanceKm).toBeLessThan(1);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('falls back to Lagos for unknown city', () => {
     const config = {
       get: () => undefined,

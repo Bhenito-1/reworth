@@ -220,3 +220,93 @@ export function communityLabelsForCity(cityKey: string): string[] {
 export function regionLabel(city: RegionCity): string {
   return city.displayName || city.key || city.city;
 }
+
+/** Map region JSON community codes → mobile chip labels (ADR-011). */
+const COMMUNITY_CODE_TO_CHIP: Record<string, string> = {
+  LEKKI_PH1: "Lekki Ph1",
+  IKOYI: "Ikoyi",
+  VI: "VI",
+  ONIRU: "Oniru",
+  VGC: "VGC",
+  CHEVRON: "Chevron",
+  AJAH: "Ajah",
+  OTHER_LAGOS: "Other Lagos",
+  MAITAMA: "Maitama",
+  ASOKORO: "Asokoro",
+  WUSE: "Wuse",
+  GARKI: "Garki",
+  JABI: "Jabi",
+  GUZAPE: "Guzape",
+  OTHER_ABUJA: "Other Abuja",
+  BODIJA: "Bodija",
+  UI: "UI",
+  RING_ROAD: "Ring Road",
+  IWO_ROAD: "Iwo Road",
+  CHALLENGE: "Challenge",
+  OTHER_IBADAN: "Other Ibadan",
+  GRA_PH: "GRA Port Harcourt",
+  OLD_GRA: "Old GRA",
+  RUMUOLA: "Rumuola",
+  ADA_GEORGE: "Ada George",
+  TRANS_AMADI: "Trans Amadi",
+  OTHER_PH: "Other PH",
+  ABEOKUTA: "Abeokuta",
+  SANGO_OTA: "Sango-Ota",
+  IFO: "Ifo",
+  SAGAMU: "Sagamu",
+  IJEBU_ODE: "Ijebu-Ode",
+  OTHER_OGUN: "Other Ogun",
+  OSOGBO: "Osogbo",
+  ILE_IFE: "Ile-Ife",
+  IWO: "Iwo",
+  EDE: "Ede",
+  IKIRE: "Ikire",
+  OTHER_OSUN: "Other Osun",
+  AKURE: "Akure",
+  ONDO_TOWN: "Ondo Town",
+  ORE: "Ore",
+  OWO: "Owo",
+  OKITIPUPA: "Okitipupa",
+  OTHER_ONDO: "Other Ondo",
+  ADO_EKITI: "Ado-Ekiti",
+  IKERE: "Ikere-Ekiti",
+  IKOLE: "Ikole",
+  IYE: "Iye",
+  OMUO: "Omuo",
+  OTHER_EKITI: "Other Ekiti",
+  BENIN_CITY: "Benin City",
+  GRA_BENIN: "GRA Benin",
+  UGBOWO: "Ugbowo",
+  SAKPONBA: "Sakponba",
+  AUCHI: "Auchi",
+  OTHER_EDO: "Other Edo",
+  NASSARAWA: "Nassarawa",
+  FAGGE: "Fagge",
+  GWALE: "Gwale",
+  TARAUNI: "Tarauni",
+  DALA: "Dala",
+  OTHER_KANO: "Other Kano",
+};
+
+/** Resolve locate API code/label to a chip string for preferredCommunity. */
+export function communityChipFromLocate(
+  cityKey: string,
+  code?: string,
+  apiLabel?: string,
+): string {
+  const chips = communityLabelsForCity(cityKey);
+  if (code && COMMUNITY_CODE_TO_CHIP[code] && chips.includes(COMMUNITY_CODE_TO_CHIP[code])) {
+    return COMMUNITY_CODE_TO_CHIP[code];
+  }
+  if (apiLabel && chips.includes(apiLabel)) return apiLabel;
+  if (apiLabel) {
+    const soft = apiLabel.toLowerCase();
+    const fuzzy = chips.find(
+      (c) =>
+        soft.includes(c.toLowerCase()) ||
+        c.toLowerCase().includes(soft.split(/\s+/)[0] ?? ""),
+    );
+    if (fuzzy) return fuzzy;
+  }
+  return chips[0] ?? apiLabel ?? code ?? "";
+}

@@ -1,6 +1,8 @@
 # Launch checklist — `v0.9.0-rc` → production
 
-> Ops + DevOps. Do **not** paste live secrets into this file — use the secret manager.
+> Ops + DevOps. Do **not** paste live secrets into this file — use the secret manager.  
+> Market GTM: [`docs/NIGERIA_MARKET_LAUNCH.md`](NIGERIA_MARKET_LAUNCH.md).  
+> Staging cutover (Paystack + Termii + push): [`docs/STAGING_RAILS.md`](STAGING_RAILS.md).
 
 ## A. Payments (PSP)
 

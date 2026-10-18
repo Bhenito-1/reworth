@@ -28,6 +28,23 @@ function normalizeCommunityKey(community: string): string {
   return community.trim().toUpperCase().replace(/\s+/g, '_');
 }
 
+/** Great-circle distance in km (WGS84 sphere). */
+export function haversineKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 @Injectable()
 export class RegionConfigService implements OnModuleInit {
   private readonly logger = new Logger(RegionConfigService.name);
@@ -235,6 +252,57 @@ export class RegionConfigService implements OnModuleInit {
       geoLng: entry.lng,
       label: entry.label ?? key,
     };
+  }
+
+  /**
+   * Snap GPS to nearest community centroid (ADR-011 Phase A).
+   * Prefers pilot cities; falls back to all non-disabled configs.
+   */
+  nearestFromLatLng(
+    lat: number,
+    lng: number,
+    opts?: { pilotOnly?: boolean },
+  ): {
+    city: string;
+    displayName: string;
+    community: string;
+    label: string;
+    geoLat: number;
+    geoLng: number;
+    distanceKm: number;
+  } | null {
+    this.ensureLoaded();
+    const pilotOnly = opts?.pilotOnly !== false;
+    const cities = this.listCities({ all: !pilotOnly });
+    let best: {
+      city: string;
+      displayName: string;
+      community: string;
+      label: string;
+      geoLat: number;
+      geoLng: number;
+      distanceKm: number;
+    } | null = null;
+
+    for (const c of cities) {
+      const cfg = this.getCity(c.city);
+      if (!cfg) continue;
+      for (const [code, entry] of Object.entries(cfg.geocoding)) {
+        const distanceKm = haversineKm(lat, lng, entry.lat, entry.lng);
+        if (!best || distanceKm < best.distanceKm) {
+          best = {
+            city: cfg.city,
+            displayName: cfg.displayName,
+            community: code,
+            label: entry.label ?? code,
+            geoLat: entry.lat,
+            geoLng: entry.lng,
+            distanceKm,
+          };
+        }
+      }
+    }
+    return best;
   }
 
   getDeliveryRates(city?: string | null): RegionLogistics {

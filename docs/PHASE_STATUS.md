@@ -122,11 +122,8 @@
 
 ## Resume
 
-1. Finish Sell / PDP / Chat / Home elevation vs DESIGN.md; Boost / Plus web companion parity
-2. Maestro on device: `maestro test e2e/mobile/00_demo_60s.yaml` + ≤60s screen record
-3. Staging k6 UAT: overwrite `infra/k6/results-phase9-summary.json` (`docs/PERF.md`)
-4. Apply migration `20260930160000_listing_moderation` if not yet applied
-
-## MVP residual harden (no retag)
-
-- Phase 9 / 8 / 6 hardens already on default branch — tags unchanged.
+1. Staging rails: `docs/STAGING_RAILS.md` (Termii → Paystack test keys + webhook → Expo push) — secrets in host env only  
+2. Nigeria GTM: `docs/NIGERIA_MARKET_LAUNCH.md` (Lagos founding-seller density in parallel)  
+3. Maestro ≤60s device record: `maestro test e2e/mobile/00_demo_60s.yaml` / `pwsh scripts/record-maestro-demo.ps1`  
+4. Staging k6 500 VU: `docs/PERF.md`  
+5. Store: EAS `projectId` · AASA TEAMID · Play SHA

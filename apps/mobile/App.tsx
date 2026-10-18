@@ -979,6 +979,25 @@ export default function App() {
               onApplyAreaFilter={setHomeArea}
               onClearAreaFilter={() => setHomeArea(null)}
               cityLabel={cityLabel}
+              cityKey={cityKey}
+              cities={cities}
+              onChangeCity={(city, opts) => {
+                setCityKey(city.city);
+                setCityLabel(city.displayName);
+                void setPreferredCityKey(city.city);
+                const label = opts?.communityLabel;
+                if (
+                  label &&
+                  communityLabelsForCity(city.city).includes(label)
+                ) {
+                  setCommunity(label as Community);
+                } else if (
+                  community &&
+                  !communityLabelsForCity(city.city).includes(community)
+                ) {
+                  setCommunity("");
+                }
+              }}
               onOpenSearch={() => setHomeSearchOpen(true)}
               onOpenListing={(id) => setDetailId(id)}
               onOpenTool={(tool) => setPlatformTool(tool)}

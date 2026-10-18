@@ -1,0 +1,33 @@
+*ReWorth — Product brief*
+_Lagos, your unused things are worth something._
+
+*What it is*
+Nigeria’s trusted recommerce marketplace — buy · sell · swap · give away. Mobile-first (iOS + Android), web companion. Photograph an item → list in about a minute → trade nearby with more confidence than WhatsApp groups or classifieds.
+
+*How it works*
+*Seller:* Open app → Sell → photos → AI drafts title/category/price band → choose sell/swap/give away → publish → offers in chat → buyer pays (escrow-shaped via Paystack) → handover → confirm → you get paid → both rate.
+*Buyer:* Local feed by city/community → search → chat or offer → protected pay → pickup or delivery → confirm receipt.
+
+*How we make money*
+Listings/browse/chat stay free early. Revenue after liquidity:
+• Buyer protection ~2.5% (cap ₦5,000)
+• Boost / Featured listings
+• Seller Plus ~₦4,999/mo
+• Delivery margin, inspection/auth, consignment
+• Later: corporate relocation, estate partners, promoted search
+
+*Roadmap*
+*Built:* marketplace core + swap, communities, moving sales, AI assist, Instant Buy, monetization, multi-city pickers (SW, Edo, Abuja, PH, Kano).
+*Next:* Lagos supply density → live Paystack + Termii OTP → Play/App Store + push → founding sellers → then market other cities once stocked.
+
+*Risks & mitigation*
+Empty market → founding sellers first, don’t ads-blast 10 cities.
+Payments/OTP mock → go live Paystack + Termii.
+Fraud → ID, escrow, disputes, ops.
+Legal → NDPR + PSP (we don’t hold customer funds).
+
+*Docs in repo*
+docs/ReWorth-Product-Deck.html (full deck — open in browser)
+docs/NIGERIA_MARKET_LAUNCH.md (sell-well checklist)
+
+Full deck: open `docs/ReWorth-Product-Deck.html` in your browser, then attach/share that file or a PDF print from WhatsApp.

@@ -190,6 +190,57 @@ export function postMessage(
   });
 }
 
+export type MeetupPinPayload = {
+  v: 1;
+  kind: "MEETUP_PIN";
+  lat: number;
+  lng: number;
+  label: string;
+};
+
+export function parseMeetupPin(
+  body: string | null | undefined,
+): MeetupPinPayload | null {
+  if (!body?.trim().startsWith("{")) return null;
+  try {
+    const raw = JSON.parse(body) as Partial<MeetupPinPayload>;
+    if (raw?.kind !== "MEETUP_PIN" || raw.v !== 1) return null;
+    if (
+      typeof raw.lat !== "number" ||
+      typeof raw.lng !== "number" ||
+      !Number.isFinite(raw.lat) ||
+      !Number.isFinite(raw.lng)
+    ) {
+      return null;
+    }
+    return {
+      v: 1,
+      kind: "MEETUP_PIN",
+      lat: raw.lat,
+      lng: raw.lng,
+      label:
+        typeof raw.label === "string" && raw.label.trim()
+          ? raw.label.trim()
+          : "Meetup point",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** ADR-011 Phase C — private meetup pin for conversation participants. */
+export function postMeetupPin(
+  token: string,
+  conversationId: string,
+  body: { lat: number; lng: number; label?: string; clientMsgId?: string },
+): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(`/conversations/${conversationId}/meetup-pin`, {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
 export function markConversationRead(
   token: string,
   conversationId: string,

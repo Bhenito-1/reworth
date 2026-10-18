@@ -16,6 +16,7 @@ import {
 import {
   CreateConversationDto,
   MuteConversationDto,
+  PostMeetupPinDto,
   PostMessageDto,
   ReportUserDto,
 } from './dto/chat.dto';
@@ -76,6 +77,16 @@ export class ConversationsController {
     @Body() dto: PostMessageDto,
   ) {
     return this.messages.postMessage(id, user.id, dto);
+  }
+
+  /** ADR-011 Phase C — private meetup pin (participants only). */
+  @Post('conversations/:id/meetup-pin')
+  postMeetupPin(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: PostMeetupPinDto,
+  ) {
+    return this.messages.postMeetupPin(id, user.id, dto);
   }
 
   @Post('conversations/:id/read')

@@ -79,6 +79,9 @@ Companion column notes web’s intended role when mobile is primary.
 | Estate partner console | **full** | **full** | Mobile: Profile → Partner console (KPIs + queue + session API key); web `/partner` |
 | Circular donate-if-unsold (seller) | **full** | **full** | Sell checkbox → `POST /listings/:id/donate-if-unsold` (mobile + web) |
 | Region / multi-city picker | **full** | **full** | Pilot SW + Edo + Abuja + PH + Kano; mobile Home sheet + Profile chips; web Account/Sell |
+| Locate me (GPS → community) | **full** | **missing** | ADR-011 Phase A: city sheet → `GET /regions/locate` |
+| Area map (you + community pin) | **partial** | **missing** | ADR-011 Phase B: `LocateMapSheet` after locate |
+| Meetup pin (chat) | **full** | **full** | ADR-011 Phase C: `POST …/meetup-pin`; mobile map picker + web GPS/coords modal; live track deferred |
 
 ---
 
