@@ -480,18 +480,18 @@ export default function ChatThreadPage() {
         conversationId: meta.id,
       });
       setOffers((prev) => [offer, ...prev.filter((o) => o.id !== offer.id)]);
-      showOfferResult(
-        `Offer of ${amountLabel} sent for ${item}. The seller can accept, decline, or counter it.`,
-        "success",
-      );
+      setToast({
+        message: `Offer of ${amountLabel} sent for ${item}. The seller can accept, decline, or counter it.`,
+        tone: "success",
+      });
       await refresh();
     } catch (err) {
       const reason =
         err instanceof ApiError ? err.message : "Something went wrong. Try again.";
-      showOfferResult(
-        `Your offer of ${amountLabel} for ${item} was not sent. ${reason}`,
-        "error",
-      );
+      setToast({
+        message: `Your offer of ${amountLabel} for ${item} was not sent. ${reason}`,
+        tone: "error",
+      });
     } finally {
       setOfferBusy(false);
     }
@@ -976,6 +976,10 @@ export default function ChatThreadPage() {
                     <div className={mine ? "flex min-w-0 justify-end" : "flex min-w-0 justify-start"}>
                       {renderOffer(linkedOffer)}
                     </div>
+                  ) : m.type === "SWAP_PROPOSAL_CARD" ? (
+                    <div className={mine ? "flex min-w-0 justify-end" : "flex min-w-0 justify-start"}>
+                      {renderSwapProposal(m.body)}
+                    </div>
                   ) : m.type === "SYSTEM" && parseMeetupPin(m.body) ? (
                     (() => {
                       const pin = parseMeetupPin(m.body)!;
@@ -1092,16 +1096,9 @@ export default function ChatThreadPage() {
             >
               Meetup pin
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="flex-1"
-              onClick={() => setOfferOpen(true)}
-              disabled={!meta}
-            >
-              Make offer
-            </Button>
           </div>
+            </>
+          )}
         </div>
       </div>
 
