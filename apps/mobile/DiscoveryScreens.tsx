@@ -66,7 +66,6 @@ type Props = {
   onSell?: () => void;
   onOpenMovingSales?: (id?: string) => void;
   onOpenCommunities?: (slugOrId?: string) => void;
-  meId?: string | null;
 };
 
 function CancelCircle({ color }: { color: string }) {
@@ -153,15 +152,8 @@ function listingMatchesHomeCategory(
   return categoryKeys(item).some((key) => slugs.includes(key));
 }
 
-function sellerCatalogue(rails: HomeRail[], meId?: string | null): HomeRail[] {
-  return rails
-    .filter((rail) => rail.id !== "my_listed_products")
-    .map((rail) => ({
-      ...rail,
-      items: meId
-        ? rail.items.filter((item) => item.seller?.id !== meId)
-        : rail.items,
-    }));
+function sellerCatalogue(rails: HomeRail[]): HomeRail[] {
+  return rails.filter((rail) => rail.id !== "my_listed_products");
 }
 
 export function DiscoveryHome({
@@ -175,7 +167,6 @@ export function DiscoveryHome({
   onSell,
   onOpenMovingSales,
   onOpenCommunities,
-  meId,
 }: Props) {
   const [rails, setRails] = useState<HomeRail[]>([]);
   const [forYou, setForYou] = useState<PublicListing[]>([]);
@@ -204,7 +195,7 @@ export function DiscoveryHome({
             : {},
           await getAccessToken(),
         );
-        const rails = sellerCatalogue(data.rails ?? [], meId);
+        const rails = sellerCatalogue(data.rails ?? []);
         setRails(rails);
         setFromCache(false);
         if (!areaFilter) await cacheHome({ ...data, rails });
@@ -221,7 +212,6 @@ export function DiscoveryHome({
           const wanted = areaFilter?.area.trim().toLowerCase();
           setForYou(
             (recs.items ?? []).filter((item) => {
-              if (meId && item.seller?.id === meId) return false;
               if (!wanted) return true;
               return (item.community ?? "").trim().toLowerCase() === wanted;
             }),
@@ -236,7 +226,7 @@ export function DiscoveryHome({
         setRefreshing(false);
       }
     },
-    [areaFilter, cityLabel, meId],
+    [areaFilter, cityLabel],
   );
 
   useEffect(() => {
@@ -309,7 +299,7 @@ export function DiscoveryHome({
     (async () => {
       const cached = areaFilter ? null : await loadCachedHome();
       if (!cancelled && cached?.rails?.length) {
-        setRails(sellerCatalogue(cached.rails, meId));
+        setRails(sellerCatalogue(cached.rails));
         setFromCache(true);
         setLoading(false);
       }
@@ -1047,14 +1037,12 @@ export function SearchPanel({
   backLabel = "← Home",
   initialFilters,
   onNeedAuth,
-  meId,
 }: {
   onOpenListing: (id: string) => void;
   onBack?: () => void;
   backLabel?: string;
   initialFilters?: SearchFilters | null;
   onNeedAuth?: () => void;
-  meId?: string | null;
 }) {
   const c = useColors();
   const [q, setQ] = useState("");
@@ -1178,7 +1166,7 @@ export function SearchPanel({
         },
         await getAccessToken(),
       );
-      let next = res.items.filter((item) => !meId || item.seller?.id !== meId);
+      let next = res.items;
       if (base.verifiedOnly) {
         next = next.filter((i) => i.seller?.verificationBadge);
       }

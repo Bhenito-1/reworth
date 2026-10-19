@@ -231,9 +231,6 @@ export class PostgresFullTextSearchProvider implements SearchProvider {
     if (filters.visibilityWhere) {
       where.AND = [filters.visibilityWhere];
     }
-    if (filters.viewerId) {
-      where.sellerId = { not: filters.viewerId };
-    }
 
     if (filters.categoryId) where.categoryId = filters.categoryId;
     if (filters.subcategoryId) where.subcategoryId = filters.subcategoryId;

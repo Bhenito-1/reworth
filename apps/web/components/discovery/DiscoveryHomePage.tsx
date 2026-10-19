@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Chip, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "./DiscoveryListingCard";
-import { ApiError } from "../../lib/api";
+import { ApiError, apiFetch } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
   areaChoices,
@@ -26,7 +26,7 @@ import {
 import { getRegion, listRegions, type RegionCity } from "../../lib/region";
 import { formatNgn } from "@reworth/shared";
 import { addToCart } from "../../lib/cart";
-import type { CategoryNode, HomeRail, RadiusKm } from "../../lib/types";
+import type { CategoryNode, HomeRail, MeResponse, RadiusKm } from "../../lib/types";
 
 function listingInCategory(
   item: { category: { id: string; slug: string } | null },
@@ -70,6 +70,23 @@ export function DiscoveryHomePage() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [meId, setMeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) return;
+    let cancelled = false;
+    void apiFetch<MeResponse>("/me", { token })
+      .then((me) => {
+        if (!cancelled) setMeId(me.id);
+      })
+      .catch(() => {
+        if (!cancelled) setMeId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const onClear = () => {
@@ -611,20 +628,27 @@ export function DiscoveryHomePage() {
                       ) : null}
                       {hasListings ? (
                         <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
-                          {rail.items.map((item) => (
-                            <li key={item.id} className="w-[7.5rem] shrink-0">
-                              <DiscoveryListingCard
-                                listing={item}
-                                favourited={favourites.has(item.id)}
-                                onToggleFavourite={(listing) =>
-                                  void toggleFavourite(listing)
+                          {rail.items.map((item) => {
+                            const own = meId != null && item.seller.id === meId;
+                            return (
+                              <li key={item.id} className="w-[7.5rem] shrink-0">
+                                <DiscoveryListingCard
+                                  listing={item}
+                                  favourited={favourites.has(item.id)}
+                                  onToggleFavourite={
+                                  own
+                                    ? undefined
+                                    : (listing) => void toggleFavourite(listing)
                                 }
-                                onAddToCart={(listing) =>
-                                  void addListingToCart(listing)
-                                }
-                              />
-                            </li>
-                          ))}
+                                  onAddToCart={
+                                    own
+                                      ? undefined
+                                      : (listing) => void addListingToCart(listing)
+                                  }
+                                />
+                              </li>
+                            );
+                          })}
                         </ul>
                       ) : null}
                     </>

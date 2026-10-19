@@ -155,11 +155,10 @@ export function ListingDetailModal({
   const similarInCategory = useMemo(
     () =>
       similar.filter((item) => {
-        if (meId && item.seller?.id === meId) return false;
         if (!listing?.category?.id) return false;
         return item.category?.id === listing.category.id;
       }),
-    [similar, meId, listing?.category?.id],
+    [similar, listing?.category?.id],
   );
 
   const gallery = useMemo(() => {

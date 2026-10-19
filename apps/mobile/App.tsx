@@ -728,7 +728,6 @@ export default function App() {
                   onOpenListing={(id) => setDetailId(id)}
                   onBack={() => setCartSearch(false)}
                   backLabel="← Cart"
-                  meId={me?.id}
                 />
               ) : (
                 <CartPanel
@@ -970,11 +969,9 @@ export default function App() {
             <SearchPanel
               onOpenListing={(id) => setDetailId(id)}
               onBack={() => setHomeSearchOpen(false)}
-              meId={me?.id}
             />
           ) : (
             <DiscoveryHome
-              meId={me?.id}
               areaFilter={homeArea}
               onApplyAreaFilter={setHomeArea}
               onClearAreaFilter={() => setHomeArea(null)}
@@ -1013,7 +1010,6 @@ export default function App() {
             key={discoverSeed ? JSON.stringify(discoverSeed) : "discover"}
             onOpenListing={(id) => setDetailId(id)}
             initialFilters={discoverSeed}
-            meId={me?.id}
           />
         ) : active === "chats" ? (
           <ChatsPanel
