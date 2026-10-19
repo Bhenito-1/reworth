@@ -26,7 +26,6 @@ const IBADAN: RegionConfig = {
     mid: { minKobo: 3_000_000, maxKobo: 25_000_000 },
     premium: { minKobo: 25_000_000, maxKobo: null },
   },
-  sms: { enabled: true, provider: 'termii' },
   psp: { enabled: true, provider: 'paystack' },
 };
 
@@ -45,7 +44,9 @@ describe('RegionConfigService — config-only city expansion', () => {
 
     const city = svc.getCity('ibadan');
     expect(city?.displayName).toBe('Ibadan');
-    expect(svc.listCities().some((c) => c.city === 'ibadan')).toBe(true);
+    expect(svc.listCities({ all: true }).some((c) => c.city === 'ibadan')).toBe(
+      true,
+    );
 
     // geo
     const geo = svc.getCommunityGeo('ibadan', 'Bodija');
@@ -61,8 +62,93 @@ describe('RegionConfigService — config-only city expansion', () => {
     // search / analytics / notifications helpers
     expect(svc.resolveSearchCity('ibadan')).toBe('Ibadan');
     expect(svc.resolveAnalyticsCity('ibadan')).toBe('ibadan');
-    expect(svc.smsEnabled('ibadan')).toBe(true);
     expect(svc.pspEnabled('ibadan')).toBe(true);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('lists only status=pilot cities by default', () => {
+    const dir = join(tmpdir(), `reworth-pilot-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'lagos.json'),
+      JSON.stringify({
+        ...IBADAN,
+        city: 'lagos',
+        displayName: 'Lagos',
+        status: 'pilot',
+        communities: ['OTHER_LAGOS'],
+        geocoding: {
+          OTHER_LAGOS: { lat: 6.52, lng: 3.37, label: 'Lagos' },
+        },
+      }),
+    );
+    writeFileSync(
+      join(dir, 'abuja.json'),
+      JSON.stringify({
+        ...IBADAN,
+        city: 'abuja',
+        displayName: 'Abuja',
+        status: 'pilot',
+        communities: ['OTHER_ABUJA'],
+        geocoding: {
+          OTHER_ABUJA: { lat: 9.07, lng: 7.4, label: 'Abuja' },
+        },
+      }),
+    );
+    writeFileSync(
+      join(dir, 'ibadan.json'),
+      JSON.stringify({ ...IBADAN, status: 'supply' }),
+    );
+
+    const config = {
+      get: (k: string) => (k === 'REGION_CONFIG_DIR' ? dir : undefined),
+    } as unknown as ConfigService;
+    const svc = new RegionConfigService(config);
+    svc.reload(dir);
+
+    const pilot = svc.listCities();
+    expect(pilot.map((c) => c.city).sort()).toEqual(['abuja', 'lagos']);
+    expect(svc.listCities({ all: true }).map((c) => c.city).sort()).toEqual([
+      'abuja',
+      'ibadan',
+      'lagos',
+    ]);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('snaps GPS near Bodija to Ibadan community (locate)', () => {
+    const dir = join(tmpdir(), `reworth-locate-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'lagos.json'),
+      JSON.stringify({
+        ...IBADAN,
+        city: 'lagos',
+        displayName: 'Lagos',
+        status: 'pilot',
+        communities: ['OTHER_LAGOS'],
+        geocoding: {
+          OTHER_LAGOS: { lat: 6.52, lng: 3.37, label: 'Lagos' },
+        },
+      }),
+    );
+    writeFileSync(
+      join(dir, 'ibadan.json'),
+      JSON.stringify({ ...IBADAN, status: 'pilot' }),
+    );
+
+    const config = {
+      get: (k: string) => (k === 'REGION_CONFIG_DIR' ? dir : undefined),
+    } as unknown as ConfigService;
+    const svc = new RegionConfigService(config);
+    svc.reload(dir);
+
+    const hit = svc.nearestFromLatLng(7.432, 3.913);
+    expect(hit?.city).toBe('ibadan');
+    expect(hit?.community).toBe('BODIJA');
+    expect(hit?.distanceKm).toBeLessThan(1);
 
     rmSync(dir, { recursive: true, force: true });
   });
@@ -83,7 +169,6 @@ describe('RegionConfigService — config-only city expansion', () => {
       },
       logistics: { baseFeeKobo: 150_000, perKmKobo: 15_000 },
       priceBands: { budget: { minKobo: 0, maxKobo: 1 } },
-      sms: { enabled: true },
       psp: { enabled: true },
     });
 
@@ -92,5 +177,9 @@ describe('RegionConfigService — config-only city expansion', () => {
     expect(svc.getCommunityGeo('unknown-city', 'LEKKI_PH1')?.label).toMatch(
       /Lekki/i,
     );
+    expect(svc.listAreas('lagos')).toEqual([
+      { key: 'LEKKI_PH1', label: 'Lekki Phase 1' },
+    ]);
+    expect(svc.listAreas('missing')).toEqual([]);
   });
 });

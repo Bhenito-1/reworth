@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -7,7 +8,9 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ListingStatus, Prisma } from '@prisma/client';
+import { ListingStatus, OrderStatus, Prisma } from '@prisma/client';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { LISTINGS_MOD, REPORTS } from '../admin/admin-roles';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   GEOCODING_PROVIDER,
@@ -17,13 +20,23 @@ import { MediaService } from '../media/media.service';
 import { FavouritesService } from '../favourites/favourites.service';
 import { CommunityVisibilityService } from '../communities/community-visibility.service';
 import { ModerationService } from '../moderation/moderation.service';
+import { NotificationCategory } from '../notifications/notification-categories';
+import { activeSellerWhere } from './public-seller';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RiskEngineService } from '../risk/risk-engine.service';
 import { AnalyticsService } from './analytics.service';
 import { ListingAssistService } from './listing-assist.service';
+import {
+  ACTIVE_ORDER_STATUSES,
+  sellerRemovalBlockReason,
+} from './listing-removal';
 import { ListingStateMachine } from './listing-state.machine';
 import { PriceIntelligenceService } from './price-intelligence.service';
-import { toPublicListing } from './public-listing.mapper';
+import { aggregateBuyerRatings } from '../reviews/buyer-rating';
+import { ratingLabelFromTrust, toPublicListing } from './public-listing.mapper';
 import { FeatureStoreService } from '../intelligence/feature-store.service';
+import { InventoryService } from '../inventory/inventory.service';
+import { SellerPayoutService } from '../payouts/seller-payout.service';
 import type {
   AttachImagesDto,
   BrowseListingsQueryDto,
@@ -69,15 +82,19 @@ export class ListingsService {
     @Inject(forwardRef(() => RiskEngineService))
     private readonly riskEngine: RiskEngineService,
     private readonly moderation: ModerationService,
+    private readonly notifications: NotificationsService,
     private readonly assistService: ListingAssistService,
     private readonly priceIntel: PriceIntelligenceService,
     private readonly media: MediaService,
     @Inject(GEOCODING_PROVIDER) private readonly geo: GeocodingProvider,
     private readonly visibility: CommunityVisibilityService,
+    private readonly inventory: InventoryService,
+    private readonly payouts: SellerPayoutService,
     @Optional()
     @Inject(forwardRef(() => FavouritesService))
     private readonly favourites?: FavouritesService,
     @Optional() private readonly features?: FeatureStoreService,
+    @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
   async listCategories() {
@@ -115,21 +132,28 @@ export class ListingsService {
       }
     }
 
+    const sellingMode = dto.sellingMode ?? 'SELL';
+    const categoryId = await this.resolveListingCategory(dto);
+    const units =
+      sellingMode === 'SELL' || sellingMode === 'GIVE_AWAY'
+        ? Math.min(999, Math.max(1, dto.quantity ?? 1))
+        : 1;
+
     const listing = await this.prisma.listing.create({
       data: {
         sellerId,
         title: dto.title ?? '',
         description: dto.description ?? '',
-        categoryId: dto.categoryId,
+        categoryId,
         subcategoryId: dto.subcategoryId,
-        brand: dto.brand,
+        brand: dto.brand?.trim() || null,
         model: dto.model,
         condition: dto.condition ?? 'GOOD',
         ageText: dto.ageText,
         originalPriceKobo: dto.originalPriceKobo,
-        priceKobo: dto.priceKobo ?? 0,
-        negotiable: dto.negotiable ?? true,
-        sellingMode: dto.sellingMode ?? 'SELL',
+        priceKobo: sellingMode === 'SELL' ? (dto.priceKobo ?? 0) : 0,
+        negotiable: sellingMode === 'SELL' ? (dto.negotiable ?? true) : false,
+        sellingMode,
         status: 'DRAFT',
         community: dto.community ?? '',
         communityId: dto.communityId,
@@ -139,12 +163,20 @@ export class ListingsService {
         geoLat,
         geoLng,
         addressPrivate: dto.addressPrivate,
-        fulfilmentPickup: dto.fulfilmentPickup ?? true,
-        fulfilmentMeet: dto.fulfilmentMeet ?? true,
-        fulfilmentDelivery: dto.fulfilmentDelivery ?? false,
+        fulfilmentPickup: dto.fulfilmentPickup ?? false,
+        fulfilmentMeet: dto.fulfilmentMeet ?? false,
+        fulfilmentDelivery: dto.fulfilmentDelivery ?? true,
         vehicle: dto.vehicle ? (dto.vehicle as Prisma.InputJsonValue) : undefined,
-        instantBuyEligible: dto.instantBuyEligible ?? false,
-        ...(await this.luxuryAuthDefaults(dto.categoryId)),
+        quantityTotal: units,
+        quantityAvailable: units,
+        quantityReserved: 0,
+        quantitySold: 0,
+        ...(sellingMode === 'GIVE_AWAY'
+          ? { donateIfUnsoldDays: null }
+          : dto.donateIfUnsoldDays !== undefined
+            ? { donateIfUnsoldDays: dto.donateIfUnsoldDays }
+            : {}),
+        ...(await this.luxuryAuthDefaults(categoryId ?? undefined)),
       },
       include: listingInclude,
     });
@@ -157,10 +189,47 @@ export class ListingsService {
     return toPublicListing(listing);
   }
 
+  async listMine(sellerId: string) {
+    const rows = await this.prisma.listing.findMany({
+      where: {
+        sellerId,
+        NOT: { riskFlags: { has: 'swap-response' } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        listingModerations: {
+          orderBy: { assessedAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+    const accepted = await this.listingsWithAcceptedOrders(rows.map((row) => row.id));
+    return {
+      items: rows.map((row) => {
+        const latest = row.listingModerations[0];
+        const note = latest?.rejectionReason?.trim() || null;
+        const review = reviewStateFor(row.status, latest?.decision ?? null, note);
+        return {
+          id: row.id,
+          title: row.title,
+          status: row.status,
+          priceKobo: row.priceKobo,
+          updatedAt: row.updatedAt.toISOString(),
+          reviewState: review.state,
+          reviewLabel: review.label,
+          reviewNote: review.note,
+          canRemove: row.status === 'LIVE',
+          hasAcceptedOrder: accepted.has(row.id),
+        };
+      }),
+    };
+  }
+
   async browse(query: BrowseListingsQueryDto, viewerId?: string | null) {
     const status = (query.status as ListingStatus) || 'LIVE';
     const where: Prisma.ListingWhereInput = {
       status: status === 'LIVE' ? { in: PUBLIC_STATUSES } : status,
+      ...activeSellerWhere,
       AND: [this.visibility.visibleListingWhere(viewerId)],
     };
     if (query.community) where.community = query.community;
@@ -169,7 +238,12 @@ export class ListingsService {
     if (query.mine === '1' && viewerId) {
       where.sellerId = viewerId;
       where.status = status;
+      delete where.seller;
       delete where.AND;
+    } else {
+      where.quantityAvailable = { gt: 0 };
+      where.NOT = { riskFlags: { has: 'swap-response' } };
+      if (viewerId) where.sellerId = { not: viewerId };
     }
 
     const rows = await this.prisma.listing.findMany({
@@ -252,6 +326,20 @@ export class ListingsService {
     });
   }
 
+  private async ownerRejectionReason(
+    listingId: string,
+    status: string,
+  ): Promise<string | null> {
+    if (status !== 'REJECTED') return null;
+    const latest = await this.prisma.listingModeration.findFirst({
+      where: { listingId },
+      orderBy: { assessedAt: 'desc' },
+    });
+    const note = latest?.rejectionReason?.trim() || null;
+    if (!note || note === 'Admin approved') return null;
+    return note;
+  }
+
   async getById(id: string, viewerId?: string | null) {
     const listing = await this.prisma.listing.findUnique({
       where: { id },
@@ -261,7 +349,11 @@ export class ListingsService {
 
     const isOwner = viewerId && listing.sellerId === viewerId;
     const isPublic = PUBLIC_STATUSES.includes(listing.status);
-    if (!isPublic && !isOwner) {
+    const isSold = listing.status === 'SOLD';
+    if (!isPublic && !isSold && !isOwner) {
+      throw new NotFoundException('Listing not found');
+    }
+    if (!isOwner && listing.seller.status !== 'ACTIVE') {
       throw new NotFoundException('Listing not found');
     }
 
@@ -319,18 +411,57 @@ export class ListingsService {
     const boost = activePromos.find((p) => p.kind === 'BOOST');
     const featured = activePromos.find((p) => p.kind === 'FEATURED');
 
-    return toPublicListing(listing, {
+    const dto = toPublicListing(listing, {
       boosted: Boolean(boost),
       featured: Boolean(featured),
       boostedUntil: boost?.endsAt ?? null,
       featuredUntil: featured?.endsAt ?? null,
     });
+    const processRating = await this.buyerProcessRating(listing.sellerId);
+    if (processRating.count > 0 && processRating.average != null) {
+      dto.seller.ratingLabel = ratingLabelFromTrust(
+        processRating.average,
+        processRating.count,
+      );
+    }
+
+    return {
+      ...dto,
+      rejectionReason: isOwner ? await this.ownerRejectionReason(id, listing.status) : null,
+    };
+  }
+
+  /** Mean of buyer ratings of the purchase process with this seller. */
+  private async buyerProcessRating(
+    sellerId: string,
+  ): Promise<{ average: number | null; count: number }> {
+    const rows = await this.prisma.review.findMany({
+      where: { revieweeId: sellerId, status: 'PUBLISHED' },
+      select: {
+        transactionExperience: true,
+        reviewerId: true,
+        order: { select: { id: true, buyerId: true, checkoutId: true } },
+      },
+    });
+    const buyer = rows.filter((row) => row.reviewerId === row.order.buyerId);
+    return aggregateBuyerRatings(
+      buyer.map((row) => ({
+        buyerId: row.order.buyerId,
+        orderId: row.order.id,
+        checkoutId: row.order.checkoutId,
+        score: row.transactionExperience,
+      })),
+    );
   }
 
   async update(id: string, sellerId: string, dto: UpdateListingDto) {
     const listing = await this.requireOwner(id, sellerId);
+    const nextMode = dto.sellingMode ?? listing.sellingMode;
+    const resolvedCategoryId = await this.resolveListingCategory(dto);
+    const nextPrice =
+      nextMode === 'SELL' ? dto.priceKobo : 0;
     const priceChanged =
-      dto.priceKobo !== undefined && dto.priceKobo !== listing.priceKobo;
+      nextPrice !== undefined && nextPrice !== listing.priceKobo;
 
     const updated = await this.prisma.listing.update({
       where: { id },
@@ -339,19 +470,31 @@ export class ListingsService {
         ...(dto.description !== undefined
           ? { description: dto.description }
           : {}),
-        ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId } : {}),
+        ...(resolvedCategoryId !== undefined
+          ? { categoryId: resolvedCategoryId }
+          : {}),
         ...(dto.subcategoryId !== undefined
           ? { subcategoryId: dto.subcategoryId }
           : {}),
-        ...(dto.brand !== undefined ? { brand: dto.brand } : {}),
+        ...(dto.brand !== undefined
+          ? { brand: dto.brand?.trim() || null }
+          : {}),
         ...(dto.model !== undefined ? { model: dto.model } : {}),
         ...(dto.condition !== undefined ? { condition: dto.condition } : {}),
         ...(dto.ageText !== undefined ? { ageText: dto.ageText } : {}),
         ...(dto.originalPriceKobo !== undefined
           ? { originalPriceKobo: dto.originalPriceKobo }
           : {}),
-        ...(dto.priceKobo !== undefined ? { priceKobo: dto.priceKobo } : {}),
-        ...(dto.negotiable !== undefined ? { negotiable: dto.negotiable } : {}),
+        ...(nextMode === 'SELL'
+          ? {
+              ...(dto.priceKobo !== undefined
+                ? { priceKobo: dto.priceKobo }
+                : {}),
+              ...(dto.negotiable !== undefined
+                ? { negotiable: dto.negotiable }
+                : {}),
+            }
+          : { priceKobo: 0, negotiable: false }),
         ...(dto.sellingMode !== undefined
           ? { sellingMode: dto.sellingMode }
           : {}),
@@ -393,11 +536,13 @@ export class ListingsService {
                 : ('OPTED_OUT' as const),
             }
           : {}),
-        ...(dto.instantBuyEligible !== undefined
-          ? { instantBuyEligible: dto.instantBuyEligible }
-          : {}),
-        ...(dto.categoryId !== undefined
-          ? await this.luxuryAuthDefaults(dto.categoryId, dto.authRequired)
+        ...(nextMode === 'GIVE_AWAY'
+          ? { donateIfUnsoldDays: null }
+          : dto.donateIfUnsoldDays !== undefined
+            ? { donateIfUnsoldDays: dto.donateIfUnsoldDays }
+            : {}),
+        ...(typeof resolvedCategoryId === 'string'
+          ? await this.luxuryAuthDefaults(resolvedCategoryId, dto.authRequired)
           : {}),
       },
       include: listingInclude,
@@ -415,7 +560,7 @@ export class ListingsService {
           actorUserId: sellerId,
           payload: {
             from: listing.priceKobo,
-            to: dto.priceKobo,
+            to: nextPrice,
           },
         },
       });
@@ -431,17 +576,76 @@ export class ListingsService {
       }
     }
 
+    if (
+      dto.quantity !== undefined &&
+      (nextMode === 'SELL' || nextMode === 'GIVE_AWAY')
+    ) {
+      await this.inventory.adjustListedQuantity(id, sellerId, dto.quantity);
+      const fresh = await this.prisma.listing.findUniqueOrThrow({
+        where: { id },
+        include: listingInclude,
+      });
+      return toPublicListing(fresh);
+    }
+
     return toPublicListing(updated);
+  }
+
+  /** Every listing this seller has created, including sold and unavailable. */
+  async sellerInventory(sellerId: string) {
+    const rows = await this.prisma.listing.findMany({
+      where: { sellerId },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+      },
+    });
+    return rows.map((row) => {
+      const removeBlockedReason = sellerRemovalBlockReason({ status: row.status });
+      return {
+        id: row.id,
+        title: row.title,
+        status: row.status,
+        sellingMode: row.sellingMode,
+        priceKobo: row.priceKobo,
+        quantityTotal: row.quantityTotal,
+        quantityAvailable: row.quantityAvailable,
+        quantityReserved: row.quantityReserved,
+        quantitySold: row.quantitySold,
+        publishedAt: row.publishedAt,
+        updatedAt: row.updatedAt,
+        onMarketplace: row.status === 'LIVE' && row.quantityAvailable > 0,
+        canRemove: removeBlockedReason == null,
+        removeBlockedReason,
+        images: row.images.map((img) => ({
+          id: img.id,
+          variants: (img.variants as Record<string, unknown>) ?? {},
+        })),
+      };
+    });
   }
 
   async softRemove(id: string, sellerId: string) {
     const listing = await this.requireOwner(id, sellerId);
+    if (listing.status === 'DRAFT') {
+      await this.prisma.listing.delete({ where: { id } });
+      return { id, status: 'DELETED' as const };
+    }
+    const blocked = sellerRemovalBlockReason({ status: listing.status });
+    if (blocked) throw new ConflictException(blocked);
     ListingStateMachine.assertTransition(listing.status, 'REMOVED');
+    const sold = listing.quantitySold ?? 0;
+    const reserved = listing.quantityReserved ?? 0;
     const updated = await this.prisma.listing.update({
       where: { id },
-      data: { status: 'REMOVED' },
+      data: {
+        status: 'REMOVED',
+        quantityAvailable: 0,
+        quantityTotal: sold + reserved,
+      },
       include: listingInclude,
     });
+    await this.prisma.favourite.deleteMany({ where: { listingId: id } });
     await this.emitStatus(id, sellerId, listing.status, 'REMOVED');
     return toPublicListing(updated);
   }
@@ -456,17 +660,26 @@ export class ListingsService {
 
   async publish(id: string, sellerId: string) {
     const listing = await this.requireOwner(id, sellerId);
+    if (
+      listing.sellingMode !== 'GIVE_AWAY' &&
+      listing.sellingMode !== 'SWAP'
+    ) {
+      await this.payouts.requireVerified(sellerId);
+    }
     const startedAt = listing.createdAt.getTime();
 
-    // 1. Moderation first
+    // 1. Content + image moderation first
     const mod = await this.moderation.evaluateOnPublish(id);
     if (mod.outcome === 'REJECTED') {
-      ListingStateMachine.assertTransition(listing.status, 'REJECTED');
-      await this.emitStatus(id, sellerId, listing.status, 'REJECTED');
+      if (listing.status !== 'REJECTED') {
+        ListingStateMachine.assertTransition(listing.status, 'REJECTED');
+        await this.emitStatus(id, sellerId, listing.status, 'REJECTED');
+      }
       this.analytics.log('published', {
         listingId: id,
         status: 'REJECTED',
         moderationReasons: mod.reasons,
+        moderationId: mod.moderationId,
       });
       const rejected = await this.prisma.listing.findUniqueOrThrow({
         where: { id },
@@ -474,21 +687,46 @@ export class ListingsService {
       });
       return {
         ...toPublicListing(rejected),
-        moderationReasons: mod.reasons,
+        moderationReasons: mod.reasons.length
+          ? mod.reasons
+          : mod.rejectionReason
+            ? [mod.rejectionReason]
+            : [],
       };
     }
 
-    // 2. Risk engine
+    // 2. Risk engine. A stored seller score at or above 40 keeps later
+    // listings in review until an admin approval brings it down.
     const risk = await this.riskEngine.evaluateOnPublish(id, sellerId);
+    const seller = await this.prisma.user.findUnique({
+      where: { id: sellerId },
+      select: { riskScore: true },
+    });
+    const reviewScore = Math.max(risk.score, seller?.riskScore ?? 0);
+    const riskFlags = listing.riskFlags.includes('swap-response')
+      ? Array.from(new Set([...risk.flags, 'swap-response']))
+      : risk.flags;
+
+    // 3. Canonical ListingModeration snapshot (content + risk)
+    const finalized = await this.moderation.finalizeWithRisk({
+      listingId: id,
+      content: mod,
+      riskScore: reviewScore,
+      riskLevel: risk.level,
+      riskFlags,
+      riskForceReview: risk.forceUnderReview,
+    });
 
     const forceReview =
-      risk.forceUnderReview || mod.outcome === 'UNDER_REVIEW';
+      risk.forceUnderReview || finalized.outcome === 'UNDER_REVIEW';
     const target: ListingStatus = forceReview ? 'UNDER_REVIEW' : 'LIVE';
 
-    ListingStateMachine.assertTransition(listing.status, target);
+    if (listing.status !== target) {
+      ListingStateMachine.assertTransition(listing.status, target);
+    }
 
     const expiryDays = Number(
-      this.config.get<string>('LISTING_EXPIRY_DAYS') ?? '7',
+      this.config.get<string>('LISTING_EXPIRY_DAYS') ?? '60',
     );
     const publishedAt = new Date();
     const expiresAt =
@@ -502,12 +740,31 @@ export class ListingsService {
         status: target,
         publishedAt: target === 'LIVE' ? publishedAt : listing.publishedAt,
         expiresAt: target === 'LIVE' ? expiresAt : listing.expiresAt,
-        riskFlags: risk.flags,
+        riskFlags,
       },
       include: listingInclude,
     });
 
     await this.emitStatus(id, sellerId, listing.status, target);
+
+    if (target === 'UNDER_REVIEW') {
+      await this.notifications.notify({
+        userId: sellerId,
+        category: NotificationCategory.VERIFICATION_UPDATE,
+        title: 'Listing submitted for review',
+        body: `"${updated.title}" is being checked. You can follow it under Your listings.`,
+        deepLink: '/selling',
+      });
+      await this.alerts?.notify({
+        roles: LISTINGS_MOD,
+        kind: 'LISTING_REVIEW',
+        title: 'Listing needs review',
+        body: `"${updated.title}" is waiting for a photo and details check.`,
+        href: '/listings',
+        entityType: 'Listing',
+        entityId: id,
+      });
+    }
 
     if (target === 'LIVE' && this.favourites) {
       await this.favourites.onListingLive(updated).catch(() => undefined);
@@ -518,7 +775,10 @@ export class ListingsService {
       status: target,
       riskFlags: risk.flags,
       riskLevel: risk.level,
-      moderationOutcome: mod.outcome,
+      moderationOutcome: finalized.outcome,
+      moderationId: finalized.moderationId,
+      imageScore: finalized.imageScore,
+      riskScore: reviewScore,
     });
     this.analytics.log('publish_duration_ms', {
       listingId: id,
@@ -557,15 +817,101 @@ export class ListingsService {
   async report(id: string, reporterId: string, dto: ReportListingDto) {
     const listing = await this.prisma.listing.findUnique({ where: { id } });
     if (!listing) throw new NotFoundException('Listing not found');
-    return this.prisma.report.create({
+    const report = await this.prisma.report.create({
       data: {
         listingId: id,
+        reportedUserId:
+          listing.sellerId === reporterId ? undefined : listing.sellerId,
         reporterId,
         reason: dto.reason,
         detail: dto.detail,
         status: 'OPEN',
       },
     });
+    await this.alerts?.notify({
+      roles: REPORTS,
+      kind: 'REPORT',
+      title: 'Listing reported',
+      body: `"${listing.title}" was reported: ${dto.reason}`,
+      href: '/reports',
+      entityType: 'Report',
+      entityId: report.id,
+    });
+    return report;
+  }
+
+  /**
+   * categoryId wins. A typed category name is matched to a real category.
+   * An empty name clears it. An unknown name leaves the stored category alone.
+   */
+  private async resolveListingCategory(dto: {
+    categoryId?: string;
+    categoryName?: string | null;
+  }): Promise<string | null | undefined> {
+    if (dto.categoryId !== undefined) return dto.categoryId;
+    if (dto.categoryName === undefined) return undefined;
+    const name = dto.categoryName?.trim() ?? '';
+    if (!name) return null;
+    return (await this.resolveCategoryId(name)) ?? undefined;
+  }
+
+  private async resolveCategoryId(name: string): Promise<string | null> {
+    const cats = await this.prisma.category.findMany({
+      select: { id: true, name: true, slug: true },
+    });
+    const norm = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    const query = norm(name);
+    if (!query) return null;
+    const aliases: Record<string, string> = {
+      home: 'home-furniture',
+      furniture: 'home-furniture',
+      'home living': 'home-furniture',
+      'home and living': 'home-furniture',
+      kids: 'children-baby',
+      kid: 'children-baby',
+      baby: 'children-baby',
+      children: 'children-baby',
+      'children and baby': 'children-baby',
+      phones: 'phones-tablets',
+      phone: 'phones-tablets',
+      sports: 'sports-fitness',
+      sport: 'sports-fitness',
+      fitness: 'sports-fitness',
+      car: 'vehicles',
+      cars: 'vehicles',
+      vehicle: 'vehicles',
+      appliance: 'home-appliances',
+      appliances: 'home-appliances',
+      computer: 'computers',
+      computers: 'computers',
+      laptop: 'computers',
+      clothes: 'fashion',
+      clothing: 'fashion',
+      book: 'books',
+      books: 'books',
+      other: 'other',
+      others: 'other',
+      misc: 'other',
+    };
+    const alias = aliases[query];
+    if (alias) {
+      const hit = cats.find((c) => c.slug === alias);
+      if (hit) return hit.id;
+    }
+    const exact = cats.find(
+      (c) => norm(c.name) === query || c.slug.replace(/-/g, ' ') === query,
+    );
+    if (exact) return exact.id;
+    const partial = cats
+      .map((c) => ({ c, n: norm(c.name) }))
+      .filter((row) => row.n.includes(query) || query.includes(row.n))
+      .sort((a, b) => a.n.length - b.n.length)[0];
+    return partial?.c.id ?? null;
   }
 
   private async requireOwner(id: string, sellerId: string) {
@@ -603,6 +949,35 @@ export class ListingsService {
     return { authRequired: true, authenticationStatus: 'REQUIRED' };
   }
 
+  /** Listings that already have a seller-accepted order still in progress. */
+  private async listingsWithAcceptedOrders(ids: string[]) {
+    const matched = new Set<string>();
+    if (ids.length === 0) return matched;
+    const wanted = new Set(ids);
+    const orders = await this.prisma.order.findMany({
+      where: {
+        confirmationStatus: 'CONFIRMED',
+        status: { in: [...ACTIVE_ORDER_STATUSES] as OrderStatus[] },
+        OR: [
+          { listingId: { in: ids } },
+          { swapListingAId: { in: ids } },
+          { swapListingBId: { in: ids } },
+        ],
+      },
+      select: {
+        listingId: true,
+        swapListingAId: true,
+        swapListingBId: true,
+      },
+    });
+    for (const order of orders) {
+      for (const id of [order.listingId, order.swapListingAId, order.swapListingBId]) {
+        if (id && wanted.has(id)) matched.add(id);
+      }
+    }
+    return matched;
+  }
+
   private async emitStatus(
     listingId: string,
     actorUserId: string | null,
@@ -618,4 +993,59 @@ export class ListingsService {
       },
     });
   }
+}
+
+function reviewStateFor(
+  status: string,
+  decision: string | null,
+  note: string | null,
+): { state: string; label: string; note: string | null } {
+  if (status === 'UNDER_REVIEW') {
+    return {
+      state: 'waiting',
+      label: 'Waiting for review',
+      note: 'We are checking the photos and item details.',
+    };
+  }
+  if (status === 'REJECTED') {
+    return {
+      state: 'rejected',
+      label: 'Rejected',
+      note: note && note !== 'Admin approved' ? note : 'This listing was rejected.',
+    };
+  }
+  if (status === 'LIVE' || status === 'RESERVED' || status === 'SOLD') {
+    const custom =
+      decision === 'PASS' && note && note !== 'Admin approved' ? note : null;
+    return {
+      state: 'approved',
+      label: status === 'LIVE' ? 'Live' : status === 'SOLD' ? 'Sold' : 'Reserved',
+      note:
+        custom ??
+        (status === 'SOLD'
+          ? 'Every unit sold. Open it to see the product and buyer ratings.'
+          : null),
+    };
+  }
+  if (status === 'EXPIRED') {
+    return {
+      state: 'closed',
+      label: 'Closed',
+      note: 'The listing period ended before it sold out, so it left the marketplace.',
+    };
+  }
+  if (status === 'REMOVED') {
+    return {
+      state: 'removed',
+      label: 'Removed',
+      note:
+        note && note !== 'Admin approved'
+          ? note
+          : 'Remaining units are off the marketplace. Accepted orders still have to be fulfilled.',
+    };
+  }
+  if (status === 'DRAFT') {
+    return { state: 'draft', label: 'Draft', note: null };
+  }
+  return { state: 'closed', label: 'Closed', note };
 }

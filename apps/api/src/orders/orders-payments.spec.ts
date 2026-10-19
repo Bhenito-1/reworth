@@ -92,6 +92,9 @@ describe('OrderStateMachine', () => {
     OrderStateMachine.assertTransition('CREATED', 'PAYMENT_PENDING');
     OrderStateMachine.assertTransition('PAYMENT_PENDING', 'FUNDED');
     OrderStateMachine.assertTransition('FUNDED', 'HANDED_OVER');
+    OrderStateMachine.assertTransition('FUNDED', 'SHIPPED');
+    OrderStateMachine.assertTransition('SHIPPED', 'DELIVERED');
+    OrderStateMachine.assertTransition('DELIVERED', 'RECEIVED');
     OrderStateMachine.assertTransition('HANDED_OVER', 'RECEIVED');
     OrderStateMachine.assertTransition('RECEIVED', 'COMPLETED');
   });

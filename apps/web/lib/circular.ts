@@ -86,6 +86,18 @@ export async function listMyCircularHandoffs(
   return asList(res);
 }
 
+export async function setDonateIfUnsold(
+  token: string,
+  listingId: string,
+  donateIfUnsoldDays: number | null,
+): Promise<unknown> {
+  return apiFetch(`/listings/${listingId}/donate-if-unsold`, {
+    method: "POST",
+    token,
+    body: { donateIfUnsoldDays },
+  });
+}
+
 export function handoffStatusLabel(status: string): string {
   const map: Record<string, string> = {
     SCHEDULED: "Scheduled",

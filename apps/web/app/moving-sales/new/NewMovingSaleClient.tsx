@@ -7,7 +7,7 @@ import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
-import { COMMUNITIES } from "../../../lib/communities";
+import { communitiesForCity } from "../../../lib/communities";
 import { createMovingSale } from "../../../lib/moving-sales";
 import { myLiveListings } from "../../../lib/swap";
 import type { PublicListing } from "../../../lib/types";
@@ -31,7 +31,7 @@ export default function NewMovingSaleClient() {
   const loadMine = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -68,7 +68,7 @@ export default function NewMovingSaleClient() {
     setError(null);
     const token = getAccessToken();
     if (!token) {
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     if (!title.trim()) {
@@ -100,17 +100,9 @@ export default function NewMovingSaleClient() {
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
-        <header className="mb-8 flex items-center justify-between">
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
-          <h1 className="text-sm font-medium text-[var(--rw-ink-muted)]">
-            New moving sale
-          </h1>
-        </header>
+        <h1 className="mb-8 text-2xl font-semibold tracking-tight">
+          New moving sale
+        </h1>
 
         <p className="mb-6 text-[var(--rw-ink-muted)]">
           Group your listings for a relocation — buyers see the combined asking
@@ -159,7 +151,7 @@ export default function NewMovingSaleClient() {
               className="w-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
             >
               <option value="">Select…</option>
-              {COMMUNITIES.map((c) => (
+              {communitiesForCity("lagos").map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>

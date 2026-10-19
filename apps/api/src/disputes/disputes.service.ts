@@ -8,6 +8,8 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { DISPUTES } from '../admin/admin-roles';
 import { AuditService } from '../audit/audit.service';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -38,6 +40,7 @@ export class DisputesService {
     @Inject(PAYMENT_PROVIDER) private readonly psp: PaymentProvider,
     @Optional()
     private readonly inspections?: VehicleInspectionsService,
+    @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
   async open(
@@ -123,6 +126,16 @@ export class DisputesService {
       });
 
       return d;
+    });
+
+    await this.alerts?.notify({
+      roles: DISPUTES,
+      kind: 'DISPUTE',
+      title: 'Dispute opened',
+      body: `A buyer opened a dispute (${dto.reason}).`,
+      href: '/disputes',
+      entityType: 'Dispute',
+      entityId: dispute.id,
     });
 
     this.notifications.log('dispute.opened', {

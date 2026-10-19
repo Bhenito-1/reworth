@@ -4,14 +4,79 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { MessageType } from '@prisma/client';
+import { MessageType, NotificationChannel } from '@prisma/client';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { REPORTS } from '../admin/admin-roles';
+import { NotificationCategory } from '../notifications/notification-categories';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from './chat.gateway';
 import { ChatScanProcessor } from './chat-scan.processor';
 import { NotificationStub } from './notification.stub';
 import { toMessageDto, type MessageDto } from './message.mapper';
 import { redactPhoneEmail } from './pii.util';
-import type { PostMessageDto } from './dto/chat.dto';
+import type { PostMeetupPinDto, PostMessageDto } from './dto/chat.dto';
+import { encodeMeetupPin, meetupPinPreview } from './meetup-pin';
+
+function swapKindForStatus(status: string): string | null {
+  switch (status) {
+    case 'ACCEPTED':
+      return 'swap-accepted';
+    case 'REJECTED':
+      return 'swap-rejected';
+    case 'CANCELLED':
+    case 'WITHDRAWN':
+    case 'EXPIRED':
+    case 'COUNTERED':
+      return 'swap-cancelled';
+    default:
+      return null;
+  }
+}
+
+function applySwapCardKind<T extends { type: string; body: string | null }>(
+  row: T,
+  kinds: Map<string, string>,
+): T {
+  if (row.type !== 'SWAP_PROPOSAL_CARD' || !row.body) return row;
+  try {
+    const parsed = JSON.parse(row.body) as {
+      swapProposalId?: string;
+      kind?: string;
+    };
+    const id = parsed.swapProposalId;
+    if (!id) return row;
+    const kind = kinds.get(id);
+    if (!kind || parsed.kind === kind) return row;
+    return { ...row, body: JSON.stringify({ ...parsed, kind }) };
+  } catch {
+    return row;
+  }
+}
+
+/** Inbox line the other person sees. Never include ids or raw card JSON. */
+export function chatPreview(
+  type: string | null | undefined,
+  body: string | null | undefined,
+): string | null {
+  const trimmed = body?.trim() ?? '';
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    if (/swap-accepted/i.test(trimmed)) return 'Swap accepted';
+    if (/swap-rejected/i.test(trimmed)) return 'Swap rejected';
+    if (/swap-cancelled/i.test(trimmed)) return 'Swap cancelled';
+    if (/swapProposalId/i.test(trimmed) || type === 'SWAP_PROPOSAL_CARD') {
+      return 'Swap proposal';
+    }
+    if (/offerId/i.test(trimmed) || type === 'OFFER_CARD') return 'Offer';
+    if (type === 'LISTING_CARD') return 'Listing';
+    return 'New message';
+  }
+  if (type === 'SWAP_PROPOSAL_CARD') return 'Swap proposal';
+  if (type === 'OFFER_CARD') return 'Offer';
+  if (type === 'LISTING_CARD') return 'Listing';
+  if (!trimmed) return null;
+  return trimmed.slice(0, 120);
+}
 
 export type ConversationListItem = {
   id: string;
@@ -26,13 +91,27 @@ export type ConversationListItem = {
   unreadCount: number;
   /** Viewer muted counterpart for this thread — suppress push/badge. */
   muted: boolean;
+  /** Viewer blocked the counterpart. They can unblock from this chat. */
+  blockedByMe: boolean;
   activeOffer: {
     id: string;
     amountKobo: number;
     status: string;
   } | null;
+  /** Messages at or before this time are hidden for the viewer. */
+  deletedAt: Date | null;
   createdAt: Date;
 };
+
+/** True when this viewer deleted the chat and nothing newer has arrived. */
+export function conversationHiddenFromViewer(
+  deletedAt: Date | null | undefined,
+  lastMessageAt: Date | null | undefined,
+): boolean {
+  if (!deletedAt) return false;
+  if (!lastMessageAt) return true;
+  return lastMessageAt.getTime() <= deletedAt.getTime();
+}
 
 @Injectable()
 export class MessagesService {
@@ -41,7 +120,19 @@ export class MessagesService {
     private readonly scanProcessor: ChatScanProcessor,
     private readonly notifications: NotificationStub,
     @Optional() private readonly gateway?: ChatGateway,
+    @Optional() private readonly alerts?: AdminAlertsService,
+    @Optional() private readonly inbox?: NotificationsService,
   ) {}
+
+  private async assertNotSuspended(userIds: string[]): Promise<void> {
+    const suspended = await this.prisma.user.findFirst({
+      where: { id: { in: userIds }, status: 'SUSPENDED' },
+      select: { id: true },
+    });
+    if (suspended) {
+      throw new ForbiddenException('Cannot message this user');
+    }
+  }
 
   async isBlockedEitherWay(a: string, b: string): Promise<boolean> {
     const block = await this.prisma.userBlock.findFirst({
@@ -106,6 +197,10 @@ export class MessagesService {
 
     const result: ConversationListItem[] = [];
     for (const c of rows) {
+      if (c.buyer.status === 'SUSPENDED' || c.seller.status === 'SUSPENDED') {
+        continue;
+      }
+
       const counterpart =
         c.buyerId === userId
           ? {
@@ -117,7 +212,16 @@ export class MessagesService {
               displayName: c.buyer.profile?.displayName ?? 'Buyer',
             };
 
+      const deletedAt =
+        c.buyerId === userId ? c.buyerDeletedAt : c.sellerDeletedAt;
+      if (conversationHiddenFromViewer(deletedAt, c.lastMessageAt)) {
+        continue;
+      }
+
       const muted = await this.isMuted(userId, counterpart.id, c.id);
+      const blockedByMe = !!(await this.prisma.userBlock.findFirst({
+        where: { blockerId: userId, blockedId: counterpart.id },
+      }));
 
       const unreadCount = muted
         ? 0
@@ -126,13 +230,18 @@ export class MessagesService {
               conversationId: c.id,
               senderId: { not: userId },
               readAt: null,
+              ...(deletedAt ? { createdAt: { gt: deletedAt } } : {}),
             },
           });
 
       const thumb = c.listing.images[0];
       const variants = (thumb?.variants ?? {}) as Record<string, string>;
-      const last = c.messages[0];
+      const latest = c.messages[0];
+      const last =
+        latest && (!deletedAt || latest.createdAt > deletedAt) ? latest : null;
       const offer = c.offers[0];
+      const visibleOffer =
+        offer && (!deletedAt || offer.createdAt > deletedAt) ? offer : null;
 
       result.push({
         id: c.id,
@@ -143,16 +252,21 @@ export class MessagesService {
         sellerId: c.sellerId,
         counterpart,
         lastMessageAt: c.lastMessageAt,
-        lastMessagePreview: last?.body
-          ? last.body.slice(0, 120)
-          : last
-            ? `[${last.type}]`
-            : null,
+        lastMessagePreview: last
+          ? meetupPinPreview(last.body) ??
+            (last.body ? last.body.slice(0, 120) : `[${last.type}]`)
+          : null,
         unreadCount,
         muted,
-        activeOffer: offer
-          ? { id: offer.id, amountKobo: offer.amountKobo, status: offer.status }
+        blockedByMe,
+        activeOffer: visibleOffer
+          ? {
+              id: visibleOffer.id,
+              amountKobo: visibleOffer.amountKobo,
+              status: visibleOffer.status,
+            }
           : null,
+        deletedAt,
         createdAt: c.createdAt,
       });
     }
@@ -164,6 +278,9 @@ export class MessagesService {
       where: { id: listingId },
     });
     if (!listing) throw new NotFoundException('Listing not found');
+    if (listing.status !== 'LIVE' && listing.status !== 'RESERVED') {
+      throw new NotFoundException('Listing not found');
+    }
     if (listing.sellerId === userId) {
       throw new ForbiddenException('Cannot start a conversation with yourself');
     }
@@ -171,6 +288,7 @@ export class MessagesService {
     if (await this.isBlockedEitherWay(userId, listing.sellerId)) {
       throw new ForbiddenException('Cannot message this user');
     }
+    await this.assertNotSuspended([listing.sellerId]);
 
     const existing = await this.prisma.conversation.findUnique({
       where: {
@@ -203,20 +321,47 @@ export class MessagesService {
     return c;
   }
 
+  /** Hide the chat for this participant. The other person keeps their copy. */
+  async deleteForViewer(conversationId: string, userId: string) {
+    const conversation = await this.requireParticipant(conversationId, userId);
+    const deletedAt = new Date();
+    await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data:
+        conversation.buyerId === userId
+          ? { buyerDeletedAt: deletedAt }
+          : { sellerDeletedAt: deletedAt },
+    });
+    return { ok: true as const, deletedAt };
+  }
+
   async listMessages(
     conversationId: string,
     userId: string,
     opts: { after?: string; limit?: number },
   ): Promise<MessageDto[]> {
-    await this.requireParticipant(conversationId, userId);
+    const conversation = await this.requireParticipant(conversationId, userId);
+    await this.assertNotSuspended([
+      conversation.buyerId,
+      conversation.sellerId,
+    ]);
     const limit = Math.min(opts.limit ?? 50, 100);
+    const deletedAt =
+      conversation.buyerId === userId
+        ? conversation.buyerDeletedAt
+        : conversation.sellerDeletedAt;
 
-    let afterCreatedAt: Date | undefined;
+    let afterCreatedAt: Date | undefined = deletedAt ?? undefined;
     if (opts.after) {
       const afterMsg = await this.prisma.message.findUnique({
         where: { id: opts.after },
       });
-      if (afterMsg) afterCreatedAt = afterMsg.createdAt;
+      if (
+        afterMsg &&
+        (!afterCreatedAt || afterMsg.createdAt > afterCreatedAt)
+      ) {
+        afterCreatedAt = afterMsg.createdAt;
+      }
     }
 
     const rows = await this.prisma.message.findMany({
@@ -234,7 +379,8 @@ export class MessagesService {
     // Polling / reconnect resync also acts as delivery receipt.
     await this.markDelivered(conversationId, userId);
 
-    return rows.map(toMessageDto);
+    const settled = await this.swapCardKinds(rows);
+    return rows.map((row) => toMessageDto(applySwapCardKind(row, settled)));
   }
 
   async postMessage(
@@ -251,6 +397,7 @@ export class MessagesService {
     if (await this.isBlockedEitherWay(userId, counterpartId)) {
       throw new ForbiddenException('Cannot message this user');
     }
+    await this.assertNotSuspended([userId, counterpartId]);
 
     if (dto.clientMsgId) {
       const existing = await this.prisma.message.findUnique({
@@ -312,13 +459,42 @@ export class MessagesService {
         recipientId: counterpartId,
         senderId: userId,
       });
+      await this.alertNewMessage(counterpartId, mapped).catch(() => undefined);
     }
+
+    this.gateway?.emitToUsers(
+      [conversation.buyerId, conversation.sellerId],
+      'inbox.updated',
+      {
+        conversationId,
+        lastMessageAt: created.createdAt.toISOString(),
+        preview: chatPreview(mapped.type, mapped.body),
+        senderId: userId,
+      },
+    );
 
     if (userId === conversation.sellerId) {
       void this.trackSellerFirstReply(conversation, userId, created.createdAt);
     }
 
     return mapped;
+  }
+
+  /** ADR-011 Phase C — share private meetup coordinates in-thread only. */
+  async postMeetupPin(
+    conversationId: string,
+    userId: string,
+    dto: PostMeetupPinDto,
+  ): Promise<MessageDto> {
+    return this.postMessage(conversationId, userId, {
+      type: MessageType.SYSTEM,
+      body: encodeMeetupPin({
+        lat: dto.lat,
+        lng: dto.lng,
+        label: dto.label,
+      }),
+      clientMsgId: dto.clientMsgId,
+    });
   }
 
   /**
@@ -380,6 +556,18 @@ export class MessagesService {
       },
       data: { readAt: now },
     });
+    if (this.inbox) {
+      await this.prisma.notification.updateMany({
+        where: {
+          userId,
+          category: NotificationCategory.NEW_MESSAGE,
+          channel: NotificationChannel.IN_APP,
+          readAt: null,
+          deepLink: `reworth://chats/${conversationId}`,
+        },
+        data: { readAt: now },
+      });
+    }
     this.gateway?.emitToConversation(conversationId, 'message.read', {
       conversationId,
       readerId: userId,
@@ -452,7 +640,7 @@ export class MessagesService {
     });
     if (!user) throw new NotFoundException('User not found');
 
-    return this.prisma.report.create({
+    const report = await this.prisma.report.create({
       data: {
         reporterId,
         reportedUserId,
@@ -462,6 +650,16 @@ export class MessagesService {
         status: 'OPEN',
       },
     });
+    await this.alerts?.notify({
+      roles: REPORTS,
+      kind: 'REPORT',
+      title: 'User reported',
+      body: `A user was reported: ${dto.reason}`,
+      href: '/reports',
+      entityType: 'Report',
+      entityId: report.id,
+    });
+    return report;
   }
 
   async muteConversation(
@@ -491,5 +689,78 @@ export class MessagesService {
       where: { muterId, conversationId },
     });
     return { ok: true };
+  }
+
+  /**
+   * One unread in-app alert per conversation. A later message refreshes
+   * that row until the recipient opens the chat.
+   */
+  private async alertNewMessage(
+    recipientId: string,
+    message: MessageDto,
+  ): Promise<void> {
+    if (!this.inbox) return;
+    const deepLink = `reworth://chats/${message.conversationId}`;
+    const senderName = message.sender?.displayName?.trim() || 'Someone';
+    const title = `New message from ${senderName}`;
+    const body =
+      chatPreview(message.type, message.body) ??
+      (message.imageKey
+        ? 'Sent a photo'
+        : message.listingCardId
+          ? 'Sent a listing'
+          : 'Sent a message');
+    const existing = await this.prisma.notification.findFirst({
+      where: {
+        userId: recipientId,
+        category: NotificationCategory.NEW_MESSAGE,
+        channel: NotificationChannel.IN_APP,
+        readAt: null,
+        deepLink,
+      },
+    });
+    if (existing) {
+      await this.prisma.notification.update({
+        where: { id: existing.id },
+        data: { title, body, createdAt: new Date() },
+      });
+      return;
+    }
+    await this.inbox.notify({
+      userId: recipientId,
+      category: NotificationCategory.NEW_MESSAGE,
+      title,
+      body,
+      deepLink,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+      meta: { conversationId: message.conversationId, messageId: message.id },
+    });
+  }
+
+  /** Pending cards follow the proposal. A response removes the action buttons. */
+  private async swapCardKinds(
+    rows: { type: string; body: string | null }[],
+  ): Promise<Map<string, string>> {
+    const ids = new Set<string>();
+    for (const row of rows) {
+      if (row.type !== 'SWAP_PROPOSAL_CARD' || !row.body) continue;
+      try {
+        const parsed = JSON.parse(row.body) as { swapProposalId?: string };
+        if (parsed.swapProposalId) ids.add(parsed.swapProposalId);
+      } catch {
+        /* leave the card as stored */
+      }
+    }
+    const kinds = new Map<string, string>();
+    if (ids.size === 0 || !this.prisma.swapProposal?.findMany) return kinds;
+    const proposals = await this.prisma.swapProposal.findMany({
+      where: { id: { in: [...ids] } },
+      select: { id: true, status: true },
+    });
+    for (const proposal of proposals) {
+      const kind = swapKindForStatus(proposal.status);
+      if (kind) kinds.set(proposal.id, kind);
+    }
+    return kinds;
   }
 }

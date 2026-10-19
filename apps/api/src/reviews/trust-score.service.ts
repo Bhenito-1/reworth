@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { VerificationLevel } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { aggregateBuyerRatings } from './buyer-rating';
 import {
   computeTrustScore,
   median,
@@ -185,7 +186,7 @@ export class TrustScoreService {
     createdAt: Date,
     verifications: { level: VerificationLevel }[],
   ): Promise<TrustScoreInputs> {
-    const [completed, cancelled, disputedOrders, ratingAgg, samples] =
+    const [completed, cancelled, disputedOrders, ratingRows, samples] =
       await Promise.all([
         this.prisma.order.count({
           where: {
@@ -205,9 +206,13 @@ export class TrustScoreService {
             disputes: { some: {} },
           },
         }),
-        this.prisma.review.aggregate({
+        this.prisma.review.findMany({
           where: { revieweeId: userId, status: 'PUBLISHED' },
-          _avg: { overall: true },
+          select: {
+            transactionExperience: true,
+            reviewerId: true,
+            order: { select: { id: true, buyerId: true, checkoutId: true } },
+          },
         }),
         this.prisma.chatResponseSample.findMany({
           where: {
@@ -229,10 +234,21 @@ export class TrustScoreService {
       0,
       Math.floor((Date.now() - createdAt.getTime()) / (24 * 60 * 60 * 1000)),
     );
+    const buyerRatings = ratingRows.filter(
+      (row) => row.reviewerId === row.order.buyerId,
+    );
+    const avgRating = aggregateBuyerRatings(
+      buyerRatings.map((row) => ({
+        buyerId: row.order.buyerId,
+        orderId: row.order.id,
+        checkoutId: row.order.checkoutId,
+        score: row.transactionExperience,
+      })),
+    ).average;
 
     return {
       completionRate,
-      avgRating: ratingAgg._avg.overall,
+      avgRating,
       medianResponseMinutes: median(samples.map((s) => s.latencyMinutes)),
       cancellationRate,
       disputeRate,

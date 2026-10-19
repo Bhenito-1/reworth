@@ -1,4 +1,4 @@
-﻿# AGENTS.md — ReWorth living context
+﻿ve this on# AGENTS.md — ReWorth living context
 
 > Update this file after every phase. Resume point of truth with `docs/PHASE_STATUS.md`.
 
@@ -26,12 +26,12 @@ Functional · UX · **mobile behaviour verified on iOS + Android; web parity del
 
 | Field | Value |
 | --- | --- |
-| Phase | **Design elevation** `v1.0.3-design-elevation` (+ phone\|email register) |
+| Phase | **Design elevation** `v1.0.3-design-elevation` (+ email register; SMS removed ADR-010) |
 | Last completed (post-launch) | **3.3** (`v2.2-monetization`) |
 | MVP Admin | **`v0.8-admin`** (+ harden) |
 | MVP Risk / Security | **`v0.9-risk-security`** (+ harden) |
-| Status | **Shipped** (`v1.0.3-design-elevation`) |
-| Next | Remaining DESIGN.md screen elevation (Sell/PDP/Chat/Home rails); Boost/Plus web parity; staging k6 UAT |
+| Status | **Near complete** — tokens + brand + Maestro testIDs/`com.reworth.app` + listing App Links stubs; device recording / staging k6 / Termii remain |
+| Next | Execute `docs/STAGING_RAILS.md` (Termii → Paystack test → Expo push); Maestro ≤60s on device; staging k6; store AASA/Play SHA |
 
 ## MVP / post-launch
 
@@ -40,9 +40,13 @@ Post-launch through `v2.2-monetization`: swap → communities → intelligence �
 
 ## Known gaps
 
-- Expo push mock; staging k6 certification; pen-test / NDPR / store sign-offs
-- Cross-border: ADR-007 design only; next cities via config + seed
+- Real device Maestro ≤60s recording still open (`e2e/mobile/00_demo_60s.yaml` + `scripts/record-maestro-demo.ps1`; testIDs include listing-card-0 / chats-title / locate / meetup)
+- Staging k6 p95 certification; pen-test / NDPR / store sign-offs
+- Cross-border: ADR-007 design only; consumer pilot = SW + Edo + Abuja + PH + Kano (`config/regions`, `status=pilot`)
 - Web companion for Boost / Featured / Seller Plus (mobile full — see `docs/MOBILE_PARITY.md`)
 - Promoted search self-serve later (ADR-009 admin-assigned)
+- Payments still mock-default in local (Paystack adapter present)
+- Termii live SMS/WhatsApp keys still pending (dual-channel mock verified)
+- Maps: Phase A locate + Phase B map + Phase C chat meetup pins shipped; live track deferred (ADR-011)
 
-See `docs/PHASE_STATUS.md`, `docs/BUYER_JOURNEY_AUDIT.md`, `docs/METRICS.md`, `docs/ADRS/009-promoted-search-admin.md`.
+See `docs/PHASE_STATUS.md`, `docs/STAGING_RAILS.md`, `docs/NIGERIA_MARKET_LAUNCH.md`, `docs/PRODUCT_ECOSYSTEM_PO_REVIEW.md`, `docs/ReWorth-Product-Deck.html`, `docs/BUYER_JOURNEY_AUDIT.md`, `docs/METRICS.md`, `docs/ADRS/011-maps-locate-me.md`.

@@ -1,6 +1,6 @@
 # ReWorth Maestro — 04 Dispute (stub)
 # After funded + received order; admin resolve is web/admin or API
-appId: ng.reworth.mobile
+appId: com.reworth.app
 ---
 - launchApp
 - tapOn: "Orders"

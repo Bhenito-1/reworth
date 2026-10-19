@@ -39,8 +39,9 @@ export function Input({
       <div className="relative flex items-center">
         <input
           id={inputId}
-          aria-invalid={Boolean(error)}
+          aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
+          suppressHydrationWarning
           className={[
             "w-full rounded-[var(--rw-radius)] border px-3 py-2.5 text-base",
             "bg-[var(--rw-bg-elevated)] text-[var(--rw-ink)]",
@@ -49,7 +50,7 @@ export function Input({
             error
               ? "border-[var(--rw-error)]"
               : "border-[var(--rw-border)]",
-            trailing ? "pr-10" : "",
+            trailing ? "pr-16" : "",
             className,
           ]
             .filter(Boolean)

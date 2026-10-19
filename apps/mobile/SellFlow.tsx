@@ -1,38 +1,45 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { ApiError } from "./lib/api";
+import { ScrollView } from "./components/BoundScroll";
+import { ApiError, apiFetch } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import {
   assistListing,
-  attachListingImages,
-  completeMedia,
   createListing,
   getListing,
   getPriceIntelligence,
   patchListing,
-  presignMedia,
   publishListing,
   appealListing,
+  uploadListingPhotoDirect,
 } from "./lib/listings";
 import {
-  cancelSellerPlus,
-  getSellerPlan,
-  newIdempotencyKey,
-  upgradeSellerPlus,
-  type SellerPlan,
-} from "./lib/monetization";
+  areaChoices,
+  FALLBACK_AREAS,
+  FALLBACK_STATES,
+  type AreaChoice,
+} from "./lib/areas";
+import { getRegion, listRegions, type RegionCity } from "./lib/region";
 import {
-  COMMUNITIES,
+  FALLBACK_BANKS,
+  getPayoutSetup,
+  listPayoutBanks,
+  payoutDisplayName,
+  verifyPayoutAccount,
+  type PayoutAccountView,
+  type PayoutBank,
+} from "./lib/payout";
+import {
   formatNgnFromKobo,
-  type Community,
+  listingImageUrl,
   type PriceIntelligence,
   type PublicListing,
   type SellingModeValue,
@@ -41,9 +48,9 @@ import {
 type SellStep =
   | "photos"
   | "draft"
-  | "mode"
   | "location"
   | "fulfilment"
+  | "bank"
   | "publish"
   | "done";
 
@@ -52,12 +59,37 @@ type LocalPhoto = {
   name: string;
   type: string;
   key?: string;
+  file?: Blob;
+  existing?: boolean;
 };
 
 type Props = {
+  resumeId?: string | null;
   onPublished?: (listing: PublicListing) => void;
   onOpenListing?: (id: string) => void;
 };
+
+const CONDITIONS = [
+  ["NEW", "New"],
+  ["LIKE_NEW", "Like new"],
+  ["VERY_GOOD", "Very good"],
+  ["GOOD", "Good"],
+  ["FAIR", "Fair"],
+  ["FOR_PARTS", "For parts"],
+] as const;
+
+function draftResumeStep(listing: PublicListing): SellStep {
+  if ((listing.images?.length ?? 0) < 2) return "photos";
+  const priced =
+    listing.sellingMode === "GIVE_AWAY" ||
+    listing.sellingMode === "SWAP" ||
+    listing.priceKobo > 0;
+  if (!listing.title?.trim() || !listing.description?.trim() || !priced) {
+    return "draft";
+  }
+  if (!listing.community?.trim()) return "location";
+  return "fulfilment";
+}
 
 async function pickImages(): Promise<LocalPhoto[]> {
   try {
@@ -74,6 +106,7 @@ async function pickImages(): Promise<LocalPhoto[]> {
           fileName?: string | null;
           mimeType?: string | null;
           fileSize?: number | null;
+          file?: Blob | null;
         }>;
       }>;
     };
@@ -92,6 +125,7 @@ async function pickImages(): Promise<LocalPhoto[]> {
       uri: a.uri,
       name: a.fileName ?? `photo-${i}.jpg`,
       type: a.mimeType ?? "image/jpeg",
+      file: a.file ?? undefined,
     }));
   } catch {
     return mockPhotos();
@@ -115,8 +149,10 @@ function mockPhotos(): LocalPhoto[] {
   ];
 }
 
-export function SellFlow({ onPublished, onOpenListing }: Props) {
+export function SellFlow({ resumeId, onPublished, onOpenListing }: Props) {
   const [step, setStep] = useState<SellStep>("photos");
+  const [hydrating, setHydrating] = useState(Boolean(resumeId));
+  const draftCity = useRef<string | null>(null);
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
   const [listingId, setListingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -131,19 +167,36 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
   const [brand, setBrand] = useState("");
   const [condition, setCondition] = useState("GOOD");
   const [categoryName, setCategoryName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [categories, setCategories] = useState<
+    { id: string; name: string; slug: string }[]
+  >([]);
   const [priceNaira, setPriceNaira] = useState("");
+  const [units, setUnits] = useState("1");
   const [priceIntel, setPriceIntel] = useState<PriceIntelligence | null>(null);
 
   const [sellingMode, setSellingMode] = useState<SellingModeValue>("SELL");
   const [negotiable, setNegotiable] = useState(true);
-  const [community, setCommunity] = useState<Community | "">("");
-  const [fulfilmentPickup, setFulfilmentPickup] = useState(true);
-  const [fulfilmentMeet, setFulfilmentMeet] = useState(true);
-  const [fulfilmentDelivery, setFulfilmentDelivery] = useState(false);
+  const [community, setCommunity] = useState("");
+  const [stateKey, setStateKey] = useState("");
+  const [regions, setRegions] = useState<RegionCity[]>([]);
+  const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
+  const [donateIfUnsold, setDonateIfUnsold] = useState(false);
+  const [donateIfUnsoldDays, setDonateIfUnsoldDays] = useState("30");
   const [published, setPublished] = useState<PublicListing | null>(null);
-  const [sellerPlan, setSellerPlan] = useState<SellerPlan | null>(null);
-  const [planBusy, setPlanBusy] = useState(false);
-  const [planToast, setPlanToast] = useState<string | null>(null);
+  const [payoutAccount, setPayoutAccount] = useState<PayoutAccountView | null>(
+    null,
+  );
+  const [payoutBanks, setPayoutBanks] = useState<PayoutBank[]>([
+    ...FALLBACK_BANKS,
+  ]);
+  const [bankEditing, setBankEditing] = useState(false);
+  const [bankQuery, setBankQuery] = useState("");
+  const [bankCode, setBankCode] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [legalFirst, setLegalFirst] = useState("");
+  const [legalMiddle, setLegalMiddle] = useState("");
+  const [legalLast, setLegalLast] = useState("");
 
   const tokenOrThrow = useCallback(async () => {
     const token = await getAccessToken();
@@ -151,62 +204,193 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
     return token;
   }, []);
 
-  const loadSellerPlan = useCallback(async () => {
-    try {
-      const token = await getAccessToken();
-      if (!token) {
-        setSellerPlan(null);
-        return;
+  useEffect(() => {
+    if (!resumeId) return;
+    let cancelled = false;
+    setHydrating(true);
+    void (async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token || cancelled) return;
+        const listing = await getListing(resumeId, token);
+        if (cancelled || listing.status !== "DRAFT") return;
+        setListingId(listing.id);
+        setTitle(listing.title || "");
+        setDescription(listing.description || "");
+        setBrand(listing.brand || "");
+        setCondition(listing.condition || "GOOD");
+        setCategoryName(listing.category?.name ?? "");
+        setCategoryId(listing.category?.id ?? "");
+        if (
+          listing.donateIfUnsoldDays != null &&
+          listing.donateIfUnsoldDays > 0
+        ) {
+          setDonateIfUnsold(true);
+          setDonateIfUnsoldDays(String(listing.donateIfUnsoldDays));
+        } else {
+          setDonateIfUnsold(false);
+        }
+        setPriceNaira(
+          listing.priceKobo > 0 ? String(Math.round(listing.priceKobo / 100)) : "",
+        );
+        setUnits(
+          String(
+            listing.quantityTotal && listing.quantityTotal > 0
+              ? listing.quantityTotal
+              : 1,
+          ),
+        );
+        setSellingMode((listing.sellingMode as SellingModeValue) || "SELL");
+        setNegotiable(listing.negotiable);
+        if (listing.community) setCommunity(listing.community);
+        if (listing.city) {
+          draftCity.current = listing.city;
+          const cityName = listing.city.toLowerCase();
+          const match = FALLBACK_STATES.find(
+            (item) =>
+              item.city.toLowerCase() === cityName ||
+              item.displayName.toLowerCase() === cityName,
+          );
+          if (match) setStateKey(match.city);
+        }
+        setError(null);
+        setPhotos(
+          [...(listing.images ?? [])]
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .flatMap((img) => {
+              const uri = listingImageUrl(img);
+              return uri
+                ? [
+                    {
+                      uri,
+                      name: "photo.jpg",
+                      type: "image/jpeg",
+                      existing: true,
+                    },
+                  ]
+                : [];
+            }),
+        );
+        setStep(draftResumeStep(listing));
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof ApiError ? err.message : "Could not open this draft",
+          );
+        }
+      } finally {
+        if (!cancelled) setHydrating(false);
       }
-      const plan = await getSellerPlan(token);
-      setSellerPlan(plan);
-    } catch {
-      // Plan load failure must not block listing creation
-      setSellerPlan(null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [resumeId]);
+
+  useEffect(() => {
+    const city = draftCity.current;
+    if (!city || stateKey) return;
+    const cityName = city.toLowerCase();
+    const match = regions.find(
+      (item) =>
+        item.city.toLowerCase() === cityName ||
+        item.displayName.toLowerCase() === cityName,
+    );
+    if (match) setStateKey(match.city);
+  }, [regions, stateKey]);
+
+  useEffect(() => {
+    if (
+      (sellingMode === "GIVE_AWAY" || sellingMode === "SWAP") &&
+      step === "bank"
+    ) {
+      setStep("publish");
     }
+  }, [sellingMode, step]);
+
+  useEffect(() => {
+    if (step !== "bank") return;
+    let cancelled = false;
+    void Promise.all([
+      getPayoutSetup().catch(() => ({ account: null })),
+      listPayoutBanks(),
+    ]).then(([setup, banks]) => {
+      if (cancelled) return;
+      setPayoutAccount(setup.account);
+      setPayoutBanks(banks);
+      setBankEditing(!setup.account);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [step]);
+
+  useEffect(() => {
+    void apiFetch<{ id: string; name: string; slug: string }[]>("/categories")
+      .then((items) => setCategories(Array.isArray(items) ? items : []))
+      .catch(() => setCategories([]));
   }, []);
 
   useEffect(() => {
-    void loadSellerPlan();
-  }, [loadSellerPlan]);
+    if (categoryId || !categoryName.trim() || categories.length === 0) return;
+    const norm = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    const query = norm(categoryName);
+    const match =
+      categories.find(
+        (item) =>
+          norm(item.name) === query || item.slug.replace(/-/g, " ") === query,
+      ) ??
+      categories.find((item) => {
+        const name = norm(item.name);
+        return name.includes(query) || query.includes(name);
+      });
+    if (!match) return;
+    setCategoryId(match.id);
+    if (match.name !== categoryName) setCategoryName(match.name);
+  }, [categories, categoryName, categoryId]);
 
-  async function onUpgradePlus() {
-    setPlanBusy(true);
-    setPlanToast(null);
-    try {
-      const token = await getAccessToken();
-      if (!token) {
-        setPlanToast("Sign in to upgrade");
-        return;
-      }
-      await upgradeSellerPlus(token, newIdempotencyKey("seller_plus"));
-      await loadSellerPlan();
-      setPlanToast("Seller Plus active");
-    } catch {
-      setPlanToast("Upgrade failed — try again or contact support");
-    } finally {
-      setPlanBusy(false);
-    }
-  }
+  useEffect(() => {
+    void listRegions()
+      .then((items) => setRegions(items))
+      .catch(() => setRegions([]));
+  }, []);
 
-  async function onCancelPlus() {
-    setPlanBusy(true);
-    setPlanToast(null);
-    try {
-      const token = await getAccessToken();
-      if (!token) {
-        setPlanToast("Sign in to manage plan");
-        return;
-      }
-      await cancelSellerPlus(token);
-      await loadSellerPlan();
-      setPlanToast("Plus cancelled at period end");
-    } catch {
-      setPlanToast("Cancel failed — try again or contact support");
-    } finally {
-      setPlanBusy(false);
+  useEffect(() => {
+    if (!stateKey) {
+      setAreaOptions([]);
+      return;
     }
-  }
+    let cancelled = false;
+    void getRegion(stateKey)
+      .then((detail) => {
+        if (cancelled) return;
+        const source =
+          detail?.areas && detail.areas.length > 0
+            ? detail.areas
+            : (FALLBACK_AREAS[stateKey] ?? []);
+        const options = areaChoices(stateKey, source);
+        setAreaOptions(options);
+        if (options.length === 0) return;
+        setCommunity((current) =>
+          !current || options.some((option) => option.value === current)
+            ? current
+            : "",
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAreaOptions(areaChoices(stateKey, FALLBACK_AREAS[stateKey] ?? []));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stateKey]);
 
   async function ensureDraft(token: string) {
     if (listingId) return listingId;
@@ -224,15 +408,10 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
     setError(null);
     const picked = await pickImages();
     if (!picked.length) {
-      setError("No photos selected — try again or use mock photos.");
+      setError("No photos selected — try again.");
       return;
     }
     setPhotos((prev) => [...prev, ...picked].slice(0, 6));
-  }
-
-  async function useMockPhotos() {
-    setPhotos(mockPhotos());
-    setError(null);
   }
 
   async function continuePhotos() {
@@ -246,71 +425,53 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
       const token = await tokenOrThrow();
       const id = await ensureDraft(token);
       const keys: { key: string; sortOrder: number }[] = [];
+      const hasExisting = photos.some((photo) => photo.existing);
+
+      const MOCK_JPEG_URI =
+        "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGcP//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAQUCf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQMBAT8Bf//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQIBAT8Bf//Z";
 
       for (let i = 0; i < photos.length; i++) {
         const photo = photos[i];
-        if (photo.uri.startsWith("mock://") && photo.key) {
-          // Mock: skip PUT — complete with key (or presign fresh if rejected)
-          try {
-            await completeMedia(token, id, photo.key, i);
-            keys.push({ key: photo.key, sortOrder: i });
-          } catch {
-            const presign = await presignMedia(
-              token,
-              id,
-              photo.name,
-              photo.type,
-              2048,
-            );
-            await completeMedia(token, id, presign.key, i);
-            keys.push({ key: presign.key, sortOrder: i });
-          }
-          continue;
-        }
-        const contentLength = 4096;
-        const presign = await presignMedia(
+        if (photo.existing) continue;
+        const isMock = photo.uri.startsWith("mock://");
+        const uploaded = await uploadListingPhotoDirect(
           token,
           id,
-          photo.name,
-          photo.type,
-          contentLength,
+          isMock
+            ? {
+                uri: MOCK_JPEG_URI,
+                name: `photo-${i}.jpg`,
+                type: "image/jpeg",
+              }
+            : {
+                uri: photo.uri,
+                name: photo.name || `photo-${i}.jpg`,
+                type: photo.type || "image/jpeg",
+                file: photo.file,
+              },
+          i,
         );
-        try {
-          const blobRes = await fetch(photo.uri);
-          const blob = await blobRes.blob();
-          await fetch(presign.uploadUrl, {
-            method: "PUT",
-            headers: { "Content-Type": photo.type },
-            body: blob,
-          });
-        } catch {
-          /* mock / CORS — proceed with key */
+        if (uploaded.status !== "READY") {
+          throw new Error("Photo did not finish processing. Try again.");
         }
-        keys.push({ key: presign.key, sortOrder: i });
+        keys.push({ key: uploaded.key, sortOrder: i });
       }
 
-      // Batch attach for analytics when keys were only presigned (not completed)
-      const needAttach = keys.filter((k) => !photos[k.sortOrder]?.uri?.startsWith("mock://"));
-      if (needAttach.length) {
-        try {
-          await attachListingImages(id, token, needAttach);
-        } catch {
-          /* may already be completed */
-        }
-      }
+      // Direct upload already attached + processed images.
 
       setAssistLoading(true);
       setStep("draft");
       const assist = await assistListing(
         id,
         token,
-        keys.map((k) => k.key),
+        hasExisting ? undefined : keys.map((k) => k.key),
       );
       const refreshed = await getListing(id, token);
       setTitle(assist.draft?.title || refreshed.title);
       setDescription(assist.draft?.description || refreshed.description);
       setBrand(assist.draft?.brand || refreshed.brand || "");
       setCondition(assist.draft?.suggestedCondition || refreshed.condition);
+      setCategoryId("");
       setCategoryName(
         assist.draft?.suggestedCategory || refreshed.category?.name || "",
       );
@@ -320,6 +481,9 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
             Math.round(refreshed.priceKobo / 100),
         ),
       );
+      if (refreshed.quantityTotal && refreshed.quantityTotal > 0) {
+        setUnits(String(refreshed.quantityTotal));
+      }
       try {
         setPriceIntel(await getPriceIntelligence(id));
       } catch {
@@ -341,15 +505,29 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
     await patchListing(listingId, token, {
       title: title.trim(),
       description: description.trim(),
-      brand: brand.trim() || undefined,
-      condition,
-      priceKobo: Math.round(naira * 100),
-      negotiable,
+      brand: brand.trim() || null,
+      condition: CONDITIONS.some(([value]) => value === condition)
+        ? condition
+        : "GOOD",
+      ...(categoryId ? { categoryId } : {}),
+      categoryName: categoryName.trim() || null,
+      priceKobo: sellingMode === "SELL" ? Math.round(naira * 100) : 0,
+      ...(sellingMode === "SELL" || sellingMode === "GIVE_AWAY"
+        ? { quantity: Math.max(1, Number(units) || 1) }
+        : {}),
+      negotiable: sellingMode === "SELL" ? negotiable : false,
+      donateIfUnsoldDays:
+        sellingMode !== "GIVE_AWAY" && donateIfUnsold
+          ? Math.min(59, Math.max(7, Number(donateIfUnsoldDays) || 30))
+          : null,
       sellingMode,
-      community: community || undefined,
-      fulfilmentPickup,
-      fulfilmentMeet,
-      fulfilmentDelivery,
+      community,
+      city:
+        [...regions, ...FALLBACK_STATES].find((item) => item.city === stateKey)
+          ?.displayName || undefined,
+      fulfilmentPickup: false,
+      fulfilmentMeet: false,
+      fulfilmentDelivery: true,
     });
   }
 
@@ -371,6 +549,14 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
     }
   }
 
+  if (hydrating) {
+    return (
+      <View style={styles.pad}>
+        <ActivityIndicator color="#0E9F6E" />
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       contentContainerStyle={styles.pad}
@@ -381,66 +567,49 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
       </Text>
       <Text style={styles.stepHint}>{stepLabel(step)}</Text>
 
-      <View style={styles.planCard}>
-        <Text style={styles.planTitle}>
-          Seller plan · {sellerPlan?.tier === "PLUS" ? "Plus" : "Starter"}
-        </Text>
-        <Text style={styles.planCopy}>
-          {sellerPlan?.tier === "PLUS"
-            ? `Up to ${sellerPlan.maxActiveListings} listings · featured slots & analytics`
-            : "Upgrade for more live listings, a featured slot, and analytics."}
-        </Text>
-        {sellerPlan?.tier === "PLUS" ? (
-          <Pressable
-            style={[styles.planBtn, planBusy && styles.btnDisabled]}
-            disabled={planBusy}
-            onPress={() => void onCancelPlus()}
-            accessibilityRole="button"
-            accessibilityLabel="Cancel Seller Plus"
-          >
-            <Text style={styles.planBtnText}>
-              {planBusy ? "…" : "Cancel Plus"}
-            </Text>
-          </Pressable>
-        ) : (
-          <Pressable
-            style={[styles.planBtnPrimary, planBusy && styles.btnDisabled]}
-            disabled={planBusy}
-            onPress={() => void onUpgradePlus()}
-            accessibilityRole="button"
-            accessibilityLabel="Upgrade to Seller Plus"
-          >
-            <Text style={styles.planBtnPrimaryText}>
-              {planBusy ? "…" : "Upgrade to Plus"}
-            </Text>
-          </Pressable>
-        )}
-        {planToast ? (
-          <Pressable onPress={() => setPlanToast(null)}>
-            <Text style={styles.planToast}>{planToast}</Text>
-          </Pressable>
-        ) : null}
-      </View>
-
       {step === "photos" ? (
         <View>
           <Text style={styles.copy}>
             Add 2–6 photos. AI drafts title, price, and more.
           </Text>
           <Text style={styles.meta}>{photos.length} / 6 photos</Text>
+          {photos.length > 0 ? (
+            <View style={styles.photoRow}>
+              {photos.map((p) => (
+                <Pressable
+                  key={p.uri}
+                  onPress={() =>
+                    setPhotos((prev) => prev.filter((item) => item.uri !== p.uri))
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove this photo"
+                  style={styles.photoThumb}
+                >
+                  {p.uri.startsWith("mock://") ? (
+                    <View style={[styles.photoFill, styles.photoMock]}>
+                      <Text style={styles.photoMockText}>Photo</Text>
+                    </View>
+                  ) : (
+                    <Image
+                      source={{ uri: p.uri }}
+                      style={styles.photoFill}
+                      resizeMode="cover"
+                      pointerEvents="none"
+                    />
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {photos.length > 0 ? (
+            <Text style={styles.meta}>Tap a photo to remove it.</Text>
+          ) : null}
           <Pressable
             style={styles.primaryBtn}
             onPress={() => void addPhotos()}
             accessibilityRole="button"
           >
             <Text style={styles.primaryBtnText}>Choose photos</Text>
-          </Pressable>
-          <Pressable
-            style={styles.secondaryBtn}
-            onPress={() => void useMockPhotos()}
-            accessibilityRole="button"
-          >
-            <Text style={styles.secondaryBtnText}>Use mock photos</Text>
           </Pressable>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <Pressable
@@ -472,26 +641,167 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
                 onChange={setDescription}
                 multiline
               />
-              <Field
-                label="Category"
-                value={categoryName}
-                onChange={setCategoryName}
-              />
+              <Text style={styles.label}>Category</Text>
+              {categories.length > 0 ? (
+                <View style={styles.chips}>
+                  {categories.map((item) => (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => {
+                        setCategoryId(item.id);
+                        setCategoryName(item.name);
+                      }}
+                      style={[
+                        styles.chip,
+                        categoryId === item.id && styles.chipSelected,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: categoryId === item.id }}
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          categoryId === item.id && styles.chipTextSelected,
+                        ]}
+                      >
+                        {item.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : (
+                <Field
+                  label="Category"
+                  value={categoryName}
+                  onChange={(value) => {
+                    setCategoryId("");
+                    setCategoryName(value);
+                  }}
+                />
+              )}
               <Field label="Brand" value={brand} onChange={setBrand} />
-              <Field
-                label="Condition"
-                value={condition}
-                onChange={setCondition}
-              />
-              <Field
-                label="Price (₦)"
-                value={priceNaira}
-                onChange={(t) => setPriceNaira(t.replace(/[^\d]/g, ""))}
-                keyboardType="numeric"
-              />
-              {priceIntel ? (
+              <Text style={styles.label}>Condition</Text>
+              <View style={styles.chips}>
+                {CONDITIONS.map(([value, label]) => (
+                  <Pressable
+                    key={value}
+                    onPress={() => setCondition(value)}
+                    style={[
+                      styles.chip,
+                      condition === value && styles.chipSelected,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: condition === value }}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        condition === value && styles.chipTextSelected,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.label}>How are you listing?</Text>
+              <View style={styles.chips}>
+                {(
+                  [
+                    ["SELL", "Sell"],
+                    ["SWAP", "Swap"],
+                    ["GIVE_AWAY", "Give away"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <Pressable
+                    key={value}
+                    onPress={() => setSellingMode(value)}
+                    style={[
+                      styles.chip,
+                      sellingMode === value && styles.chipSelected,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: sellingMode === value }}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        sellingMode === value && styles.chipTextSelected,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              {sellingMode === "SELL" ? (
+                <Field
+                  label="Price per unit (₦)"
+                  value={priceNaira}
+                  onChange={(t) => setPriceNaira(t.replace(/[^\d]/g, ""))}
+                  keyboardType="numeric"
+                />
+              ) : null}
+              {sellingMode === "GIVE_AWAY" ? (
+                <Text style={styles.copy}>Price is ₦0.</Text>
+              ) : null}
+              {sellingMode === "SWAP" ? (
+                <Text style={styles.copy}>
+                  Another user sends a swap proposal for this item.
+                </Text>
+              ) : null}
+              {sellingMode === "SELL" || sellingMode === "GIVE_AWAY" ? (
+                <Field
+                  label={
+                    sellingMode === "GIVE_AWAY"
+                      ? "Units to gift"
+                      : "Units available"
+                  }
+                  value={units}
+                  onChange={(t) => setUnits(t.replace(/[^\d]/g, ""))}
+                  keyboardType="numeric"
+                />
+              ) : null}
+              {sellingMode === "SELL" ? (
+                <Pressable
+                  style={styles.checkRow}
+                  onPress={() => setNegotiable((v) => !v)}
+                >
+                  <Text style={styles.copy}>
+                    {negotiable ? "☑" : "☐"} Price is negotiable
+                  </Text>
+                </Pressable>
+              ) : null}
+              {sellingMode !== "GIVE_AWAY" ? (
+              <Pressable
+                style={styles.checkRow}
+                onPress={() => setDonateIfUnsold((v) => !v)}
+              >
+                <Text style={styles.copy}>
+                  {donateIfUnsold ? "☑" : "☐"}{" "}
+                  {sellingMode === "SWAP"
+                    ? "Donate if no swap offer"
+                    : "Donate if unsold"}
+                </Text>
+              </Pressable>
+              ) : null}
+              {sellingMode !== "GIVE_AWAY" && donateIfUnsold ? (
+                <>
+                  <Text style={styles.copy}>
+                    The listing stays live for 60 days. Choose a shorter wait
+                    so the hand-off can happen while it is still live.
+                  </Text>
+                  <Field
+                    label="Days before hand-off"
+                    value={donateIfUnsoldDays}
+                    onChange={(t) => setDonateIfUnsoldDays(t.replace(/[^\d]/g, ""))}
+                    keyboardType="numeric"
+                  />
+                </>
+              ) : null}
+              {priceIntel && sellingMode === "SELL" ? (
                 <View style={styles.intel}>
-                  <Text style={styles.intelTitle}>Lagos price sense</Text>
+                  <Text style={styles.intelTitle}>Price sense</Text>
                   <Text style={styles.copy}>
                     {formatNgnFromKobo(priceIntel.estimatedLowKobo)} –{" "}
                     {formatNgnFromKobo(priceIntel.estimatedHighKobo)}
@@ -506,7 +816,11 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
               <View style={styles.row}>
                 <Pressable
                   style={[styles.secondaryBtn, styles.flex]}
-                  onPress={() => setStep("photos")}
+                  onPress={() => {
+                    setError(null);
+                    setNibssName(null);
+                    setStep("photos");
+                  }}
                 >
                   <Text style={styles.secondaryBtnText}>Back</Text>
                 </Pressable>
@@ -516,7 +830,7 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
                     setBusy(true);
                     try {
                       await saveFields();
-                      setStep("mode");
+                      setStep("location");
                     } catch (err) {
                       setError(
                         err instanceof ApiError ? err.message : "Save failed",
@@ -535,84 +849,104 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
         </View>
       ) : null}
 
-      {step === "mode" ? (
-        <View>
-          {(["SELL", "SWAP", "GIVE_AWAY"] as const).map((m) => (
-            <Pressable
-              key={m}
-              style={[styles.modeBtn, sellingMode === m && styles.modeSelected]}
-              onPress={() => setSellingMode(m)}
-            >
-              <Text style={styles.modeText}>
-                {m === "GIVE_AWAY" ? "Give away" : m === "SWAP" ? "Swap" : "Sell"}
-              </Text>
-            </Pressable>
-          ))}
-          <Pressable
-            style={styles.checkRow}
-            onPress={() => setNegotiable((v) => !v)}
-          >
-            <Text style={styles.copy}>
-              {negotiable ? "☑" : "☐"} Negotiable
-            </Text>
-          </Pressable>
-          <View style={styles.row}>
-            <Pressable
-              style={[styles.secondaryBtn, styles.flex]}
-              onPress={() => setStep("draft")}
-            >
-              <Text style={styles.secondaryBtnText}>Back</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.primaryBtn, styles.flex]}
-              onPress={async () => {
-                await saveFields();
-                setStep("location");
-              }}
-            >
-              <Text style={styles.primaryBtnText}>Continue</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
       {step === "location" ? (
         <View>
+          <Text style={styles.copy}>
+            Select a state first. Areas in that state appear after you choose it.
+          </Text>
+          <Text style={styles.label}>State</Text>
           <View style={styles.chips}>
-            {COMMUNITIES.map((c) => (
+            {(regions.length > 0 ? regions : [...FALLBACK_STATES]).map((item) => (
               <Pressable
-                key={c}
-                onPress={() => setCommunity(c)}
-                style={[styles.chip, community === c && styles.chipSelected]}
+                key={item.city}
+                onPress={() => {
+                  setStateKey(item.city);
+                  setCommunity("");
+                  setError(null);
+                }}
+                style={[styles.chip, stateKey === item.city && styles.chipSelected]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: stateKey === item.city }}
               >
                 <Text
                   style={[
                     styles.chipText,
-                    community === c && styles.chipTextSelected,
+                    stateKey === item.city && styles.chipTextSelected,
                   ]}
                 >
-                  {c}
+                  {item.displayName}
                 </Text>
               </Pressable>
             ))}
           </View>
+          {stateKey ? (
+            <>
+              <Text style={styles.label}>Area</Text>
+              {areaOptions.length === 0 ? (
+                <Text style={styles.copy}>No areas are available for this state yet.</Text>
+              ) : (
+                <View style={styles.chips}>
+                  {areaOptions.map((area) => (
+                    <Pressable
+                      key={area.value}
+                      onPress={() => setCommunity(area.value)}
+                      style={[
+                        styles.chip,
+                        community === area.value && styles.chipSelected,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: community === area.value }}
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          community === area.value && styles.chipTextSelected,
+                        ]}
+                      >
+                        {area.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </>
+          ) : (
+            <Text style={styles.copy}>
+              Select a state to see areas such as VI and Ikoyi.
+            </Text>
+          )}
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <View style={styles.row}>
             <Pressable
               style={[styles.secondaryBtn, styles.flex]}
-              onPress={() => setStep("mode")}
+              onPress={() => {
+                setError(null);
+                setNibssName(null);
+                setStep("draft");
+              }}
             >
               <Text style={styles.secondaryBtnText}>Back</Text>
             </Pressable>
             <Pressable
               style={[styles.primaryBtn, styles.flex]}
               onPress={async () => {
-                if (!community) {
-                  setError("Choose a community");
+                if (!stateKey) {
+                  setError("Select a state first");
                   return;
                 }
-                await saveFields();
-                setStep("fulfilment");
+                if (!community) {
+                  setError("Select an area in that state");
+                  return;
+                }
+                setBusy(true);
+                try {
+                  await saveFields();
+                  setStep("fulfilment");
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : "Save failed");
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
               <Text style={styles.primaryBtnText}>Continue</Text>
@@ -623,42 +957,182 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
 
       {step === "fulfilment" ? (
         <View>
-          <Check
-            label="Buyer pickup"
-            checked={fulfilmentPickup}
-            onToggle={() => setFulfilmentPickup((v) => !v)}
-          />
-          <Check
-            label="Meet point"
-            checked={fulfilmentMeet}
-            onToggle={() => setFulfilmentMeet((v) => !v)}
-          />
-          <Check
-            label="Delivery (quote at checkout)"
-            checked={fulfilmentDelivery}
-            onToggle={() => setFulfilmentDelivery((v) => !v)}
-          />
+          <Text style={styles.copy}>
+            Buyers receive this by ReWorth delivery. The courier fee is quoted
+            at checkout.
+          </Text>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <View style={styles.row}>
             <Pressable
               style={[styles.secondaryBtn, styles.flex]}
-              onPress={() => setStep("location")}
+              onPress={() => {
+                setError(null);
+                setNibssName(null);
+                setStep("location");
+              }}
             >
               <Text style={styles.secondaryBtnText}>Back</Text>
             </Pressable>
             <Pressable
               style={[styles.primaryBtn, styles.flex]}
               onPress={async () => {
-                if (!fulfilmentPickup && !fulfilmentMeet && !fulfilmentDelivery) {
-                  setError("Pick at least one option");
-                  return;
+                setBusy(true);
+                try {
+                  await saveFields();
+                  setStep(
+                    sellingMode === "GIVE_AWAY" || sellingMode === "SWAP"
+                      ? "publish"
+                      : "bank",
+                  );
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : "Save failed");
+                } finally {
+                  setBusy(false);
                 }
-                await saveFields();
-                setStep("publish");
               }}
             >
               <Text style={styles.primaryBtnText}>Continue</Text>
             </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {step === "bank" ? (
+        <View>
+          <Text style={styles.copy}>
+            Add the bank account we should pay you into.
+          </Text>
+          {payoutAccount && !bankEditing ? (
+            <View style={styles.intel}>
+              <Text style={styles.intelTitle}>Saved account</Text>
+              <Text style={styles.copy}>{payoutDisplayName(payoutAccount)}</Text>
+              <Text style={styles.copy}>
+                {payoutAccount.bankName} · {payoutAccount.accountNumberMasked}
+              </Text>
+              <Pressable
+                style={styles.primaryBtn}
+                onPress={() => setStep("publish")}
+              >
+                <Text style={styles.primaryBtnText}>Use these details</Text>
+              </Pressable>
+              <Pressable
+                style={styles.secondaryBtn}
+                onPress={() => {
+                  setError(null);
+                  setBankEditing(true);
+                }}
+              >
+                <Text style={styles.secondaryBtnText}>Use a different account</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <>
+              <Field
+                label="Search bank name"
+                value={bankQuery}
+                onChange={setBankQuery}
+              />
+              <View style={styles.chips}>
+                {payoutBanks
+                  .filter((bank) =>
+                    bank.name.toLowerCase().includes(bankQuery.trim().toLowerCase()),
+                  )
+                  .slice(0, 8)
+                  .map((bank) => (
+                    <Pressable
+                      key={bank.code}
+                      onPress={() => {
+                        setBankCode(bank.code);
+                        setBankQuery(bank.name);
+                      }}
+                      style={[
+                        styles.chip,
+                        bankCode === bank.code && styles.chipSelected,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.chipText,
+                          bankCode === bank.code && styles.chipTextSelected,
+                        ]}
+                      >
+                        {bank.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+              </View>
+              <Field
+                label="Account number"
+                value={accountNumber}
+                keyboardType="numeric"
+                onChange={(t) => setAccountNumber(t.replace(/\D/g, "").slice(0, 10))}
+              />
+              <Field label="First name" value={legalFirst} onChange={setLegalFirst} />
+              <Field
+                label="Middle name"
+                value={legalMiddle}
+                onChange={setLegalMiddle}
+              />
+              <Field label="Last name" value={legalLast} onChange={setLegalLast} />
+            </>
+          )}
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          <View style={styles.row}>
+            <Pressable
+              style={[styles.secondaryBtn, styles.flex]}
+              onPress={() => {
+                setError(null);
+                setStep("fulfilment");
+              }}
+            >
+              <Text style={styles.secondaryBtnText}>Back</Text>
+            </Pressable>
+            {bankEditing || !payoutAccount ? (
+              <Pressable
+                style={[styles.primaryBtn, styles.flex, busy && styles.btnDisabled]}
+                disabled={busy}
+                onPress={() => {
+                  void (async () => {
+                    setError(null);
+                    if (!/^\d{10}$/.test(accountNumber)) {
+                      setError("Enter a 10-digit account number.");
+                      return;
+                    }
+                    if (!bankCode) {
+                      setError("Choose your bank.");
+                      return;
+                    }
+                    if (!legalFirst.trim() || !legalLast.trim()) {
+                      setError("Enter your first and last name.");
+                      return;
+                    }
+                    setBusy(true);
+                    try {
+                      const result = await verifyPayoutAccount({
+                        accountNumber,
+                        bankCode,
+                        firstName: legalFirst.trim(),
+                        middleName: legalMiddle.trim(),
+                        lastName: legalLast.trim(),
+                      });
+                      setPayoutAccount(result.account);
+                      setBankEditing(false);
+                      setStep("publish");
+                    } catch (err) {
+                      setError(
+                        err instanceof ApiError ? err.message : "Could not save the account",
+                      );
+                    } finally {
+                      setBusy(false);
+                    }
+                  })();
+                }}
+              >
+                <Text style={styles.primaryBtnText}>
+                  {busy ? "Saving…" : "Save"}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       ) : null}
@@ -669,16 +1143,30 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
           <Text style={styles.copy}>
             {community} ·{" "}
             {sellingMode === "GIVE_AWAY"
-              ? "Give away"
+              ? "Give away · ₦0"
               : sellingMode === "SWAP"
                 ? "Swap"
                 : formatNgnFromKobo((Number(priceNaira) || 0) * 100)}
+          </Text>
+          {sellingMode !== "GIVE_AWAY" && payoutAccount ? (
+            <Text style={styles.copy}>
+              Payout · {payoutAccount.bankName} {payoutAccount.accountNumberMasked}
+            </Text>
+          ) : null}
+          <Text style={styles.copy}>
+            Publishing can take a little while. We verify your photos and the
+            item details before the listing goes live, so you can stay on this
+            page.
           </Text>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <View style={styles.row}>
             <Pressable
               style={[styles.secondaryBtn, styles.flex]}
-              onPress={() => setStep("fulfilment")}
+              onPress={() => {
+                setError(null);
+                setNibssName(null);
+                setStep(sellingMode === "GIVE_AWAY" ? "fulfilment" : "bank");
+              }}
             >
               <Text style={styles.secondaryBtnText}>Back</Text>
             </Pressable>
@@ -788,10 +1276,10 @@ export function SellFlow({ onPublished, onOpenListing }: Props) {
 function stepLabel(step: SellStep): string {
   const map: Record<SellStep, string> = {
     photos: "1 · Photos",
-    draft: "2 · AI draft",
-    mode: "3 · Mode",
-    location: "4 · Location",
-    fulfilment: "5 · Fulfilment",
+    draft: "2 · Details",
+    location: "3 · Location",
+    fulfilment: "4 · Fulfilment",
+    bank: "5 · Bank",
     publish: "6 · Publish",
     done: "Done",
   };
@@ -825,24 +1313,6 @@ function Field({
   );
 }
 
-function Check({
-  label,
-  checked,
-  onToggle,
-}: {
-  label: string;
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <Pressable style={styles.checkRow} onPress={onToggle}>
-      <Text style={styles.copy}>
-        {checked ? "☑" : "☐"} {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   pad: { paddingBottom: 40 },
   brand: {
@@ -864,6 +1334,22 @@ const styles = StyleSheet.create({
     color: "#5C636A",
   },
   meta: { marginTop: 8, fontSize: 14, color: "#5C636A" },
+  photoRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingTop: 12,
+  },
+  photoThumb: {
+    width: 88,
+    height: 88,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#E5E2DC",
+  },
+  photoFill: { width: "100%", height: "100%" },
+  photoMock: { alignItems: "center", justifyContent: "center" },
+  photoMockText: { fontSize: 12, fontWeight: "600", color: "#5C636A" },
   label: {
     marginBottom: 6,
     fontSize: 14,
@@ -920,19 +1406,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0E9F6E",
   },
-  modeBtn: {
-    marginTop: 10,
-    padding: 16,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#FFFFFF",
-  },
-  modeSelected: {
-    borderColor: "#0E9F6E",
-    backgroundColor: "#D1FAE5",
-  },
-  modeText: { fontSize: 16, fontWeight: "600", color: "#111315" },
   checkRow: { marginTop: 14 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 16 },
   chip: {
@@ -951,43 +1424,5 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "700",
     color: "#111315",
-  },
-  planCard: {
-    marginTop: 16,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#FFFFFF",
-  },
-  planTitle: { fontSize: 15, fontWeight: "700", color: "#111315" },
-  planCopy: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 18,
-    color: "#5C636A",
-  },
-  planBtn: {
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  planBtnText: { fontSize: 14, fontWeight: "600", color: "#111315" },
-  planBtnPrimary: {
-    marginTop: 12,
-    backgroundColor: "#0E9F6E",
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  planBtnPrimaryText: { fontSize: 14, fontWeight: "700", color: "#FFFFFF" },
-  planToast: {
-    marginTop: 10,
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#0E9F6E",
   },
 });

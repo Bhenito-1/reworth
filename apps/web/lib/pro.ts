@@ -82,7 +82,7 @@ export async function applyPro(
 
 export async function getMyProAccount(token: string): Promise<ProAccount | null> {
   try {
-    return await apiFetch<ProAccount>("/pro/me", { token });
+    return await apiFetch<ProAccount>("/me/pro", { token });
   } catch (err) {
     const status = (err as { status?: number })?.status;
     if (status === 404) return null;
@@ -94,7 +94,7 @@ export async function subscribePro(
   token: string,
   body?: { plan?: string },
 ): Promise<ProAccount> {
-  return apiFetch<ProAccount>("/pro/subscribe", {
+  return apiFetch<ProAccount>("/me/pro/subscribe", {
     method: "POST",
     token,
     body: body ?? {},
@@ -102,46 +102,18 @@ export async function subscribePro(
 }
 
 /**
- * Upload bulk CSV. Prefer multipart; fall back to text body if API expects raw CSV.
+ * Upload bulk CSV as JSON `{ csv }` (API BulkUploadDto).
  */
 export async function uploadProBulkCsv(
   token: string,
   file: File,
 ): Promise<BulkUploadJob> {
-  const { API_URL } = await import("./api");
-  const form = new FormData();
-  form.append("file", file);
-  form.append("csv", file);
-
-  const res = await fetch(`${API_URL}/pro/bulk-upload`, {
+  const csv = await file.text();
+  return apiFetch<BulkUploadJob>("/me/pro/bulk-upload", {
     method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: form,
+    token,
+    body: { csv },
   });
-
-  const text = await res.text();
-  let parsed: unknown = null;
-  if (text) {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
-    }
-  }
-
-  if (!res.ok) {
-    const { ApiError } = await import("./api");
-    const msg =
-      parsed && typeof parsed === "object" && "message" in parsed
-        ? String((parsed as { message: unknown }).message)
-        : res.statusText || "Bulk upload failed";
-    throw new ApiError(msg, res.status, parsed);
-  }
-
-  return parsed as BulkUploadJob;
 }
 
 export function bulkUploadErrors(job: BulkUploadJob): BulkUploadError[] {

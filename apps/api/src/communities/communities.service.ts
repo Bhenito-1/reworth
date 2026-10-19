@@ -46,6 +46,7 @@ export class CommunitiesService {
           about: c.about,
           geoLat: c.geoLat,
           geoLng: c.geoLng,
+          city: c.city ?? 'Lagos',
           verified: c.verified ?? false,
           active: true,
         },
@@ -56,6 +57,7 @@ export class CommunitiesService {
           about: c.about,
           geoLat: c.geoLat,
           geoLng: c.geoLng,
+          city: c.city ?? 'Lagos',
           verified: c.verified ?? false,
           active: true,
         },
@@ -320,6 +322,8 @@ export class CommunitiesService {
       where: {
         communityId: community.id,
         status: { in: ['LIVE', 'RESERVED'] },
+        quantityAvailable: { gt: 0 },
+        NOT: { riskFlags: { has: 'swap-response' } },
         AND: [this.visibility.visibleListingWhere(viewerId)],
       },
       include: {

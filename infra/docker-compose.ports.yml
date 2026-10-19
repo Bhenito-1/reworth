@@ -1,5 +1,5 @@
 # Local port remap — avoids conflicts with other stacks on 5432/6379/9000/1025.
-# Usage: docker compose -f infra/docker-compose.yml -f infra/docker-compose.ports.yml up -d postgres redis minio mailhog
+# Usage: docker compose -f infra/docker-compose.yml -f infra/docker-compose.ports.yml up -d postgres redis s3mock mailhog
 services:
   postgres:
     ports:
@@ -7,10 +7,9 @@ services:
   redis:
     ports:
       - "6381:6379"
-  minio:
+  s3mock:
     ports:
-      - "9020:9000"
-      - "9021:9001"
+      - "9020:9090"
   mailhog:
     ports:
       - "1026:1025"

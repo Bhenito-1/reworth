@@ -13,10 +13,9 @@ alwaysApply: true
 | Admin | Next.js 15 (`apps/admin`) — ops only; not a consumer surface |
 | API | NestJS modular monolith, REST `/api/v1` |
 | DB | PostgreSQL 16 + Prisma; Redis + BullMQ |
-| Media | S3-compatible (MinIO), presigned uploads |
+| Media | S3-compatible object store (`STORAGE_DRIVER=s3`, `S3StorageAdapter`); local compose runs **adobe/s3mock**; disk fallback (`STORAGE_DRIVER=local`) |
 | Search | OpenSearch + Postgres FTS fallback |
-| Auth | JWT + phone OTP + Google/Apple OAuth |
-| SMS | Termii or Twilio + mock |
+| Auth | JWT + email/password + Google/Apple OAuth |
 | Push | Mock default; `PUSH_PROVIDER=expo` for store |
 | Payments | Paystack + mock PSP; escrow-shaped (ADR-002) |
 | AI | OpenAI GPT-4o default + rule-based mock |

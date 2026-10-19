@@ -1,0 +1,33 @@
+{
+  "city": "kano",
+  "displayName": "Kano",
+  "timezone": "Africa/Lagos",
+  "communities": [
+    "NASSARAWA",
+    "FAGGE",
+    "GWALE",
+    "TARAUNI",
+    "DALA",
+    "OTHER_KANO"
+  ],
+  "geocoding": {
+    "NASSARAWA": { "lat": 12.0022, "lng": 8.532, "label": "Nassarawa" },
+    "FAGGE": { "lat": 12.01, "lng": 8.52, "label": "Fagge" },
+    "GWALE": { "lat": 11.99, "lng": 8.51, "label": "Gwale" },
+    "TARAUNI": { "lat": 11.97, "lng": 8.55, "label": "Tarauni" },
+    "DALA": { "lat": 12.02, "lng": 8.5, "label": "Dala" },
+    "OTHER_KANO": { "lat": 12.0022, "lng": 8.532, "label": "Kano" }
+  },
+  "logistics": {
+    "baseFeeKobo": 120000,
+    "perKmKobo": 12000
+  },
+  "priceBands": {
+    "budget": { "minKobo": 0, "maxKobo": 3500000 },
+    "mid": { "minKobo": 3500000, "maxKobo": 30000000 },
+    "premium": { "minKobo": 30000000, "maxKobo": null }
+  },
+  "sms": { "enabled": true, "provider": "termii" },
+  "psp": { "enabled": true, "provider": "paystack" },
+  "status": "pilot"
+}

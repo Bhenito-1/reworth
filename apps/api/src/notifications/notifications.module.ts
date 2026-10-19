@@ -27,6 +27,9 @@ export function createEmailProvider(config: ConfigService) {
     return new ResendEmailProvider(
       config.get<string>('RESEND_API_KEY') ?? '',
       from,
+      {
+        replyTo: config.get<string>('EMAIL_REPLY_TO') ?? undefined,
+      },
     );
   }
   if (provider === 'mailhog') {

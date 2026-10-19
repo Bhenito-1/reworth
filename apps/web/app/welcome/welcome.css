@@ -1,0 +1,139 @@
+/* ReWorth marketing landing — full composition from brand/landingpage.png */
+
+.welcome-root {
+  color: #172a3a;
+  background: #ffffff;
+  min-height: 100dvh;
+}
+
+.welcome-skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 0.75rem 1rem;
+  background: #d96a32;
+  color: #fff;
+  font-weight: 600;
+}
+
+.welcome-skip:focus {
+  left: 1rem;
+  top: 1rem;
+}
+
+.welcome-landing {
+  position: relative;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  background: #ffffff;
+}
+
+.welcome-landing-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  pointer-events: none;
+}
+
+.welcome-hotspots {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.welcome-hotspot {
+  position: absolute;
+  display: block;
+  overflow: hidden;
+  color: transparent;
+  font-size: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.welcome-hotspot:focus-visible {
+  outline: 3px solid #d96a32;
+  outline-offset: 3px;
+  color: transparent;
+}
+
+/* Approximate regions matching landingpage.png composition */
+.welcome-hotspot-how {
+  top: 3.2%;
+  left: 58%;
+  width: 10%;
+  height: 3.2%;
+}
+
+.welcome-hotspot-why {
+  top: 3.2%;
+  left: 69%;
+  width: 10%;
+  height: 3.2%;
+}
+
+.welcome-hotspot-nav-continue {
+  top: 2.4%;
+  left: 82%;
+  width: 12%;
+  height: 4.2%;
+}
+
+.welcome-hotspot-start {
+  top: 32%;
+  left: 5.5%;
+  width: 14%;
+  height: 4.5%;
+}
+
+.welcome-hotspot-learn {
+  top: 32%;
+  left: 21%;
+  width: 13%;
+  height: 4.5%;
+}
+
+.welcome-hotspot-bar-continue {
+  top: 78.5%;
+  left: 72%;
+  width: 14%;
+  height: 4.2%;
+}
+
+@media (max-width: 720px) {
+  .welcome-hotspot-how,
+  .welcome-hotspot-why {
+    display: none;
+  }
+
+  .welcome-hotspot-nav-continue {
+    top: 2%;
+    left: 72%;
+    width: 24%;
+    height: 5%;
+  }
+
+  .welcome-hotspot-start {
+    top: 34%;
+    left: 6%;
+    width: 40%;
+    height: 5%;
+  }
+
+  .welcome-hotspot-learn {
+    top: 40%;
+    left: 6%;
+    width: 40%;
+    height: 5%;
+  }
+
+  .welcome-hotspot-bar-continue {
+    top: 80%;
+    left: 55%;
+    width: 38%;
+    height: 5%;
+  }
+}

@@ -9,6 +9,7 @@ import {
   firesReportedUser,
   firesSuspiciousPayment,
   levelFromScore,
+  riskScoreAfterApproval,
   sumFiredWeights,
   type FiredRule,
 } from './risk-rules.table';
@@ -118,6 +119,14 @@ describe('risk-rules.table', () => {
       expect(levelFromScore(40, DEFAULT_THRESHOLDS)).toBe('MEDIUM');
       expect(levelFromScore(69, DEFAULT_THRESHOLDS)).toBe('MEDIUM');
       expect(levelFromScore(70, DEFAULT_THRESHOLDS)).toBe('HIGH');
+    });
+
+    it('an approval lowers a score of 50 below the review line', () => {
+      const next = riskScoreAfterApproval(50);
+      expect(next).toBe(30);
+      expect(levelFromScore(next)).toBe('LOW');
+      expect(riskScoreAfterApproval(0)).toBe(0);
+      expect(riskScoreAfterApproval(15)).toBe(0);
     });
 
     it('synthetic bad actor (rapid+low price+duplicate) → HIGH', () => {

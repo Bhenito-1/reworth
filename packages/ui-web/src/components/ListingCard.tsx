@@ -8,6 +8,7 @@ export interface ListingCardProps extends HTMLAttributes<HTMLElement> {
   community?: string;
   imageSrc?: string;
   imageAlt?: string;
+  onImageError?: () => void;
   verified?: boolean;
   footer?: ReactNode;
   className?: string;
@@ -19,6 +20,7 @@ export function ListingCard({
   community,
   imageSrc,
   imageAlt,
+  onImageError,
   verified = false,
   footer,
   className = "",
@@ -27,7 +29,7 @@ export function ListingCard({
   return (
     <article
       className={[
-        "flex flex-col overflow-hidden rounded-[var(--rw-radius-lg)]",
+        "flex h-full flex-col overflow-hidden rounded-[var(--rw-radius-lg)]",
         "bg-[var(--rw-bg-elevated)] border border-[var(--rw-border)]",
         className,
       ]
@@ -35,17 +37,18 @@ export function ListingCard({
         .join(" ")}
       {...rest}
     >
-      <div className="relative aspect-[4/3] bg-[var(--rw-accent-muted)]">
+      <div className="relative aspect-[3/4] w-full shrink-0 overflow-hidden bg-[var(--rw-bg-warm)]">
         {imageSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={imageSrc}
             alt={imageAlt ?? title}
-            className="h-full w-full object-cover"
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={onImageError}
           />
         ) : (
           <div
-            className="flex h-full w-full items-center justify-center text-[var(--rw-ink-muted)] text-sm"
+            className="absolute inset-0 flex items-center justify-center text-sm text-[var(--rw-ink-muted)]"
             aria-hidden
           >
             No photo
@@ -53,27 +56,27 @@ export function ListingCard({
         )}
         {verified ? (
           <span
-            className="absolute top-2 right-2 rounded-full px-2 py-0.5 text-xs font-medium"
+            className="absolute top-2 left-2 z-[1] max-w-[calc(100%-2.75rem)] truncate rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4"
             style={{
               background: "var(--rw-gold-muted)",
               color: "var(--rw-gold)",
             }}
             aria-label="Verified seller"
           >
-            Verified
+            Verified ✓
           </span>
         ) : null}
       </div>
-      <div className="flex flex-1 flex-col gap-1 p-3">
-        <h3 className="text-base font-medium text-[var(--rw-ink)] line-clamp-2">
-          {title}
-        </h3>
-        <p className="text-lg font-semibold text-[var(--rw-accent)]">
+      <div className="flex flex-1 flex-col gap-0.5 p-2">
+        <p className="truncate text-sm font-semibold leading-tight text-[var(--rw-ink)]">
           {priceLabel}
         </p>
-        {community ? (
-          <p className="text-sm text-[var(--rw-ink-muted)]">{community}</p>
-        ) : null}
+        <h3 className="truncate text-sm font-medium leading-5 text-[var(--rw-ink)]">
+          {title}
+        </h3>
+        <p className="h-4 truncate text-xs leading-4 text-[var(--rw-ink-muted)]">
+          {community || "\u00a0"}
+        </p>
         {footer ? <div className="mt-auto pt-2">{footer}</div> : null}
       </div>
     </article>

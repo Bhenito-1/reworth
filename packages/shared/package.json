@@ -2,19 +2,22 @@
   "name": "@reworth/shared",
   "version": "0.0.0",
   "private": true,
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc",
     "lint": "node -e \"console.log('lint ok')\"",
     "typecheck": "tsc --noEmit",
     "test": "node -e \"console.log('no tests yet')\""
   },
   "devDependencies": {
     "@reworth/config": "workspace:*",
-    "typescript": "^5.7.2"
+    "typescript": "^5.9.3"
   }
 }

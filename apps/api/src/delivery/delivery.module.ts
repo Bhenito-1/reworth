@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { AdminAlertsModule } from '../admin/admin-alerts.module';
 import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -25,7 +26,13 @@ export function createDeliveryProvider(
 }
 
 @Module({
-  imports: [PrismaModule, AuthModule, ConfigModule, NotificationsModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    ConfigModule,
+    NotificationsModule,
+    AdminAlertsModule,
+  ],
   controllers: [
     MeetPointsController,
     OrderDeliveryController,

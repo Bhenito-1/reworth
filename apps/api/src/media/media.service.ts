@@ -23,10 +23,25 @@ import type { CompleteMediaDto, PresignMediaDto } from './dto/media.dto';
 
 export const MEDIA_IMAGE_QUEUE = 'media-image';
 
+/** Minimal valid JPEG (8×8 grey) — used when Sell completes without a PUT. */
+const PLACEHOLDER_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBwgHBgkIBwgKCgkLDBYPDQwMDBsUFRAWIB0iIiAdHx8YKDwsJCYxJx8fLT0tMTU3Ojo6Iys/RD84QzQ5OjcBCgoKDQwNGg8PGjclHyU3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3N//AABEIAAEAAQMBIgACEQEDEQH/xAAbAAABBQEBAAAAAAAAAAAAAAAAAQIDBAUGB//EABUBAQEAAAAAAAAAAAAAAAAAAAAB/8QAFgEBAQEAAAAAAAAAAAAAAAAAAAEC/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8A1oAAP//Z',
+  'base64',
+);
+
 export type MediaImageJob = {
   listingImageId: string;
   listingId: string;
   key: string;
+  /** When set, pipeline uses these bytes instead of re-fetching from storage/CDN. */
+  bodyBase64?: string;
+};
+
+type CompleteOptions = {
+  /** Force await pipeline before returning (needed so clients see READY). */
+  processInline?: boolean;
+  /** Bytes already uploaded — skip placeholder seeding and CDN re-fetch. */
+  body?: Buffer;
 };
 
 @Injectable()
@@ -88,12 +103,65 @@ export class MediaService {
     };
   }
 
-  async complete(userId: string, dto: CompleteMediaDto) {
+  async complete(
+    userId: string,
+    dto: CompleteMediaDto,
+    opts: CompleteOptions = {},
+  ) {
     const listing = await this.prisma.listing.findUnique({
       where: { id: dto.listingId },
     });
     if (!listing || listing.sellerId !== userId) {
       throw new BadRequestException('Listing not found or not owned');
+    }
+
+    let uploadedBody = opts.body;
+    // Persist bytes when client could not PUT to storage (mock / CORS).
+    if (dto.inlineBase64) {
+      try {
+        const body = Buffer.from(dto.inlineBase64, 'base64');
+        if (body.length > 0 && body.length <= MAX_IMAGE_BYTES) {
+          const contentType = dto.contentType ?? 'image/jpeg';
+          if (!ALLOWED_IMAGE_MIMES.has(contentType)) {
+            throw new BadRequestException(
+              `Unsupported contentType: ${contentType}`,
+            );
+          }
+          await this.storage.putObject({
+            bucket: this.bucket,
+            key: dto.key,
+            body,
+            contentType,
+          });
+          uploadedBody = body;
+        }
+      } catch (err) {
+        if (err instanceof BadRequestException) throw err;
+        this.logger.warn(
+          `inlineBase64 putObject failed: ${(err as Error).message}`,
+        );
+      }
+    } else if (
+      !uploadedBody &&
+      this.storage.name === 'mock-storage' &&
+      this.storage.getObject
+    ) {
+      // Mock Sell path often completes with a key and no PUT — seed a tiny JPEG.
+      // Never do this for Cloudinary/S3/local: it can overwrite a real upload.
+      try {
+        const existing = await this.storage.getObject(this.bucket, dto.key);
+        if (!existing || existing.length === 0) {
+          await this.storage.putObject({
+            bucket: this.bucket,
+            key: dto.key,
+            body: PLACEHOLDER_JPEG,
+            contentType: 'image/jpeg',
+          });
+          uploadedBody = PLACEHOLDER_JPEG;
+        }
+      } catch {
+        /* non-fatal */
+      }
     }
 
     const image = await this.prisma.listingImage.create({
@@ -105,13 +173,18 @@ export class MediaService {
       },
     });
 
+    const processInline = opts.processInline === true || this.inline;
     const job: MediaImageJob = {
       listingImageId: image.id,
       listingId: dto.listingId,
       key: dto.key,
+      // Only attach bytes for inline processing — never push multi‑MB payloads to Redis.
+      ...(uploadedBody && processInline
+        ? { bodyBase64: uploadedBody.toString('base64') }
+        : {}),
     };
 
-    if (this.inline) {
+    if (processInline) {
       await this.processImageJob(job);
     } else {
       try {
@@ -123,13 +196,22 @@ export class MediaService {
         this.logger.warn(
           `Queue enqueue failed, processing inline: ${(err as Error).message}`,
         );
-        await this.processImageJob(job);
+        await this.processImageJob({
+          ...job,
+          ...(uploadedBody
+            ? { bodyBase64: uploadedBody.toString('base64') }
+            : {}),
+        });
       }
     }
 
-    return this.prisma.listingImage.findUniqueOrThrow({
+    const ready = await this.prisma.listingImage.findUniqueOrThrow({
       where: { id: image.id },
     });
+    this.logger.log(
+      `media complete key=${dto.key} status=${ready.status} storage=${this.storage.name}`,
+    );
+    return ready;
   }
 
   async processImageJob(job: MediaImageJob): Promise<void> {
@@ -146,8 +228,21 @@ export class MediaService {
     }
 
     let body: Buffer | null = null;
-    if (this.storage.getObject) {
+    if (job.bodyBase64) {
+      body = Buffer.from(job.bodyBase64, 'base64');
+    } else if (this.storage.getObject) {
       body = await this.storage.getObject(this.bucket, job.key);
+    }
+
+    if (!body || body.length === 0) {
+      await this.prisma.listingImage.update({
+        where: { id: job.listingImageId },
+        data: { status: 'FAILED' },
+      });
+      throw new PipelineValidationError(
+        'Uploaded file not found in storage — re-upload the photo',
+        'OTHER',
+      );
     }
 
     try {
@@ -155,6 +250,9 @@ export class MediaService {
         key: job.key,
         body,
         publicUrl: (k) => this.storage.publicUrl(k),
+        deliveryUrl: this.storage.deliveryUrl
+          ? (k, t) => this.storage.deliveryUrl!(k, t)
+          : undefined,
         mode: this.pipelineMode,
       });
 
@@ -190,6 +288,89 @@ export class MediaService {
       });
       throw err;
     }
+  }
+
+  /**
+   * Authenticated store — puts bytes in the active storage driver (Cloudinary/S3/local)
+   * without attaching to a listing. Used by room-scan, worth, avatars.
+   */
+  async storeObject(
+    userId: string,
+    opts: {
+      fileName: string;
+      contentType: string;
+      body: Buffer;
+    },
+  ) {
+    if (!ALLOWED_IMAGE_MIMES.has(opts.contentType)) {
+      throw new BadRequestException(
+        `Unsupported contentType: ${opts.contentType}`,
+      );
+    }
+    if (!opts.body?.length) {
+      throw new BadRequestException('Empty upload body');
+    }
+    if (opts.body.length > MAX_IMAGE_BYTES) {
+      throw new BadRequestException('File exceeds 10MB limit');
+    }
+
+    const safeName = opts.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const key = `uploads/${userId}/${randomUUID()}-${safeName}`;
+    this.logger.log(
+      `media store key=${key} bytes=${opts.body.length} storage=${this.storage.name}`,
+    );
+    const uploaded = await this.storage.putObject({
+      bucket: this.bucket,
+      key,
+      body: opts.body,
+      contentType: opts.contentType,
+    });
+
+    return {
+      key,
+      publicUrl: uploaded.url || this.storage.publicUrl(key),
+      storage: this.storage.name,
+    };
+  }
+
+  /**
+   * Authenticated direct upload — stores bytes then runs the image pipeline.
+   * Preferred over silent-failing browser PUT to presigned URLs.
+   */
+  async uploadDirect(
+    userId: string,
+    opts: {
+      listingId: string;
+      sortOrder: number;
+      fileName: string;
+      contentType: string;
+      body: Buffer;
+    },
+  ) {
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: opts.listingId },
+    });
+    if (!listing || listing.sellerId !== userId) {
+      throw new BadRequestException('Listing not found or not owned');
+    }
+
+    const stored = await this.storeObject(userId, {
+      fileName: opts.fileName,
+      contentType: opts.contentType,
+      body: opts.body,
+    });
+
+    // Always finish to READY in this request. Clients (web/mobile) reject PENDING,
+    // and Render+Redis often leaves jobs queued when BULLMQ_INLINE is unset.
+    return this.complete(
+      userId,
+      {
+        key: stored.key,
+        listingId: opts.listingId,
+        sortOrder: opts.sortOrder,
+      },
+      { processInline: true, body: opts.body },
+    );
   }
 
   /** Attach already-uploaded keys to a listing (creates PENDING then processes). */

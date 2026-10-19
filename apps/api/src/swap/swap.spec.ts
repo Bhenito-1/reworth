@@ -25,7 +25,6 @@ function baseProposal(overrides: Record<string, unknown> = {}) {
     listingId: 'listing-target',
     proposerId: 'proposer-1',
     offeredListingId: 'listing-offered',
-    cashComponentKobo: 0,
     note: null,
     status: 'PENDING' as const,
     parentProposalId: null,
@@ -63,7 +62,6 @@ function baseOrder(overrides: Record<string, unknown> = {}) {
     swapListingBId: 'listing-offered',
     legAStatus: 'PENDING' as const,
     legBStatus: 'PENDING' as const,
-    cashRecipientId: null,
     meetPointId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -71,14 +69,14 @@ function baseOrder(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe('Phase 2.1 Swap & Give-Away', () => {
+describe('Swap and give-away', () => {
   const notifications = {
     log: jest.fn(),
     notify: jest.fn(async () => ({ created: [], skipped: [] })),
   };
 
-  describe('pure swap lifecycle', () => {
-    it('accept → dual confirm → COMPLETED; payments.create never called', async () => {
+  describe('swap', () => {
+    it('accept starts two delivery orders, then both confirms complete the swap', async () => {
       const proposal = baseProposal();
       const orderState = baseOrder();
       const paymentsCreate = jest.fn();
@@ -86,6 +84,7 @@ describe('Phase 2.1 Swap & Give-Away', () => {
       const acceptTx = {
         swapProposal: {
           findUnique: jest.fn().mockResolvedValue(proposal),
+          findMany: jest.fn().mockResolvedValue([]),
           updateMany: jest
             .fn()
             .mockResolvedValueOnce({ count: 1 })
@@ -108,10 +107,12 @@ describe('Phase 2.1 Swap & Give-Away', () => {
               id: 'listing-offered',
               sellerId: 'proposer-1',
               status: 'LIVE',
+              sellingMode: 'SWAP',
             }),
           update: jest.fn().mockResolvedValue({}),
         },
         listingEvent: { create: jest.fn().mockResolvedValue({}) },
+        favourite: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
         order: {
           create: jest.fn().mockImplementation(async ({ data }) => {
             Object.assign(orderState, data, { id: 'order-1' });
@@ -119,6 +120,10 @@ describe('Phase 2.1 Swap & Give-Away', () => {
           }),
         },
         orderEvent: { create: jest.fn().mockResolvedValue({}) },
+        deliveryShipment: {
+          create: jest.fn().mockResolvedValue({ id: 'ship-1' }),
+        },
+        deliveryEvent: { create: jest.fn().mockResolvedValue({}) },
       };
 
       const proposalPrisma = {
@@ -138,17 +143,21 @@ describe('Phase 2.1 Swap & Give-Away', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             amountKobo: 0,
-            totalKobo: 0,
+            deliveryFeeKobo: 150_000,
+            swapFeeKobo: 50_000,
+            totalKobo: 200_000,
+            fulfilmentMethod: 'DELIVERY',
             transactionType: 'SWAP',
-            status: 'CREATED',
+            status: 'PAYMENT_PENDING',
           }),
         }),
       );
+      expect(acceptTx.order.create).toHaveBeenCalledTimes(2);
       expect(paymentsCreate).not.toHaveBeenCalled();
 
       // Dual-leg confirm via OrdersService
       const trust = { recompute: jest.fn().mockResolvedValue({}) };
-      let current = { ...orderState };
+      let current = { ...baseOrder() };
 
       const ordersPrisma: any = {
         order: {
@@ -178,6 +187,7 @@ describe('Phase 2.1 Swap & Give-Away', () => {
             listingEvent: ordersPrisma.listingEvent,
             swapProposal: ordersPrisma.swapProposal,
             giveawayClaim: ordersPrisma.giveawayClaim,
+            favourite: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
           }),
         ),
       };
@@ -214,49 +224,64 @@ describe('Phase 2.1 Swap & Give-Away', () => {
       );
       expect(paymentsCreate).not.toHaveBeenCalled();
     });
-  });
 
-  describe('swap + cash', () => {
-    it('sets cash amount and PAYMENT_PENDING for SWAP_CASH', async () => {
-      const proposal = baseProposal({ cashComponentKobo: 200_000_00 });
+    it('cancel returns only the original listing and removes the proposal', async () => {
+      const proposal = baseProposal({ status: 'ACCEPTED' });
+      const listings = new Map<string, Record<string, unknown>>([
+        [
+          'listing-target',
+          {
+            id: 'listing-target',
+            sellerId: 'seller-1',
+            status: 'RESERVED',
+            sellingMode: 'SWAP',
+            riskFlags: [],
+            quantityAvailable: 0,
+            quantityReserved: 1,
+            quantitySold: 0,
+          },
+        ],
+        [
+          'listing-offered',
+          {
+            id: 'listing-offered',
+            sellerId: 'proposer-1',
+            status: 'RESERVED',
+            sellingMode: 'SWAP',
+            riskFlags: ['swap-response'],
+            quantityAvailable: 0,
+            quantityReserved: 1,
+            quantitySold: 0,
+          },
+        ],
+      ]);
       const tx = {
         swapProposal: {
-          findUnique: jest.fn().mockResolvedValue(proposal),
-          updateMany: jest
-            .fn()
-            .mockResolvedValueOnce({ count: 1 })
-            .mockResolvedValue({ count: 0 }),
-          findUniqueOrThrow: jest.fn().mockResolvedValue({
-            ...proposal,
-            status: 'ACCEPTED',
+          update: jest.fn().mockResolvedValue({ ...proposal, status: 'CANCELLED' }),
+        },
+        order: { update: jest.fn().mockResolvedValue({}) },
+        orderEvent: { create: jest.fn().mockResolvedValue({}) },
+        listing: {
+          findUnique: jest.fn(async ({ where }: { where: { id: string } }) =>
+            listings.get(where.id),
+          ),
+          update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+            const current = listings.get(where.id);
+            if (current) listings.set(where.id, { ...current, ...data });
+            return listings.get(where.id);
           }),
         },
-        listing: {
-          findUnique: jest
-            .fn()
-            .mockResolvedValueOnce({
-              id: 'listing-target',
-              sellerId: 'seller-1',
-              status: 'LIVE',
-              sellingMode: 'SWAP_CASH',
-            })
-            .mockResolvedValueOnce({
-              id: 'listing-offered',
-              sellerId: 'proposer-1',
-              status: 'LIVE',
-            }),
-          update: jest.fn().mockResolvedValue({}),
-        },
-        listingEvent: { create: jest.fn().mockResolvedValue({}) },
-        order: {
-          create: jest.fn().mockImplementation(async ({ data }) => ({
-            id: 'order-cash',
-            ...data,
-          })),
-        },
-        orderEvent: { create: jest.fn().mockResolvedValue({}) },
       };
       const prisma = {
+        swapProposal: {
+          findUnique: jest.fn().mockResolvedValue(proposal),
+        },
+        listing: {
+          findUnique: jest.fn().mockResolvedValue(listings.get('listing-target')),
+        },
+        order: { findMany: jest.fn().mockResolvedValue([]) },
+        message: { create: jest.fn().mockResolvedValue({}) },
+        conversation: { update: jest.fn().mockResolvedValue({}) },
         $transaction: jest.fn(async (fn: any) => fn(tx)),
       };
       const service = new SwapProposalsService(
@@ -264,18 +289,74 @@ describe('Phase 2.1 Swap & Give-Away', () => {
         configStub(),
         notifications as never,
       );
-      const result = await service.accept('prop-1', 'seller-1');
-      expect(tx.order.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            amountKobo: 200_000_00,
-            transactionType: 'SWAP_CASH',
-            status: 'PAYMENT_PENDING',
-            cashRecipientId: 'seller-1',
+
+      await service.cancel('prop-1', 'seller-1');
+
+      expect(listings.get('listing-target')).toMatchObject({
+        status: 'LIVE',
+        quantityAvailable: 1,
+        quantityReserved: 0,
+      });
+      expect(listings.get('listing-offered')).toMatchObject({
+        status: 'REMOVED',
+        quantityAvailable: 0,
+        quantityReserved: 0,
+      });
+    });
+
+    it('reject removes the internal proposal and does not publish it', async () => {
+      const proposal = baseProposal();
+      const offered = {
+        id: 'listing-offered',
+        sellerId: 'proposer-1',
+        status: 'LIVE',
+        riskFlags: ['swap-response'],
+        quantityAvailable: 0,
+        quantityReserved: 0,
+        quantitySold: 0,
+      };
+      const updates: Array<{ id: string; data: Record<string, unknown> }> = [];
+      const prisma = {
+        swapProposal: {
+          findUnique: jest.fn().mockResolvedValue(proposal),
+          update: jest.fn().mockResolvedValue({ ...proposal, status: 'REJECTED' }),
+        },
+        listing: {
+          findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
+            if (where.id === 'listing-target') {
+              return {
+                id: 'listing-target',
+                sellerId: 'seller-1',
+                status: 'LIVE',
+                riskFlags: [],
+              };
+            }
+            return offered;
           }),
-        }),
+          update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+            updates.push({ id: where.id, data });
+            return { ...offered, ...data };
+          }),
+        },
+      };
+      const service = new SwapProposalsService(
+        prisma as never,
+        configStub(),
+        notifications as never,
       );
-      expect(result.order.id).toBe('order-cash');
+
+      await service.reject('prop-1', 'seller-1');
+
+      expect(updates).toEqual([
+        {
+          id: 'listing-offered',
+          data: {
+            status: 'REMOVED',
+            quantityAvailable: 0,
+            quantityReserved: 0,
+          },
+        },
+      ]);
     });
   });
 
@@ -284,7 +365,6 @@ describe('Phase 2.1 Swap & Give-Away', () => {
       const parent = baseProposal();
       const child = baseProposal({
         id: 'prop-2',
-        cashComponentKobo: 50_000_00,
         parentProposalId: 'prop-1',
       });
       const prisma = {
@@ -314,18 +394,15 @@ describe('Phase 2.1 Swap & Give-Away', () => {
         configStub(),
         notifications as never,
       );
-      const result = await service.counter('prop-1', 'seller-1', {
-        cashComponentKobo: 50_000_00,
-      });
+      const result = await service.counter('prop-1', 'seller-1', {});
       expect(result.id).toBe('prop-2');
       expect(result.parentProposalId).toBe('prop-1');
       expect(result.status).toBe('PENDING');
-      expect(result.cashComponentKobo).toBe(50_000_00);
     });
   });
 
   describe('giveaway', () => {
-    it('2 claimants: approve 1 → other REJECTED', async () => {
+    it('seller approval is not how a gift is awarded', async () => {
       const claimA = {
         id: 'claim-a',
         listingId: 'listing-ga',
@@ -374,6 +451,10 @@ describe('Phase 2.1 Swap & Give-Away', () => {
           }),
         },
         orderEvent: { create: jest.fn().mockResolvedValue({}) },
+        deliveryShipment: {
+          create: jest.fn().mockResolvedValue({ id: 'ship-ga' }),
+        },
+        deliveryEvent: { create: jest.fn().mockResolvedValue({}) },
       };
 
       const prisma = {
@@ -391,19 +472,9 @@ describe('Phase 2.1 Swap & Give-Away', () => {
         configStub(),
         notifications as never,
       );
-      const result = await service.approve('claim-a', 'seller-1');
-      expect(result.claim.status).toBe('APPROVED');
-      expect(result.order.id).toBe('order-ga');
-      expect(tx.giveawayClaim.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            status: 'CLAIMED',
-            id: { not: 'claim-a' },
-          }),
-          data: expect.objectContaining({ status: 'REJECTED' }),
-        }),
+      await expect(service.approve('claim-a', 'seller-1')).rejects.toThrow(
+        'first come, first served',
       );
-      expect(notifications.notify).toHaveBeenCalled();
     });
 
     it('claim requires L2+ verification', async () => {
@@ -546,6 +617,7 @@ describe('Phase 2.1 Swap & Give-Away', () => {
             giveawayClaim: {
               updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
+            favourite: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
           }),
         ),
       };

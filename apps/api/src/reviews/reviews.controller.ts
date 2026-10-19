@@ -67,6 +67,11 @@ export class ReviewsController {
     return this.reviews.listPublishedForUser(id);
   }
 
+  @Get('listings/:id/reviews')
+  listForListing(@Param('id') id: string) {
+    return this.reviews.listForListing(id);
+  }
+
   @Get('users/:id/trust-score')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async trustScore(

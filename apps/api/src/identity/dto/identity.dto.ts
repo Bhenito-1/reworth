@@ -1,4 +1,4 @@
-import { IsEnum, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, Matches } from 'class-validator';
 import { IdentityMethod } from '@prisma/client';
 
 export class IdentityVerifyDto {
@@ -13,4 +13,12 @@ export class IdentityVerifyDto {
   @IsOptional()
   @IsString()
   mockReference?: string;
+
+  /**
+   * 11-digit NIN. Hashed immediately and never stored or written to the audit log.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{11}$/)
+  nin?: string;
 }

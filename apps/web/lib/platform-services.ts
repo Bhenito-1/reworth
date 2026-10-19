@@ -1,5 +1,5 @@
 /**
- * Phase 3.1 — Valuations, Instant Buy, consignments, managed pickup.
+ * Valuations, consignments, and managed pickup.
  * Aligns with PlatformServicesController.
  */
 
@@ -7,7 +7,6 @@ import { apiFetch } from "./api";
 import type {
   Consignment,
   ConsignmentEarnings,
-  InstantBuyFulfilment,
   ManagedPickup,
   ManagedPickupSlot,
   ValuationResponse,
@@ -69,62 +68,6 @@ export function toValuationResponse(card: ValuationCardDto): ValuationResponse {
       basis: card.basis,
     },
   };
-}
-
-/* ─── Instant Buy fulfilment ────────────────────────────────────────── */
-
-export async function getInstantBuyFulfilment(
-  token: string,
-  fulfilmentId: string,
-): Promise<InstantBuyFulfilment> {
-  return apiFetch<InstantBuyFulfilment>(
-    `/instant-buy/fulfilments/${fulfilmentId}`,
-    { token },
-  );
-}
-
-export async function scheduleInstantBuyFulfilment(
-  token: string,
-  fulfilmentId: string,
-  body: { slotStartAt: string; slotEndAt: string },
-): Promise<InstantBuyFulfilment> {
-  return apiFetch(
-    `/instant-buy/fulfilments/${fulfilmentId}/schedule`,
-    { method: "POST", token, body },
-  );
-}
-
-export async function confirmInstantBuyDelivery(
-  token: string,
-  fulfilmentId: string,
-): Promise<InstantBuyFulfilment> {
-  return apiFetch(`/instant-buy/fulfilments/${fulfilmentId}/confirm`, {
-    method: "POST",
-    token,
-  });
-}
-
-/** Ops transitions (admin roles). */
-export async function transitionInstantBuyFulfilment(
-  token: string,
-  fulfilmentId: string,
-  status:
-    | "PICKED_UP"
-    | "IN_TRANSIT"
-    | "DELIVERED"
-    | "CONFIRMED",
-): Promise<InstantBuyFulfilment> {
-  const pathMap: Record<string, string> = {
-    PICKED_UP: "picked-up",
-    IN_TRANSIT: "in-transit",
-    DELIVERED: "delivered",
-    CONFIRMED: "confirm",
-  };
-  const seg = pathMap[status];
-  return apiFetch(`/instant-buy/fulfilments/${fulfilmentId}/${seg}`, {
-    method: "POST",
-    token,
-  });
 }
 
 /* ─── Consignment ───────────────────────────────────────────────────── */
@@ -202,7 +145,11 @@ export function consignmentStatusLabel(status: string): string {
     case "CANCELLED":
       return "Cancelled";
     default:
-      return status;
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
   }
 }
 

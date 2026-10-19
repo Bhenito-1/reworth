@@ -1,66 +1,107 @@
-# ReWorth Design System — `v1.0.3-design-elevation`
+# ReWorth Design System — brand palette
 
-> Single source of truth for consumer surfaces (mobile first, web companion).  
-> Admin keeps a utilitarian shell. **Not legal advice.**
+> Single source of truth for consumer + admin visual tokens.  
+> References Moving Sale creative. **Not legal advice.**
 
-## Brand discipline
+## Brand feel
 
-| Role | Light | Dark | Rule |
+Trusted · Warm · Premium · Human · Modern · Optimistic · Clean  
+Not: recycling, charity, generic classifieds, cold corporate banking.
+
+## Colour hierarchy (~)
+
+| Share | Token | Hex | Role |
 | --- | --- | --- | --- |
-| Canvas | `#FAF9F7` | `#0F1214` | Page background |
-| Surface | `#FFFFFF` | `#171B1E` | Cards / sheets |
-| Ink | `#101418` | `#F2F0EC` | Primary text |
-| Muted | `#5C6470` | `#9AA1A8` | Meta / captions |
-| Border | `#E5E1DA` | `#2A3036` | Hairlines only |
-| Emerald | `#0E9F6E` | `#12A170` | **Only** brand/action colour (dark tuned for AA large CTA) |
-| Emerald pressed | `#0B7A55` | `#0E9F6E` | Pressed CTAs |
-| Emerald wash | `#E6F6EF` | `#064E3B` | Selected chips |
-| Gold | `#C9A227` | `#E0B84A` | **Verification / Top Seller only** |
-| Success / warn / error | `#12A150` / `#E8A13C` / `#D64545` | semantic only |
+| ~55% | Soft White | `#FCFAF6` | Canvas / content |
+| ~20% | Warm Beige | `#F2E7D5` | Soft surfaces, chips, empty states |
+| ~15% | Midnight Navy | `#172A3A` | Text, nav, secondary CTAs, trust |
+| ~7% | Burnt Orange | `#D96A32` | Primary CTAs, Sell, active, highlights |
+| ~3% | Slate Grey | `#59636D` | Meta / labels / inactive |
 
-Hardcoded hex outside token files = audit failure.
+### Semantic (state only)
+
+| Role | Hex |
+| --- | --- |
+| Success / Verified | `#2F7D5B` |
+| Warning | `#D99632` |
+| Error | `#C94A3A` |
+| Border | `#E4DDD4` |
+| Disabled | `#B6B4B0` |
+
+Gold `#C9A227` remains reserved for Founding / Top Seller marks only.
+
+**On-accent text** `#FFFFFF` — always white for labels/icons on Burnt Orange or Midnight Navy filled CTAs (`onAccent` / `--rw-on-accent`). Do not use surface white for CTA copy (breaks dark mode).
+
+## Dark mode
+
+| Role | Hex |
+| --- | --- |
+| Canvas | `#172A3A` |
+| Surface | `#203747` |
+| Text | `#FCFAF6` |
+| Muted | `#CFD4D7` |
+| Accent | `#D96A32` |
+
+## Buttons
+
+| Variant | Fill | Text |
+| --- | --- | --- |
+| Primary / Sell | Burnt Orange | White |
+| Secondary | Midnight Navy | White |
+| Tertiary (ghost) | Transparent + navy border | Navy |
+| Soft | Warm Beige | Navy |
 
 ## Type
 
-Family: **Geist / Inter** only. Scale: 28 / 24 / 20 / 17 / 15 / 13. Weights 400–700.  
-Prices always **700 ink**. Metadata always **13 muted**. Line-height 1.2–1.4.
+**Inter** (primary) · **Plus Jakarta Sans** (secondary headings where loaded).  
+Scale: 28 / 24 / 20 / 17 / 15 / 13. Prices **700 navy**. Meta **13 slate**.
 
-## Space
+## Space & motion
 
-8pt grid (4pt half-steps). Gutters 16 (12 compact). Card padding 12–16. Section 24–32.  
-Generous whitespace is correct.
+8pt grid. Hairline borders. Soft shadow only on floating layers.  
+150ms micro · 250ms standard · ease-out.
 
-## Elevation & motion
+## Token sources
 
-Hairline borders default. Soft shadow only for floating layers (nav, sheets).  
-Motion: 150ms micro · 250ms standard · ease-out. Respect Reduce Motion.  
-No bounce, glass, confetti — celebrate only with publish checkmark.
+- Web / admin: `packages/ui-web/src/tokens.css` (`--rw-*`)
+- Mobile: `apps/mobile/theme/tokens.ts`
+- Tailwind: `reworth-navy`, `reworth-orange`, `reworth-beige`, `reworth-slate`, `reworth-white`
+
+## Brand assets
+
+```
+apps/web/public/brand/
+  logos/ icons/ categories/ trust/ badges/
+  empty-states/ onboarding/ social/ illustrations/
+```
+
+Mobile: `apps/mobile/assets/brand/`. See `apps/web/public/brand/README.md`.
 
 ## Components
 
-Documented in `packages/ui-web`: Button, ListingCard, Chip, Input, BottomNav, Modal, Toast, Skeleton, EmptyState.  
-Mobile tokens: `apps/mobile/theme/tokens.ts`.
+`packages/ui-web` + `apps/mobile/components` — ListingCard, BottomNav (orange SELL FAB), Button, Chip, Skeleton, EmptyState, BottomSheet.
 
-## Auth / onboarding pattern
+## Auth / onboarding
 
-1. Welcome slides (skippable)  
-2. **Method:** phone **or** email  
-3. Phone OTP **or** email register/login  
-4. Profile customise: avatar (optional), name, bio, community  
+Email only (ADR-010). No phone or SMS step.
+
+1. Welcome slides (skippable)
+2. Email register/login (+ OAuth where enabled)
+3. Profile customise: avatar (optional), name, bio, community
+
+## Chat
+
+Buyer bubbles: Warm Beige · Seller / mine: soft orange wash · Send: Burnt Orange · Unread: Orange.
 
 ## Do / don’t
 
 | Do | Don’t |
 | --- | --- |
-| Emerald for primary actions | Gold for CTAs or marketing |
+| Burnt Orange for primary actions | Gold for CTAs or marketing |
 | Bottom sheets for filters/offers | Nested page stacks for tiny tasks |
 | Skeleton loaders | Spinners on content screens |
 | 44pt tap targets | Tiny icon-only hits |
 
 ## A11y
 
-WCAG AA on token pairs (script: `scripts/contrast-audit.mjs`). Focus-visible on web. Labels on every control.
-
-## Performance budgets
-
-Lighthouse mobile 3G-sim: Home / PDP / Search performance ≥ 90, LCP &lt; 3s (`apps/web/lighthouserc.js`).
+WCAG AA via `scripts/contrast-audit.mjs`. Orange for CTAs/icons — not small body text on white.

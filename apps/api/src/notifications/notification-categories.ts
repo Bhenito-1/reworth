@@ -17,6 +17,10 @@ export const NotificationCategory = {
   REVIEW_RECEIVED: 'REVIEW_RECEIVED',
   COMMUNITY_NEW_LISTING: 'COMMUNITY_NEW_LISTING',
   MOVING_SALE_UPDATE: 'MOVING_SALE_UPDATE',
+  ORDER_PLACED: 'ORDER_PLACED',
+  ORDER_CONFIRMED: 'ORDER_CONFIRMED',
+  ORDER_REJECTED: 'ORDER_REJECTED',
+  ORDER_CANCELLED: 'ORDER_CANCELLED',
 } as const;
 
 /** Categories enabled by default when the user has no preference row. */
@@ -37,14 +41,31 @@ export const CRITICAL_CATEGORIES: ReadonlySet<string> = new Set([
   NotificationCategory.PAYMENT_RELEASED,
   NotificationCategory.DELIVERY_UPDATE,
   NotificationCategory.DISPUTE_UPDATE,
+  NotificationCategory.ORDER_PLACED,
+  NotificationCategory.ORDER_CONFIRMED,
+  NotificationCategory.ORDER_REJECTED,
+  NotificationCategory.ORDER_CANCELLED,
 ]);
+
+/** Product ads and catalogue promotions. These need marketing consent. */
+const MARKETING_EMAIL_CATEGORIES: ReadonlySet<string> = new Set([
+  NotificationCategory.PRICE_DROP,
+  NotificationCategory.SAVED_SEARCH_MATCH,
+  NotificationCategory.COMMUNITY_NEW_LISTING,
+  NotificationCategory.MOVING_SALE_UPDATE,
+]);
+
+export function isMarketingEmailCategory(category: string): boolean {
+  return MARKETING_EMAIL_CATEGORIES.has(category);
+}
 
 export function isCriticalCategory(category: string): boolean {
   return (
     CRITICAL_CATEGORIES.has(category) ||
     category.startsWith('PAYMENT_') ||
     category === NotificationCategory.DELIVERY_UPDATE ||
-    category === NotificationCategory.DISPUTE_UPDATE
+    category === NotificationCategory.DISPUTE_UPDATE ||
+    category.startsWith('ORDER_')
   );
 }
 

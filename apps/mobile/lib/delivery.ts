@@ -55,7 +55,11 @@ export function shipmentStatusLabel(status: string): string {
     case "FAILED":
       return "Failed";
     default:
-      return status.replace(/_/g, " ");
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
   }
 }
 

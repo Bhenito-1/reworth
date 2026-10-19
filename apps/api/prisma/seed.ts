@@ -5,11 +5,44 @@
  *   ADMIN_SUPER_EMAIL
  *   ADMIN_SUPER_PASSWORD
  */
-import { PrismaClient, AdminRole, ChatScanKind } from '@prisma/client';
+import { PrismaClient, AdminRole, ChatScanKind, ItemCondition, ListingStatus, SellingMode } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { seedRiskAndModeration } from './seed-risk-moderation';
 import { PHASE22_COMMUNITY_SEEDS } from '../src/communities/community-seeds';
+
+/** Load monorepo root `.env` when `apps/api/.env` is absent (local Expo + API). */
+function loadRootEnv() {
+  if (process.env.DATABASE_URL) return;
+  const candidates = [
+    path.resolve(__dirname, '../../../.env'),
+    path.resolve(process.cwd(), '../../.env'),
+    path.resolve(process.cwd(), '.env'),
+  ];
+  for (const file of candidates) {
+    if (!fs.existsSync(file)) continue;
+    for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq < 1) continue;
+      const key = line.slice(0, eq).trim();
+      let val = line.slice(eq + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      if (process.env[key] === undefined) process.env[key] = val;
+    }
+    break;
+  }
+}
+
+loadRootEnv();
 
 const prisma = new PrismaClient();
 
@@ -415,6 +448,447 @@ async function seedCommunities() {
   );
 }
 
+/** Marker so demo catalog upserts stay idempotent across seed runs. */
+const DEMO_BRAND = 'DEMO_SEED';
+
+const DEMO_LISTINGS: {
+  title: string;
+  description: string;
+  categorySlug: string;
+  subcategorySlug?: string;
+  condition: ItemCondition;
+  priceKobo: number;
+  community: string;
+  lat: number;
+  lng: number;
+  imageSeed: string;
+}[] = [
+  {
+    title: 'IKEA Kivik 3-seater sofa',
+    description:
+      'Beige fabric sofa, light wear on arms. Smoke-free Lekki home. Pickup preferred.',
+    categorySlug: 'home-furniture',
+    subcategorySlug: 'sofas',
+    condition: ItemCondition.GOOD,
+    priceKobo: 185_000_00,
+    community: 'Lekki',
+    lat: 6.4482,
+    lng: 3.4721,
+    imageSeed: 'reworth-sofa',
+  },
+  {
+    title: 'Samsung 55" 4K Smart TV',
+    description:
+      'Crystal UHD, wall-mount kit included. Selling ahead of move to Abuja.',
+    categorySlug: 'electronics',
+    subcategorySlug: 'tvs',
+    condition: ItemCondition.LIKE_NEW,
+    priceKobo: 320_000_00,
+    community: 'Ikoyi',
+    lat: 6.4508,
+    lng: 3.4352,
+    imageSeed: 'reworth-tv',
+  },
+  {
+    title: 'iPhone 13 128GB — Midnight',
+    description:
+      'Battery health 89%. Face ID works. Box + cable. No trades.',
+    categorySlug: 'phones-tablets',
+    subcategorySlug: 'smartphones',
+    condition: ItemCondition.GOOD,
+    priceKobo: 295_000_00,
+    community: 'Victoria Island',
+    lat: 6.4288,
+    lng: 3.4215,
+    imageSeed: 'reworth-phone',
+  },
+  {
+    title: 'MacBook Air M1 8/256',
+    description:
+      'Personal use only. Charger included. Minor scuff near ports.',
+    categorySlug: 'computers',
+    subcategorySlug: 'laptops',
+    condition: ItemCondition.GOOD,
+    priceKobo: 410_000_00,
+    community: 'Oniru',
+    lat: 6.4308,
+    lng: 3.4502,
+    imageSeed: 'reworth-laptop',
+  },
+  {
+    title: 'Hisense 200L fridge',
+    description: 'Working perfectly. Moving sale — must go this weekend.',
+    categorySlug: 'home-appliances',
+    subcategorySlug: 'kitchen',
+    condition: ItemCondition.GOOD,
+    priceKobo: 95_000_00,
+    community: 'VGC',
+    lat: 6.425,
+    lng: 3.535,
+    imageSeed: 'reworth-fridge',
+  },
+  {
+    title: 'Dining table + 4 chairs',
+    description: 'Solid wood set. Chairs recently reupholstered.',
+    categorySlug: 'home-furniture',
+    subcategorySlug: 'tables-desks',
+    condition: ItemCondition.GOOD,
+    priceKobo: 140_000_00,
+    community: 'Chevron',
+    lat: 6.448,
+    lng: 3.49,
+    imageSeed: 'reworth-dining',
+  },
+  {
+    title: 'PS5 Disc + DualSense',
+    description: 'Console + 1 pad + FIFA. No box. Meet at Circle Mall.',
+    categorySlug: 'electronics',
+    subcategorySlug: 'gaming',
+    condition: ItemCondition.LIKE_NEW,
+    priceKobo: 380_000_00,
+    community: 'Ajah',
+    lat: 6.466,
+    lng: 3.565,
+    imageSeed: 'reworth-ps5',
+  },
+  {
+    title: 'Baby stroller — Chicco',
+    description: 'Used for 8 months. Clean, folds flat. Give-away price.',
+    categorySlug: 'children-baby',
+    subcategorySlug: 'strollers',
+    condition: ItemCondition.GOOD,
+    priceKobo: 45_000_00,
+    community: 'Lekki',
+    lat: 6.449,
+    lng: 3.475,
+    imageSeed: 'reworth-stroller',
+  },
+  {
+    title: 'Men’s Nike Air Force 1 — 43',
+    description: 'Worn twice. White/white. Receipt available.',
+    categorySlug: 'fashion',
+    subcategorySlug: 'shoes',
+    condition: ItemCondition.LIKE_NEW,
+    priceKobo: 55_000_00,
+    community: 'Ikoyi',
+    lat: 6.452,
+    lng: 3.438,
+    imageSeed: 'reworth-sneakers',
+  },
+  {
+    title: 'Standing fan — Ox',
+    description: 'Quiet motor. Remote included. Moving out of estate.',
+    categorySlug: 'home-appliances',
+    subcategorySlug: 'cooling',
+    condition: ItemCondition.GOOD,
+    priceKobo: 22_000_00,
+    community: 'Victoria Island',
+    lat: 6.43,
+    lng: 3.424,
+    imageSeed: 'reworth-fan',
+  },
+  {
+    title: 'Office swivel chair',
+    description: 'Ergonomic mesh back. Slight armrest wear.',
+    categorySlug: 'home-furniture',
+    subcategorySlug: 'storage',
+    condition: ItemCondition.FAIR,
+    priceKobo: 35_000_00,
+    community: 'Oniru',
+    lat: 6.432,
+    lng: 3.451,
+    imageSeed: 'reworth-chair',
+  },
+  {
+    title: 'Canon EOS 2000D + kit lens',
+    description: 'Hobby camera. ~4k shutter. Bag included.',
+    categorySlug: 'electronics',
+    subcategorySlug: 'cameras',
+    condition: ItemCondition.GOOD,
+    priceKobo: 175_000_00,
+    community: 'VGC',
+    lat: 6.426,
+    lng: 3.532,
+    imageSeed: 'reworth-camera',
+  },
+  {
+    title: 'Queen mattress — 6 inch',
+    description: 'Orthopaedic foam. Clean cover. Buyer collects.',
+    categorySlug: 'home-furniture',
+    subcategorySlug: 'beds',
+    condition: ItemCondition.GOOD,
+    priceKobo: 70_000_00,
+    community: 'Chevron',
+    lat: 6.45,
+    lng: 3.492,
+    imageSeed: 'reworth-mattress',
+  },
+  {
+    title: 'iPad 9th gen 64GB Wi‑Fi',
+    description: 'Pencil marks on case only. Screen protector on.',
+    categorySlug: 'phones-tablets',
+    subcategorySlug: 'tablets',
+    condition: ItemCondition.LIKE_NEW,
+    priceKobo: 210_000_00,
+    community: 'Ajah',
+    lat: 6.468,
+    lng: 3.57,
+    imageSeed: 'reworth-ipad',
+  },
+  {
+    title: 'Yamaha acoustic guitar',
+    description: 'Beginner-friendly. New strings. Soft case.',
+    categorySlug: 'electronics',
+    subcategorySlug: 'audio',
+    condition: ItemCondition.GOOD,
+    priceKobo: 48_000_00,
+    community: 'Lekki',
+    lat: 6.447,
+    lng: 3.47,
+    imageSeed: 'reworth-guitar',
+  },
+  {
+    title: 'LG 7kg washing machine',
+    description: 'Front loader. Needs drain hose (included spare).',
+    categorySlug: 'home-appliances',
+    subcategorySlug: 'laundry',
+    condition: ItemCondition.FAIR,
+    priceKobo: 110_000_00,
+    community: 'Ikoyi',
+    lat: 6.449,
+    lng: 3.433,
+    imageSeed: 'reworth-washer',
+  },
+  {
+    title: 'Women’s Ankara 2-piece — M',
+    description: 'Worn once to a wedding. Dry-cleaned.',
+    categorySlug: 'fashion',
+    subcategorySlug: 'womens',
+    condition: ItemCondition.LIKE_NEW,
+    priceKobo: 18_000_00,
+    community: 'Victoria Island',
+    lat: 6.427,
+    lng: 3.42,
+    imageSeed: 'reworth-ankara',
+  },
+  {
+    title: 'Treadmill — folding',
+    description: 'Home gym clear-out. Works; belt needs wax.',
+    categorySlug: 'sports-fitness',
+    subcategorySlug: 'gym',
+    condition: ItemCondition.FAIR,
+    priceKobo: 160_000_00,
+    community: 'Oniru',
+    lat: 6.429,
+    lng: 3.448,
+    imageSeed: 'reworth-treadmill',
+  },
+  {
+    title: 'Study desk + lamp',
+    description: 'White laminate desk. LED lamp included.',
+    categorySlug: 'home-furniture',
+    subcategorySlug: 'tables-desks',
+    condition: ItemCondition.GOOD,
+    priceKobo: 42_000_00,
+    community: 'VGC',
+    lat: 6.424,
+    lng: 3.53,
+    imageSeed: 'reworth-desk',
+  },
+  {
+    title: 'AirPods Pro (2nd gen)',
+    description: 'ANC works. Tips + MagSafe case. Box gone.',
+    categorySlug: 'phones-tablets',
+    subcategorySlug: 'phone-accessories',
+    condition: ItemCondition.GOOD,
+    priceKobo: 125_000_00,
+    community: 'Chevron',
+    lat: 6.451,
+    lng: 3.495,
+    imageSeed: 'reworth-airpods',
+  },
+  {
+    title: 'Kids bicycle 16"',
+    description: 'Training wheels removable. Helmet free.',
+    categorySlug: 'children-baby',
+    subcategorySlug: 'toys',
+    condition: ItemCondition.GOOD,
+    priceKobo: 28_000_00,
+    community: 'Ajah',
+    lat: 6.465,
+    lng: 3.568,
+    imageSeed: 'reworth-bike',
+  },
+];
+
+async function seedDemoSeller() {
+  const email = 'demo.seller@reworth.ng';
+  const passwordHash = await argon2.hash('DemoSeller!2026', {
+    type: argon2.argon2id,
+    memoryCost: 19456,
+    timeCost: 2,
+    parallelism: 1,
+  });
+
+  const user = await prisma.user.upsert({
+    where: { email },
+    create: {
+      email,
+      phone: '+2348010999001',
+      emailVerifiedAt: new Date(),
+      phoneVerifiedAt: new Date(),
+      passwordHash,
+      status: 'ACTIVE',
+      profile: {
+        create: {
+          displayName: 'Ada Demo',
+          preferredCommunity: 'Lekki',
+          language: 'en-NG',
+          currency: 'NGN',
+          bio: 'Lagos demo seller — seed inventory for Home rails.',
+        },
+      },
+    },
+    update: {
+      passwordHash,
+      status: 'ACTIVE',
+      phoneVerifiedAt: new Date(),
+      emailVerifiedAt: new Date(),
+    },
+  });
+
+  for (const level of ['L2_EMAIL', 'L3_IDENTITY'] as const) {
+    const existing = await prisma.verification.findFirst({
+      where: { userId: user.id, level },
+    });
+    if (existing) {
+      await prisma.verification.update({
+        where: { id: existing.id },
+        data: { status: 'VERIFIED', verifiedAt: new Date() },
+      });
+    } else {
+      await prisma.verification.create({
+        data: {
+          userId: user.id,
+          level,
+          status: 'VERIFIED',
+          verifiedAt: new Date(),
+        },
+      });
+    }
+  }
+
+  await prisma.trustScore.upsert({
+    where: { userId: user.id },
+    create: {
+      id: randomUUID(),
+      userId: user.id,
+      score: 92,
+      tier: 'TRUSTED',
+      completionRate: 0.94,
+      avgRating: 4.8,
+      medianResponseMinutes: 15,
+      cancellationRate: 0.02,
+      disputeRate: 0.01,
+      accountAgeDays: 200,
+      verificationPoints: 40,
+    },
+    update: {
+      score: 92,
+      tier: 'TRUSTED',
+      computedAt: new Date(),
+    },
+  });
+
+  return user.id;
+}
+
+async function seedDemoCatalog() {
+  const sellerId = await seedDemoSeller();
+  const existing = await prisma.listing.count({
+    where: { brand: DEMO_BRAND, status: ListingStatus.LIVE },
+  });
+  if (existing >= DEMO_LISTINGS.length) {
+    // eslint-disable-next-line no-console
+    console.info(
+      `[seed] Demo catalog already present (${existing} LIVE) — skipping`,
+    );
+    return;
+  }
+
+  // Remove partial demo rows so re-seed is clean
+  await prisma.listing.deleteMany({ where: { brand: DEMO_BRAND } });
+
+  const parents = await prisma.category.findMany({
+    where: { parentId: null },
+    include: { children: true },
+  });
+  const bySlug = new Map(parents.map((p) => [p.slug, p]));
+
+  const now = Date.now();
+  for (let i = 0; i < DEMO_LISTINGS.length; i++) {
+    const d = DEMO_LISTINGS[i];
+    const cat = bySlug.get(d.categorySlug);
+    if (!cat) continue;
+    const sub =
+      d.subcategorySlug != null
+        ? cat.children.find((c) => c.slug === d.subcategorySlug) ?? null
+        : null;
+    const listingId = randomUUID();
+    const publishedAt = new Date(now - i * 3_600_000);
+    const imgUrl = `https://picsum.photos/seed/${d.imageSeed}/640/640`;
+
+    await prisma.listing.create({
+      data: {
+        id: listingId,
+        sellerId,
+        title: d.title,
+        description: d.description,
+        categoryId: cat.id,
+        subcategoryId: sub?.id ?? null,
+        brand: DEMO_BRAND,
+        condition: d.condition,
+        priceKobo: d.priceKobo,
+        originalPriceKobo: Math.round(d.priceKobo * 1.12),
+        negotiable: true,
+        sellingMode: SellingMode.SELL,
+        status: ListingStatus.LIVE,
+        community: d.community,
+        city: 'Lagos',
+        geoLat: d.lat,
+        geoLng: d.lng,
+        fulfilmentPickup: true,
+        fulfilmentMeet: true,
+        fulfilmentDelivery: i % 3 === 0,
+        publishedAt,
+        expiresAt: new Date(publishedAt.getTime() + 21 * 86_400_000),
+        views: 12 + i * 7,
+        images: {
+          create: {
+            sortOrder: 0,
+            originalKey: `demo/${d.imageSeed}.jpg`,
+            mime: 'image/jpeg',
+            width: 640,
+            height: 640,
+            status: 'READY',
+            exifStripped: true,
+            variants: {
+              original: imgUrl,
+              w640: { webp: imgUrl },
+              w1080: { webp: imgUrl },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  // eslint-disable-next-line no-console
+  console.info(
+    `[seed] Demo catalog ready: ${DEMO_LISTINGS.length} LIVE Lagos listings (seller Ada Demo)`,
+  );
+}
+
 async function main() {
   await seedAdmin();
   await seedCategories();
@@ -422,6 +896,7 @@ async function main() {
   await seedMeetPoints();
   await seedCommunities();
   await seedRiskAndModeration(prisma);
+  await seedDemoCatalog();
 }
 
 main()

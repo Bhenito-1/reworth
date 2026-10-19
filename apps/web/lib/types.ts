@@ -40,18 +40,6 @@ export type DeviceRow = {
   createdAt: string;
 };
 
-export type OtpRequestResponse = {
-  ok: boolean;
-  expiresInSeconds: number;
-  debugCode?: string;
-};
-
-export type AuthTokenResponse = {
-  accessToken: string;
-  refreshToken: string;
-  userId: string;
-};
-
 /** Matches API PublicListingDto (dates as ISO strings over JSON). */
 export type PublicListingImage = {
   id: string;
@@ -76,7 +64,7 @@ export type PublicListingSeller = {
   responseMinutes?: number | null;
 };
 
-export type SellingModeValue = "SELL" | "SWAP" | "SWAP_CASH" | "GIVE_AWAY";
+export type SellingModeValue = "SELL" | "SWAP" | "GIVE_AWAY";
 
 export type ItemConditionValue =
   | "NEW"
@@ -125,6 +113,9 @@ export type PublicListing = {
   model: string | null;
   condition: string;
   priceKobo: number;
+  /** Units still available to order. Price is per unit. */
+  quantityAvailable?: number;
+  quantityTotal?: number;
   negotiable: boolean;
   sellingMode: SellingModeValue | string;
   status: string;
@@ -156,12 +147,17 @@ export type PublicListing = {
   authenticationStatus?: AuthenticationStatusValue | null;
   certificateId?: string | null;
   authenticatedAt?: string | null;
-  /** Phase 3.1 — Instant Buy (platform-fulfilled BIN). */
-  instantBuyEligible?: boolean;
   /** Phase 3.2 — schedule circular hand-off after N unsold days. */
   donateIfUnsoldDays?: number | null;
+  /** Phase 3.3 — monetization badges */
+  boosted?: boolean;
+  featured?: boolean;
+  boostedUntil?: string | null;
+  featuredUntil?: string | null;
   /** Owner publish path — moderation rejection reasons. */
   moderationReasons?: string[];
+  /** Owner view of an admin rejection note. */
+  rejectionReason?: string | null;
 };
 
 export type CategoryNode = {
@@ -277,13 +273,16 @@ export type CreateListingBody = {
   title?: string;
   description?: string;
   categoryId?: string;
+  categoryName?: string | null;
   subcategoryId?: string;
-  brand?: string;
+  brand?: string | null;
   model?: string;
   condition?: ItemConditionValue | string;
   ageText?: string;
   originalPriceKobo?: number;
   priceKobo?: number;
+  /** Units for sale. Price is per unit. */
+  quantity?: number;
   negotiable?: boolean;
   sellingMode?: SellingModeValue | string;
   community?: string;
@@ -319,6 +318,7 @@ export type SearchFilters = {
   priceMaxKobo?: number;
   condition?: string;
   community?: string;
+  city?: string;
   radiusKm?: RadiusKm;
   lat?: number;
   lng?: number;
@@ -594,31 +594,6 @@ export type ValuationResponse = {
   listingId?: string | null;
   result: ValuationCard;
   createdAt?: string;
-};
-
-export type InstantBuyFulfilmentStatusValue =
-  | "PENDING_PICKUP"
-  | "PICKED_UP"
-  | "IN_TRANSIT"
-  | "DELIVERED"
-  | "CONFIRMED"
-  | "SLA_BREACHED"
-  | "REFUNDED"
-  | "CANCELLED"
-  | string;
-
-export type InstantBuyFulfilment = {
-  id: string;
-  orderId: string;
-  listingId: string;
-  status: InstantBuyFulfilmentStatusValue;
-  slaDeadlineAt: string;
-  pickedUpAt?: string | null;
-  deliveredAt?: string | null;
-  confirmedAt?: string | null;
-  refundedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
 };
 
 export type ConsignmentStatusValue =

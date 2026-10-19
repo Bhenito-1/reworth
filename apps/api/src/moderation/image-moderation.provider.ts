@@ -3,6 +3,10 @@ export type ImageModerationInput = {
   imageKeys: string[];
   /** Optional meta flags from variants / client */
   metaFlags?: string[];
+  title?: string;
+  description?: string;
+  brand?: string | null;
+  categoryName?: string | null;
 };
 
 export type ImageModerationResult = {

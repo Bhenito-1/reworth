@@ -1,13 +1,9 @@
 import {
   BadRequestException,
   ConflictException,
-  HttpException,
-  HttpStatus,
   Inject,
   Injectable,
-  Optional,
   UnauthorizedException,
-  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -18,28 +14,28 @@ import {
   VerificationLevel,
   VerificationStatus,
 } from '@prisma/client';
-import { SMS_PROVIDER, type SmsProvider } from '../providers/sms.provider';
+import {
+  EMAIL_PROVIDER,
+  type EmailProvider,
+} from '../providers/email.provider';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { ReferralsService } from '../referrals/referrals.service';
 import {
-  generateOtpCode,
   hashPassword,
   hashWithPepper,
   newFamilyId,
   newRefreshTokenPlain,
-  normalizePhone,
   parseTtlToMs,
   verifyPassword,
 } from './crypto.util';
+import { renderTransactionalEmail, resolvePublicAppUrl } from '../providers/email-templates';
 import type {
   DeviceDto,
   LoginDto,
   OAuthCallbackDto,
-  OtpRequestDto,
-  OtpVerifyDto,
   RegisterDto,
 } from './dto/auth.dto';
+import { suspendedAccountMessage } from './suspended-account';
 
 type TokenPair = {
   accessToken: string;
@@ -54,15 +50,8 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
-    @Inject(SMS_PROVIDER) private readonly sms: SmsProvider,
-    @Optional()
-    @Inject(forwardRef(() => ReferralsService))
-    private readonly referrals?: ReferralsService,
+    @Inject(EMAIL_PROVIDER) private readonly email: EmailProvider,
   ) {}
-
-  private get otpPepper(): string {
-    return this.config.get<string>('OTP_PEPPER') ?? 'dev-otp-pepper';
-  }
 
   private get refreshPepper(): string {
     return (
@@ -71,169 +60,11 @@ export class AuthService {
   }
 
   private get accessTtl(): string {
-    return this.config.get<string>('JWT_ACCESS_TTL') ?? '15m';
+    return this.config.get<string>('JWT_ACCESS_TTL') ?? '24h';
   }
 
   private get refreshTtl(): string {
     return this.config.get<string>('JWT_REFRESH_TTL') ?? '30d';
-  }
-
-  async requestOtp(dto: OtpRequestDto, ip?: string) {
-    const phone = normalizePhone(dto.phone);
-    const now = new Date();
-    const fifteenMinAgo = new Date(now.getTime() - 15 * 60_000);
-    const dayAgo = new Date(now.getTime() - 24 * 60 * 60_000);
-
-    const recent15 = await this.prisma.otpChallenge.count({
-      where: { phone, createdAt: { gte: fifteenMinAgo } },
-    });
-    if (recent15 >= 3) {
-      throw new HttpException(
-        'Too many OTP requests. Try again in 15 minutes.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    const recentDay = await this.prisma.otpChallenge.count({
-      where: { phone, createdAt: { gte: dayAgo } },
-    });
-    if (recentDay >= 5) {
-      throw new HttpException(
-        'Daily OTP limit reached. Try again tomorrow.',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    const code = generateOtpCode(6);
-    const codeHash = hashWithPepper(code, this.otpPepper);
-    const expiresAt = new Date(now.getTime() + 5 * 60_000);
-
-    await this.prisma.otpChallenge.create({
-      data: { phone, codeHash, expiresAt },
-    });
-
-    await this.sms.send({
-      to: phone,
-      body: `Your ReWorth code is ${code}. Valid for 5 minutes.`,
-      idempotencyKey: `otp:${phone}:${expiresAt.getTime()}`,
-    });
-
-    await this.audit.log({
-      action: 'OTP_REQUESTED',
-      entityType: 'OtpChallenge',
-      entityId: phone,
-      ip: ip ?? null,
-    });
-
-    return {
-      ok: true,
-      expiresInSeconds: 300,
-      // Dev hint only when SMS is mock — never in production with real SMS
-      ...(this.sms.name === 'console-sms' && process.env.NODE_ENV !== 'production'
-        ? { debugCode: code }
-        : {}),
-    };
-  }
-
-  async verifyOtp(dto: OtpVerifyDto, ip?: string): Promise<TokenPair & { userId: string }> {
-    const phone = normalizePhone(dto.phone);
-    const challenge = await this.prisma.otpChallenge.findFirst({
-      where: { phone, consumedAt: null },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (!challenge) {
-      throw new UnauthorizedException('No active OTP challenge');
-    }
-    if (challenge.expiresAt.getTime() < Date.now()) {
-      throw new UnauthorizedException('OTP expired');
-    }
-    if (challenge.attempts >= 5) {
-      throw new UnauthorizedException('OTP max attempts exceeded');
-    }
-
-    const expected = hashWithPepper(dto.code, this.otpPepper);
-    if (expected !== challenge.codeHash) {
-      await this.prisma.otpChallenge.update({
-        where: { id: challenge.id },
-        data: { attempts: { increment: 1 } },
-      });
-      throw new UnauthorizedException('Invalid OTP');
-    }
-
-    await this.prisma.otpChallenge.update({
-      where: { id: challenge.id },
-      data: { consumedAt: new Date() },
-    });
-
-    let user = await this.prisma.user.findUnique({ where: { phone } });
-    if (!user) {
-      user = await this.prisma.user.create({
-        data: {
-          phone,
-          phoneVerifiedAt: new Date(),
-          status: UserStatus.ACTIVE,
-          profile: {
-            create: {
-              displayName: `User ${phone.slice(-4)}`,
-              preferredCommunity: '',
-            },
-          },
-          verifications: {
-            create: {
-              level: VerificationLevel.L1_PHONE,
-              status: VerificationStatus.VERIFIED,
-              verifiedAt: new Date(),
-            },
-          },
-        },
-      });
-    } else {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { phoneVerifiedAt: new Date() },
-      });
-      const existingL1 = await this.prisma.verification.findFirst({
-        where: {
-          userId: user.id,
-          level: VerificationLevel.L1_PHONE,
-          status: VerificationStatus.VERIFIED,
-        },
-      });
-      if (!existingL1) {
-        await this.prisma.verification.create({
-          data: {
-            userId: user.id,
-            level: VerificationLevel.L1_PHONE,
-            status: VerificationStatus.VERIFIED,
-            verifiedAt: new Date(),
-          },
-        });
-      }
-    }
-
-    const tokens = await this.issueTokenPair(user.id, dto.device);
-    await this.audit.log({
-      actorUserId: user.id,
-      action: 'OTP_VERIFIED',
-      entityType: 'User',
-      entityId: user.id,
-      ip: ip ?? null,
-    });
-
-    if (this.referrals) {
-      await this.referrals.ensureCode(user.id).catch(() => undefined);
-      if (dto.referralCode) {
-        await this.referrals
-          .attribute(user.id, {
-            code: dto.referralCode,
-            deviceFingerprintHash: dto.deviceFingerprintHash,
-          })
-          .catch(() => undefined);
-      }
-    }
-
-    return { ...tokens, userId: user.id };
   }
 
   async register(
@@ -244,10 +75,43 @@ export class AuthService {
     if (dto.password.length < 8) {
       throw new BadRequestException('Password must be at least 8 characters');
     }
+    const displayName =
+      dto.displayName?.trim() || email.split('@')[0];
     const user = await this.createUserWithPassword({
       email,
       password: dto.password,
-      displayName: dto.displayName?.trim() || email.split('@')[0],
+      displayName,
+    });
+    const appUrl = resolvePublicAppUrl(
+      this.config.get<string>('EMAIL_APP_URL'),
+      this.config.get<string>('APP_URL'),
+      this.config.get<string>('WEB_ORIGIN'),
+    );
+    const welcome = renderTransactionalEmail({
+      preview: 'Your account was created successfully.',
+      title: 'Welcome to ReWorth',
+      greeting: `Hi ${displayName},`,
+      paragraphs: [
+        'Your ReWorth account is ready. You can sign in anytime to browse listings near you, message buyers and sellers, and list items when you are ready.',
+      ],
+      cta: appUrl
+        ? {
+            label: 'Open ReWorth',
+            url: appUrl,
+          }
+        : undefined,
+      footerNote: 'Thanks,\nThe ReWorth Team',
+      appUrl,
+    });
+    await this.email.send({
+      to: email,
+      subject: 'Welcome to ReWorth',
+      text: welcome.text,
+      html: welcome.html,
+      meta: {
+        emailCategory: 'welcome',
+        entityRefId: `welcome-${user.id}`,
+      },
     });
     const tokens = await this.issueTokenPair(user.id, dto.device);
     await this.audit.log({
@@ -269,6 +133,11 @@ export class AuthService {
     });
     if (!user?.passwordHash) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+    if (user.status === UserStatus.SUSPENDED) {
+      throw new UnauthorizedException(
+        suspendedAccountMessage(),
+      );
     }
     if (user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException('Account unavailable');

@@ -120,6 +120,7 @@ describe('NotificationsService', () => {
     quietHoursEnd?: number | null;
     email?: string | null;
     tokens?: string[];
+    consents?: { channel: string; granted: boolean }[];
   }) {
     const created: any[] = [];
     const prisma: any = {
@@ -144,6 +145,14 @@ describe('NotificationsService', () => {
           email: opts.email ?? 'buyer@reworth.local',
         })),
       },
+      consentRecord: {
+        findMany: jest.fn(async () =>
+          opts.consents ?? [
+            { channel: 'EMAIL', granted: true },
+            { channel: 'MARKETING', granted: false },
+          ],
+        ),
+      },
       devicePushToken: {
         findMany: jest.fn(async () =>
           (opts.tokens ?? ['tok-1']).map((token) => ({ token })),
@@ -159,7 +168,13 @@ describe('NotificationsService', () => {
     };
     const push = new MockPushProvider();
     const email = new MockEmailProvider();
-    const svc = new NotificationsService(prisma, push, email);
+    const config = {
+      get: (key: string) =>
+        key === 'APP_URL' || key === 'WEB_ORIGIN'
+          ? 'http://localhost:3000'
+          : undefined,
+    } as unknown as import('@nestjs/config').ConfigService;
+    const svc = new NotificationsService(prisma, config, push, email);
     return { svc, push, email, created, prisma };
   }
 
@@ -178,6 +193,58 @@ describe('NotificationsService', () => {
     expect(created).toHaveLength(3);
     expect(push.sent).toHaveLength(1);
     expect(email.sent).toHaveLength(1);
+  });
+
+  it('email consent off skips every email, including orders', async () => {
+    const { svc, email } = buildService({
+      consents: [
+        { channel: 'EMAIL', granted: false },
+        { channel: 'MARKETING', granted: true },
+      ],
+    });
+    const result = await svc.notify({
+      userId: 'user-1',
+      category: NotificationCategory.ORDER_PLACED,
+      title: 'Order placed',
+      body: 'We received your order',
+    });
+    expect(email.sent).toHaveLength(0);
+    expect(
+      result.skipped.some(
+        (row) =>
+          row.channel === NotificationChannel.EMAIL &&
+          row.reason === 'email_consent',
+      ),
+    ).toBe(true);
+    expect(result.created.some((row) => row.channel === 'IN_APP')).toBe(true);
+  });
+
+  it('marketing consent off skips product emails and still sends order email', async () => {
+    const { svc, email } = buildService({
+      consents: [
+        { channel: 'EMAIL', granted: true },
+        { channel: 'MARKETING', granted: false },
+      ],
+    });
+    const promo = await svc.notify({
+      userId: 'user-1',
+      category: NotificationCategory.PRICE_DROP,
+      title: 'Price drop',
+      body: 'A saved item is cheaper',
+    });
+    expect(email.sent).toHaveLength(0);
+    expect(
+      promo.skipped.some((row) => row.reason === 'marketing_consent'),
+    ).toBe(true);
+
+    const order = await svc.notify({
+      userId: 'user-1',
+      category: NotificationCategory.PAYMENT_RECEIVED,
+      title: 'Payment received',
+      body: 'Your payment is recorded',
+    });
+    expect(email.sent).toHaveLength(1);
+    expect(order.created.some((row) => row.channel === 'EMAIL')).toBe(true);
   });
 
   it('disable PRICE_DROP push → no push; PAYMENT_RECEIVED still gets IN_APP', async () => {

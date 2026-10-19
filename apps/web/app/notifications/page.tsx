@@ -3,24 +3,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button, Chip, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
+import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
+import { listConversations } from "../../lib/chat";
 import {
-  NOTIFICATION_CATEGORIES,
   categoryLabel,
   deepLinkToPath,
+  clearNotifications,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
   type AppNotification,
-  type NotificationCategory,
 } from "../../lib/notifications";
 
 export default function NotificationsPage() {
   const router = useRouter();
   const [items, setItems] = useState<AppNotification[]>([]);
-  const [category, setCategory] = useState<string | "all">("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -32,26 +31,24 @@ export default function NotificationsPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const rows = await listNotifications(token, {
-        category: category === "all" ? undefined : category,
-      });
+      const rows = await listNotifications(token);
       setItems(rows);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not load");
     } finally {
       setLoading(false);
     }
-  }, [category, router]);
+  }, [router]);
 
   useEffect(() => {
     void load();
@@ -76,6 +73,24 @@ export default function NotificationsPage() {
         /* continue */
       }
     }
+    const swapListing = n.deepLink?.match(/listings\/([\w-]+)\/swap\b/i);
+    if (swapListing && token) {
+      try {
+        const conversations = await listConversations(token);
+        const match = conversations
+          .filter((conversation) => conversation.listingId === swapListing[1])
+          .sort(
+            (a, b) =>
+              Date.parse(b.lastMessageAt ?? "") - Date.parse(a.lastMessageAt ?? ""),
+          )[0];
+        if (match) {
+          router.push(`/chats/${match.id}`);
+          return;
+        }
+      } catch {
+        /* fall through to the listing */
+      }
+    }
     const path = deepLinkToPath(n.deepLink);
     if (path) router.push(path);
   }
@@ -84,13 +99,46 @@ export default function NotificationsPage() {
     const token = getAccessToken();
     if (!token) return;
     setBusy(true);
+    const stamp = new Date().toISOString();
+    const previous = items;
+    setItems((rows) =>
+      rows.map((row) => ({ ...row, readAt: row.readAt ?? stamp })),
+    );
     try {
-      await markAllNotificationsRead(token);
+      const result = await markAllNotificationsRead(token);
+      if (result.updated === 0 && previous.some((row) => !row.readAt)) {
+        setItems(previous);
+        setToast({
+          message: "Could not mark notifications as read",
+          tone: "error",
+        });
+        return;
+      }
       setToast({ message: "All marked read", tone: "success" });
-      await load();
     } catch (err) {
+      setItems(previous);
       setToast({
         message: err instanceof ApiError ? err.message : "Failed",
+        tone: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onClear() {
+    const token = getAccessToken();
+    if (!token || items.length === 0) return;
+    setBusy(true);
+    const previous = items;
+    setItems([]);
+    try {
+      await clearNotifications(token);
+      setToast({ message: "Notifications cleared", tone: "success" });
+    } catch (err) {
+      setItems(previous);
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not clear notifications",
         tone: "error",
       });
     } finally {
@@ -110,16 +158,6 @@ export default function NotificationsPage() {
       />
 
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-8">
-        <header className="mb-6 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Home
-          </Link>
-          <span className="text-xl font-semibold tracking-tight">ReWorth</span>
-        </header>
-
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">
@@ -145,29 +183,15 @@ export default function NotificationsPage() {
             >
               Mark all read
             </Button>
-          </div>
-        </div>
-
-        <div
-          className="mt-6 flex gap-2 overflow-x-auto pb-1"
-          role="group"
-          aria-label="Filter by category"
-        >
-          <Chip
-            selected={category === "all"}
-            onClick={() => setCategory("all")}
-          >
-            All
-          </Chip>
-          {NOTIFICATION_CATEGORIES.map((c) => (
-            <Chip
-              key={c}
-              selected={category === c}
-              onClick={() => setCategory(c as NotificationCategory)}
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy || items.length === 0}
+              onClick={() => void onClear()}
             >
-              {categoryLabel(c)}
-            </Chip>
-          ))}
+              Clear notifications
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -192,11 +216,7 @@ export default function NotificationsPage() {
           <div className="mt-12">
             <EmptyState
               title="No notifications"
-              description={
-                category === "all"
-                  ? "Activity from orders, chat, and delivery will appear here."
-                  : `Nothing in ${categoryLabel(category)} yet.`
-              }
+              description="Activity from orders, chat, and delivery will appear here."
             />
           </div>
         ) : (

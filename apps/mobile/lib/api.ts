@@ -1,7 +1,16 @@
 /**
  * Expo API helper. Tokens via AsyncStorage (Phase 1).
  * Prefer EXPO_PUBLIC_API_URL when injected by the bundler.
+ * On 401, refreshes once then retries the request.
  */
+
+import {
+  clearTokens,
+  getAccessToken,
+  getRefreshToken,
+  refreshSession,
+  setTokens,
+} from "./auth";
 
 const fromEnv = (
   globalThis as { process?: { env?: Record<string, string | undefined> } }
@@ -29,23 +38,82 @@ function messageFromBody(body: unknown, fallback: string): string {
   return fallback;
 }
 
+let refreshInFlight: Promise<string | null> | null = null;
+
+/** Exchange refresh token for a new access token (single-flight). */
+export async function refreshAccessToken(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const refreshToken = await getRefreshToken();
+    if (!refreshToken) return null;
+    try {
+      const res = await fetch(`${API_URL}/auth/refresh`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!res.ok) {
+        // Invalid/expired refresh — drop session. Network blips keep tokens.
+        if (res.status === 401 || res.status === 403) {
+          await clearTokens();
+        }
+        return null;
+      }
+      const data = (await res.json()) as {
+        accessToken?: string;
+        refreshToken?: string;
+      };
+      if (!data.accessToken || !data.refreshToken) {
+        await clearTokens();
+        return null;
+      }
+      await setTokens(data.accessToken, data.refreshToken);
+      return data.accessToken;
+    } catch {
+      return null;
+    }
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
 export async function apiFetch<T>(
   path: string,
   options: {
     method?: string;
     body?: unknown;
     token?: string | null;
+    cache?: RequestCache;
+    /** Extra request headers (e.g. partner API key) */
+    headers?: Record<string, string>;
+    /** Internal: do not rotate again after one renewal attempt. */
+    retried?: boolean;
   } = {},
 ): Promise<T> {
-  const { method = "GET", body, token } = options;
+  const { method = "GET", body, token, retried, cache, headers } = options;
+  const isFormData =
+    typeof FormData !== "undefined" && body instanceof FormData;
   const res = await fetch(`${API_URL}${path.startsWith("/") ? path : `/${path}`}`, {
     method,
+    cache,
     headers: {
       Accept: "application/json",
-      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(body !== undefined && !isFormData
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : isFormData
+          ? (body as FormData)
+          : JSON.stringify(body),
   });
 
   const text = await res.text();
@@ -59,8 +127,23 @@ export async function apiFetch<T>(
   }
 
   if (!res.ok) {
+    if (res.status === 401 && token && !retried) {
+      const outcome = await refreshSession(true);
+      if (outcome === "ok") {
+        return apiFetch<T>(path, {
+          ...options,
+          token: await getAccessToken(),
+          retried: true,
+        });
+      }
+    }
     throw new ApiError(
-      messageFromBody(parsed, res.statusText || "Request failed"),
+      messageFromBody(
+        parsed,
+        res.status === 401
+          ? "Session expired — sign in again from Profile"
+          : res.statusText || "Request failed",
+      ),
       res.status,
     );
   }

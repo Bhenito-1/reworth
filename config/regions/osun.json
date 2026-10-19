@@ -1,0 +1,33 @@
+{
+  "city": "osun",
+  "displayName": "Osun",
+  "timezone": "Africa/Lagos",
+  "communities": [
+    "OSOGBO",
+    "ILE_IFE",
+    "IWO",
+    "EDE",
+    "IKIRE",
+    "OTHER_OSUN"
+  ],
+  "geocoding": {
+    "OSOGBO": { "lat": 7.7719, "lng": 4.5569, "label": "Osogbo" },
+    "ILE_IFE": { "lat": 7.4905, "lng": 4.5521, "label": "Ile-Ife" },
+    "IWO": { "lat": 7.6353, "lng": 4.1816, "label": "Iwo" },
+    "EDE": { "lat": 7.7363, "lng": 4.4356, "label": "Ede" },
+    "IKIRE": { "lat": 7.3724, "lng": 4.1872, "label": "Ikire" },
+    "OTHER_OSUN": { "lat": 7.5629, "lng": 4.52, "label": "Osun" }
+  },
+  "logistics": {
+    "baseFeeKobo": 110000,
+    "perKmKobo": 11000
+  },
+  "priceBands": {
+    "budget": { "minKobo": 0, "maxKobo": 3500000 },
+    "mid": { "minKobo": 3500000, "maxKobo": 30000000 },
+    "premium": { "minKobo": 30000000, "maxKobo": null }
+  },
+  "sms": { "enabled": true, "provider": "termii" },
+  "psp": { "enabled": true, "provider": "paystack" },
+  "status": "pilot"
+}

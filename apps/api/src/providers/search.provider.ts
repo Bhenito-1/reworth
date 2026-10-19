@@ -223,27 +223,36 @@ export class PostgresFullTextSearchProvider implements SearchProvider {
 
     const where: Record<string, unknown> = {
       status: 'LIVE',
+      quantityAvailable: { gt: 0 },
+      NOT: { riskFlags: { has: 'swap-response' } },
+      seller: { status: 'ACTIVE' },
     };
 
     if (filters.visibilityWhere) {
       where.AND = [filters.visibilityWhere];
     }
+    if (filters.viewerId) {
+      where.sellerId = { not: filters.viewerId };
+    }
 
     if (filters.categoryId) where.categoryId = filters.categoryId;
     if (filters.subcategoryId) where.subcategoryId = filters.subcategoryId;
     if (filters.condition) where.condition = filters.condition;
-    if (filters.community) where.community = filters.community;
     if (filters.communityId) where.communityId = filters.communityId;
     if (filters.city) where.city = filters.city;
     if (filters.deliveryAvailable) where.fulfilmentDelivery = true;
-    if (filters.priceMinKobo != null || filters.priceMaxKobo != null) {
+    const priceMin = filters.priceMinKobo;
+    const priceMax = filters.priceMaxKobo;
+    if (priceMin != null || priceMax != null) {
       where.priceKobo = {
-        ...(filters.priceMinKobo != null
-          ? { gte: filters.priceMinKobo }
-          : {}),
-        ...(filters.priceMaxKobo != null
-          ? { lte: filters.priceMaxKobo }
-          : {}),
+        ...(priceMin != null ? { gte: priceMin } : {}),
+        ...(priceMax != null ? { lte: priceMax } : {}),
+      };
+    }
+    if (filters.community) {
+      where.community = {
+        equals: filters.community,
+        mode: 'insensitive',
       };
     }
     if (filters.listedAfter) {

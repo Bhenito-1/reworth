@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import {
   Button,
-  Chip,
   EmptyState,
   Skeleton,
   Toast,
@@ -16,9 +15,6 @@ import { getAccessToken } from "../../lib/auth";
 import {
   fallbackDeliveryDestination,
   getDeliveryQuote,
-  listMeetPoints,
-  setOrderMeetPoint,
-  type MeetPoint,
 } from "../../lib/delivery";
 import { getListing, listingImageUrl } from "../../lib/listings";
 import {
@@ -29,9 +25,9 @@ import {
   isMockPsp,
   newIdempotencyKey,
   simulateMockPspCharge,
-  type FulfilmentMethod,
   type PaymentDto,
 } from "../../lib/orders";
+import { createGiveawayClaim, getGiftDeliveryQuote } from "../../lib/swap";
 import type { PublicListing } from "../../lib/types";
 
 export default function CheckoutPage() {
@@ -40,19 +36,17 @@ export default function CheckoutPage() {
   const listingId = search.get("listingId") ?? "";
   const offerId = search.get("offerId") ?? undefined;
   const orderIntentId = search.get("orderIntentId") ?? undefined;
-  const instantBuy = search.get("instantBuy") === "1";
+  const qty = Math.max(1, Number(search.get("qty") ?? "1") || 1);
 
   const [listing, setListing] = useState<PublicListing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [fulfilment, setFulfilment] = useState<FulfilmentMethod | null>(null);
   const [busy, setBusy] = useState(false);
   const [payment, setPayment] = useState<PaymentDto | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
-  const [meetPoints, setMeetPoints] = useState<MeetPoint[]>([]);
-  const [meetPointId, setMeetPointId] = useState<string | null>(null);
   const [deliveryFeeKobo, setDeliveryFeeKobo] = useState(0);
+  const [giftArea, setGiftArea] = useState("");
   const [toast, setToast] = useState<{
     message: string;
     tone?: "info" | "success" | "warn" | "error";
@@ -80,24 +74,10 @@ export default function CheckoutPage() {
     try {
       const data = await getListing(listingId, token);
       setListing(data);
-      if (instantBuy && data.instantBuyEligible) {
-        setFulfilment("DELIVERY");
-      } else {
-        const first: FulfilmentMethod | null = data.fulfilmentPickup
-          ? "PICKUP"
-          : data.fulfilmentMeet
-            ? "MEET_POINT"
-            : data.fulfilmentDelivery
-              ? "DELIVERY"
-              : "MEET_POINT";
-        setFulfilment(first);
-      }
-      try {
-        const points = await listMeetPoints(token, data.community || undefined);
-        setMeetPoints(points);
-        setMeetPointId(points[0]?.id ?? null);
-      } catch {
-        setMeetPoints([]);
+      if (data.sellingMode === "GIVE_AWAY") {
+        const quote = await getGiftDeliveryQuote(token, listingId);
+        setDeliveryFeeKobo(quote.deliveryFeeKobo);
+        setGiftArea(quote.area);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not load listing");
@@ -105,54 +85,52 @@ export default function CheckoutPage() {
     } finally {
       setLoading(false);
     }
-  }, [listingId, offerId, orderIntentId, instantBuy, router]);
+  }, [listingId, offerId, orderIntentId, router]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const amountKobo = listing?.priceKobo ?? 0;
+  const isGift = listing?.sellingMode === "GIVE_AWAY";
+  const unitKobo = listing?.priceKobo ?? 0;
+  const amountKobo =
+    offerId || orderIntentId ? unitKobo : unitKobo * qty;
   const protectionFeeKobo = useMemo(
-    () => computeProtectionFeeKobo(amountKobo),
-    [amountKobo],
+    () => (isGift ? 0 : computeProtectionFeeKobo(amountKobo)),
+    [amountKobo, isGift],
   );
   const totalKobo = useMemo(
     () =>
       computeOrderTotalKobo({
         amountKobo,
         protectionFeeKobo,
-        deliveryFeeKobo: fulfilment === "DELIVERY" ? deliveryFeeKobo : 0,
+        deliveryFeeKobo,
       }),
-    [amountKobo, protectionFeeKobo, fulfilment, deliveryFeeKobo],
+    [amountKobo, protectionFeeKobo, deliveryFeeKobo],
   );
-
-  const fulfilmentOptions = useMemo(() => {
-    if (!listing) return [] as { value: FulfilmentMethod; label: string }[];
-    const opts: { value: FulfilmentMethod; label: string }[] = [];
-    if (listing.fulfilmentPickup) opts.push({ value: "PICKUP", label: "Pickup" });
-    if (listing.fulfilmentMeet)
-      opts.push({ value: "MEET_POINT", label: "Meet point" });
-    if (listing.fulfilmentDelivery)
-      opts.push({ value: "DELIVERY", label: "Delivery" });
-    if (!opts.length) {
-      opts.push(
-        { value: "PICKUP", label: "Pickup" },
-        { value: "MEET_POINT", label: "Meet point" },
-        { value: "DELIVERY", label: "Delivery" },
-      );
-    }
-    return opts;
-  }, [listing]);
 
   async function placeAndPay() {
     const token = getAccessToken();
-    if (!token || !listingId || !fulfilment) return;
+    if (!token || !listingId) return;
     setBusy(true);
     setError(null);
     try {
+      if (listing?.sellingMode === "GIVE_AWAY") {
+        const claimed = await createGiveawayClaim(token, listingId);
+        setOrderId(claimed.order.id);
+        setDeliveryFeeKobo(claimed.order.deliveryFeeKobo);
+        const pay = await initiatePayment(token, {
+          orderId: claimed.order.id,
+          idempotencyKey: newIdempotencyKey(),
+        });
+        setPayment(pay);
+        setToast({ message: "Delivery fee ready to pay", tone: "success" });
+        return;
+      }
       const order = await createOrder(token, {
         listingId,
-        fulfilmentMethod: fulfilment,
+        fulfilmentMethod: "DELIVERY",
+        ...(qty > 1 ? { quantity: qty } : {}),
         ...(orderIntentId
           ? { orderIntentId }
           : offerId
@@ -161,23 +139,26 @@ export default function CheckoutPage() {
       });
       setOrderId(order.id);
 
-      if (fulfilment === "MEET_POINT" && meetPointId) {
-        await setOrderMeetPoint(token, order.id, meetPointId);
+      if (order.confirmationStatus === "PENDING" || order.status === "CREATED") {
+        setToast({
+          message: "Order placed. The seller confirms it before you pay.",
+          tone: "success",
+        });
+        router.replace(`/orders/${order.id}`);
+        return;
       }
 
-      if (fulfilment === "DELIVERY") {
-        const dest = fallbackDeliveryDestination(
-          (listing as { geoLat?: number | null } | null)?.geoLat,
-          (listing as { geoLng?: number | null } | null)?.geoLng,
-        );
-        const quote = await getDeliveryQuote(
-          token,
-          order.id,
-          dest.toLat,
-          dest.toLng,
-        );
-        setDeliveryFeeKobo(quote.deliveryFeeKobo ?? quote.feeKobo);
-      }
+      const dest = fallbackDeliveryDestination(
+        (listing as { geoLat?: number | null } | null)?.geoLat,
+        (listing as { geoLng?: number | null } | null)?.geoLng,
+      );
+      const quote = await getDeliveryQuote(
+        token,
+        order.id,
+        dest.toLat,
+        dest.toLng,
+      );
+      setDeliveryFeeKobo(quote.deliveryFeeKobo ?? quote.feeKobo);
 
       const pay = await initiatePayment(token, {
         orderId: order.id,
@@ -268,27 +249,30 @@ export default function CheckoutPage() {
           <span className="text-xl font-semibold tracking-tight">ReWorth</span>
         </header>
 
+        {thumb ? (
+          <div className="mb-6 aspect-[4/3] w-full overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={thumb}
+              alt=""
+              className="h-full w-full object-cover"
+            />
+          </div>
+        ) : null}
+
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          {instantBuy && listing.instantBuyEligible
-            ? "Instant Buy checkout"
-            : "Checkout"}
+          {isGift ? "Get this gift" : "Checkout"}
         </h1>
         <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-          {instantBuy && listing.instantBuyEligible
-            ? "Platform pickup + delivery with SLA — funds held until you confirm receipt."
-            : "Pay securely — funds held until you confirm receipt."}
+          {isGift
+            ? `Delivery to ${giftArea || "your area"}. The item is free. You pay the delivery fee for that area.`
+            : "Place an order. The seller confirms the delivery date before you pay. Units are reserved until you pay, cancel, or the seller declines."}
         </p>
 
         <section
           className="mt-8 flex gap-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-4"
           aria-label="Item summary"
         >
-          <div className="h-20 w-20 shrink-0 overflow-hidden rounded-[var(--rw-radius)] bg-[var(--rw-border)]">
-            {thumb ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={thumb} alt="" className="h-full w-full object-cover" />
-            ) : null}
-          </div>
           <div className="min-w-0 flex-1">
             <p className="font-semibold leading-snug">
               {listing.title || "Untitled"}
@@ -296,6 +280,11 @@ export default function CheckoutPage() {
             <p className="mt-1 text-lg font-semibold tracking-tight">
               {formatNgn({ amountKobo })}
             </p>
+            {!offerId && !orderIntentId ? (
+              <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
+                {qty} × {formatNgn({ amountKobo: unitKobo })} per unit
+              </p>
+            ) : null}
             {offerId || orderIntentId ? (
               <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
                 {orderIntentId ? "From accepted offer" : "Offer price at pay"}
@@ -304,6 +293,7 @@ export default function CheckoutPage() {
           </div>
         </section>
 
+        {isGift ? null : (
         <aside
           className="mt-6 rounded-[var(--rw-radius-lg)] border border-[var(--rw-accent)]/30 bg-[var(--rw-accent-muted)]/50 px-4 py-3"
           aria-label="Buyer protection"
@@ -316,56 +306,18 @@ export default function CheckoutPage() {
             covers eligible claims within the coverage window.
           </p>
         </aside>
+        )}
 
         <section className="mt-8" aria-labelledby="fulfil-heading">
           <h2 id="fulfil-heading" className="text-lg font-semibold">
-            Fulfilment
+            ReWorth delivery
           </h2>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {fulfilmentOptions.map((opt) => (
-              <Chip
-                key={opt.value}
-                selected={fulfilment === opt.value}
-                onClick={() => setFulfilment(opt.value)}
-                disabled={Boolean(payment)}
-              >
-                {opt.label}
-              </Chip>
-            ))}
-          </div>
-        </section>
-
-        {fulfilment === "MEET_POINT" && meetPoints.length > 0 ? (
-          <section className="mt-6" aria-labelledby="meet-heading">
-            <h2 id="meet-heading" className="text-lg font-semibold">
-              Safe meet point
-            </h2>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {meetPoints.map((p) => (
-                <Chip
-                  key={p.id}
-                  selected={meetPointId === p.id}
-                  onClick={() => setMeetPointId(p.id)}
-                  disabled={Boolean(payment)}
-                >
-                  {p.name}
-                </Chip>
-              ))}
-            </div>
-            {meetPointId ? (
-              <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-                {meetPoints.find((p) => p.id === meetPointId)?.landmark}
-              </p>
-            ) : null}
-          </section>
-        ) : null}
-
-        {fulfilment === "DELIVERY" ? (
-          <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
-            Delivery quote (₦1,500 + ₦150/km) is calculated when you pay and added
-            to the total.
+          <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+            {isGift
+              ? `Delivery to ${giftArea || "your area"}. The fee is ₦1,500 plus ₦150 per kilometre.`
+              : "Every order is delivered by ReWorth. The courier is simulated for now. The fee is ₦1,500 plus ₦150 per kilometre, added before you pay."}
           </p>
-        ) : null}
+        </section>
 
         <section
           className="mt-8 space-y-2 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
@@ -375,13 +327,17 @@ export default function CheckoutPage() {
             <span className="text-[var(--rw-ink-muted)]">Item</span>
             <span>{formatNgn({ amountKobo })}</span>
           </div>
+          {isGift ? null : (
           <div className="flex justify-between text-sm">
             <span className="text-[var(--rw-ink-muted)]">Protection fee</span>
             <span>{formatNgn({ amountKobo: protectionFeeKobo })}</span>
           </div>
-          {fulfilment === "DELIVERY" && deliveryFeeKobo > 0 ? (
+          )}
+          {isGift || deliveryFeeKobo > 0 ? (
             <div className="flex justify-between text-sm">
-              <span className="text-[var(--rw-ink-muted)]">Delivery</span>
+              <span className="text-[var(--rw-ink-muted)]">
+                {isGift ? `Delivery to ${giftArea || "your area"}` : "Delivery"}
+              </span>
               <span>{formatNgn({ amountKobo: deliveryFeeKobo })}</span>
             </div>
           ) : null}
@@ -389,9 +345,11 @@ export default function CheckoutPage() {
             <span>Total</span>
             <span>{formatNgn({ amountKobo: totalKobo })}</span>
           </div>
+          {isGift ? null : (
           <p className="text-xs text-[var(--rw-ink-muted)]">
             Final total uses offer/intent amount when applicable.
           </p>
+          )}
         </section>
 
         {error ? (
@@ -406,10 +364,10 @@ export default function CheckoutPage() {
               variant="primary"
               className="w-full"
               size="lg"
-              disabled={busy || !fulfilment}
+              disabled={busy}
               onClick={() => void placeAndPay()}
             >
-              {busy ? "Creating order…" : "Pay with ReWorth"}
+              {busy ? "Placing order…" : isGift ? "Pay delivery" : "Place order"}
             </Button>
           </div>
         ) : (

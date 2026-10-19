@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
+import { sentenceCaseLabel } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
 import {
   bookManagedPickup,
@@ -32,7 +33,7 @@ export default function ManagedPickupPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -251,7 +252,7 @@ export default function ManagedPickupPage() {
                         {formatWatRange(b.slotStartAt, b.slotEndAt)}
                       </p>
                       <p className="mt-1 text-[var(--rw-ink-muted)]">
-                        {b.status} · {b.addressLine}
+                        {sentenceCaseLabel(b.status)} · {b.addressLine}
                         {b.photoAddon ? " · photo add-on" : ""}
                       </p>
                     </li>

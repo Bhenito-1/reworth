@@ -102,6 +102,11 @@ export class RecommendationService {
     const limit = Math.min(Math.max(ctx.limit ?? 12, 1), 40);
     const surface = ctx.surface ?? 'home';
 
+    const hideOwn = (items: PublicListingDto[]) =>
+      ctx.userId
+        ? items.filter((item) => item.seller.id !== ctx.userId)
+        : items;
+
     if (ctx.userId && this.recProvider && this.experiments) {
       const variant = await this.experiments.assignVariant(
         ctx.userId,
@@ -116,33 +121,58 @@ export class RecommendationService {
           surface,
           seed: ctx.seed ?? `${ctx.userId}:${surface}`,
         };
-        return this.recProvider.recommend(recCtx);
+        return hideOwn(await this.recProvider.recommend(recCtx));
       }
     } else if (ctx.userId && this.recProvider && !this.experiments) {
-      return this.recProvider.recommend({
-        userId: ctx.userId,
+      return hideOwn(
+        await this.recProvider.recommend({
+          userId: ctx.userId,
+          city,
+          listingId: ctx.listingId,
+          limit,
+          surface,
+          seed: ctx.seed ?? `${ctx.userId}:${surface}`,
+        }),
+      );
+    }
+
+    return hideOwn(
+      await this.popularityFallback({
         city,
         listingId: ctx.listingId,
         limit,
         surface,
-        seed: ctx.seed ?? `${ctx.userId}:${surface}`,
-      });
-    }
-
-    return this.popularityFallback({ city, listingId: ctx.listingId, limit });
+      }),
+    );
   }
 
   private async popularityFallback(input: {
     city: string;
     listingId?: string;
     limit: number;
+    surface?: RecSurface;
   }): Promise<PublicListingDto[]> {
     if (!this.prisma) return [];
+
+    let categoryId: string | undefined;
+    if (input.surface === 'similar') {
+      if (!input.listingId) return [];
+      const seed = await this.prisma.listing.findUnique({
+        where: { id: input.listingId },
+        select: { categoryId: true },
+      });
+      if (!seed?.categoryId) return [];
+      categoryId = seed.categoryId;
+    }
 
     const rows = await this.prisma.listing.findMany({
       where: {
         status: 'LIVE',
+        quantityAvailable: { gt: 0 },
+        NOT: { riskFlags: { has: 'swap-response' } },
+        seller: { status: 'ACTIVE' },
         city: input.city,
+        ...(categoryId ? { categoryId } : {}),
         ...(input.listingId ? { id: { not: input.listingId } } : {}),
       },
       include: {

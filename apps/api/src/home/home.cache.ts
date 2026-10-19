@@ -97,4 +97,16 @@ export class HomeCache implements OnModuleDestroy {
       expiresAt: Date.now() + ttl * 1000,
     });
   }
+
+  /** Drop cached home rails so a suspension is visible immediately. */
+  async clear(): Promise<void> {
+    this.memory.clear();
+    if (!this.redis) return;
+    try {
+      const keys = await this.redis.keys('home:*');
+      if (keys.length > 0) await this.redis.del(...keys);
+    } catch {
+      // The next read rebuilds from the database.
+    }
+  }
 }

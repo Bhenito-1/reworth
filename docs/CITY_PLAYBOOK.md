@@ -11,25 +11,34 @@
 
 | Key | Purpose |
 | --- | --- |
-| `city` | Stable city id (e.g. `lagos`, `ibadan`) |
+| `city` | Stable city id (e.g. `lagos`, `abuja`) |
 | `displayName` | UI label |
 | `timezone` | Default `Africa/Lagos` |
+| `status` | `pilot` (public picker) · `supply` (config-ready) · `disabled` |
 | `communities[]` | Focus areas for discovery / sell chips |
 | `geocoding` | Lat/lng fixtures per community |
 | `logistics.baseFeeKobo` / `perKmKobo` | Delivery quote inputs |
 | `priceBands` | Valuation / comps bands |
-| `sms` / `psp` | `{ enabled, provider }` feature flags |
+| `psp` | `{ enabled, provider }` feature flags |
 
 Validate: `pnpm validate:cities`
 
 ## Shipped cities
 
-| City | File | Notes |
-| --- | --- | --- |
-| Lagos | `lagos.json` | Launch city |
-| Abuja | `abuja.json` | Phase 3.2 |
-| Port Harcourt | `port-harcourt.json` | Phase 3.2 |
-| Ibadan | `ibadan.json` | Ops track — supply-first before marketing |
+| City | File | Status | Notes |
+| --- | --- | --- | --- |
+| Lagos | `lagos.json` | **pilot** | SW launch city |
+| Ogun | `ogun.json` | **pilot** | Southwest |
+| Ibadan | `ibadan.json` | **pilot** | Oyo / Southwest |
+| Osun | `osun.json` | **pilot** | Southwest |
+| Ondo | `ondo.json` | **pilot** | Southwest |
+| Ekiti | `ekiti.json` | **pilot** | Southwest |
+| Edo | `edo.json` | **pilot** | South-South (Benin) |
+| Abuja | `abuja.json` | **pilot** | FCT |
+| Port Harcourt | `port-harcourt.json` | **pilot** | Rivers |
+| Kano | `kano.json` | **pilot** | North-West |
+
+**Consumer pilot:** `GET /regions` returns SW + Edo + Abuja + PH + Kano. Ops/full list: `GET /regions?all=1`. Override via `REGION_PILOT_CITIES`.
 
 ## Per-city ops runbook (PRD §57)
 
@@ -37,10 +46,10 @@ Validate: `pnpm validate:cities`
 2. Seed communities + circular partners for the city (`Community.city` = region key).
 3. Fraud watchlist seed + verification partner coverage note.
 4. Support rota owner for the city (Slack/on-call).
-5. Smoke: `pnpm validate:cities`, search, delivery quote, SMS OTP, Paystack mock, `k6 run scripts/k6/smoke.js`.
+5. Smoke: `pnpm validate:cities`, search, delivery quote, email auth, Paystack mock, `k6 run scripts/k6/smoke.js`.
 6. Announce in CHANGELOG.
 
 ## Surfaces
 
-- `GET /regions` drives city pickers (web Account/Sell/Corporate; mobile home label).
+- `GET /regions` drives city pickers (web Account/Sell/Corporate; mobile Home + Profile) — **pilot = SW + Edo + Abuja + PH + Kano**.
 - Corporate relocation uses `cityFrom` / `cityTo` from the same list.

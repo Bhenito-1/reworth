@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useState,
   type FormEvent,
 } from "react";
@@ -18,24 +19,31 @@ import {
   Toast,
 } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListingCard";
-import { ApiError } from "../../lib/api";
+import { ApiError, apiFetch } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
-import { COMMUNITIES } from "../../lib/communities";
+import { addToCart } from "../../lib/cart";
 import {
-  RADIUS_OPTIONS,
+  cityDisplayName,
+  communitiesForCity,
+  normalizeCityKey,
+} from "../../lib/communities";
+import {
   SORT_OPTIONS,
   buildSearchQueryString,
   compactFilters,
   createSavedSearch,
   favouriteListing,
   looksLikeNaturalLanguage,
+  radiusOptionsForCity,
   searchFiltersFromParams,
   searchListings,
   searchNl,
   unfavouriteListing,
 } from "../../lib/discovery";
+import { listRegions, type RegionCity } from "../../lib/region";
 import { CONDITIONS, CONDITION_LABELS } from "../../lib/listings";
 import type {
+  MeResponse,
   PublicListing,
   RadiusKm,
   SearchFilters,
@@ -71,6 +79,44 @@ export default function SearchPageClient() {
     tone?: "info" | "success" | "warn" | "error";
   } | null>(null);
   const [savingSearch, setSavingSearch] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [meId, setMeId] = useState<string | null>(null);
+  const [cities, setCities] = useState<RegionCity[]>([]);
+
+  const cityLabel = useMemo(
+    () => cityDisplayName(draft.city || "Lagos"),
+    [draft.city],
+  );
+  const communityOptions = useMemo(
+    () => communitiesForCity(draft.city || "lagos"),
+    [draft.city],
+  );
+  const radiusOptions = useMemo(
+    () => radiusOptionsForCity(cityLabel),
+    [cityLabel],
+  );
+
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) return;
+    let cancelled = false;
+    void apiFetch<MeResponse>("/me", { token })
+      .then((me) => {
+        if (!cancelled) setMeId(me.id);
+      })
+      .catch(() => {
+        if (!cancelled) setMeId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    void listRegions()
+      .then(setCities)
+      .catch(() => undefined);
+  }, []);
 
   const priceMinNaira =
     draft.priceMinKobo != null ? String(draft.priceMinKobo / 100) : "";
@@ -149,9 +195,23 @@ export default function SearchPageClient() {
     router.push(filtersToUrl(compact, nl ?? useNl));
   }
 
+  function priceRangeInvalid(): boolean {
+    return (
+      draft.priceMinKobo != null &&
+      draft.priceMaxKobo != null &&
+      draft.priceMaxKobo < draft.priceMinKobo
+    );
+  }
+
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     const q = query.trim();
+    if (!q) return;
+    if (priceRangeInvalid()) {
+      setPriceError("Maximum must be higher than the minimum.");
+      return;
+    }
+    setPriceError(null);
     const nl = useNl || looksLikeNaturalLanguage(q);
     applyAndNavigate({ ...draft, q: q || undefined }, nl);
   }
@@ -167,7 +227,7 @@ export default function SearchPageClient() {
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to save listings", tone: "warn" });
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     const isFav = favourites.has(listing.id);
@@ -180,6 +240,10 @@ export default function SearchPageClient() {
     try {
       if (isFav) await unfavouriteListing(listing.id, token);
       else await favouriteListing(listing.id, token);
+      setToast({
+        message: isFav ? "Removed from wishlist" : "Added to wishlist",
+        tone: "success",
+      });
     } catch (err) {
       setFavourites((prev) => {
         const next = new Set(prev);
@@ -195,11 +259,30 @@ export default function SearchPageClient() {
     }
   }
 
+  async function addListingToCart(listing: PublicListing) {
+    const token = getAccessToken();
+    if (!token) {
+      setToast({ message: "Sign in to use the cart", tone: "warn" });
+      router.push("/");
+      return;
+    }
+    try {
+      await addToCart(token, listing.id, 1);
+      setToast({ message: "Added to cart", tone: "success" });
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not add to cart",
+        tone: "error",
+      });
+    }
+  }
+
   async function saveCurrentSearch() {
+    if (!query.trim() || !result || result.items.length === 0) return;
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to save searches", tone: "warn" });
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     const filters = compactFilters({ ...draft, q: query.trim() || undefined });
@@ -243,14 +326,8 @@ export default function SearchPageClient() {
 
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
-      <header className="sticky top-0 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)]/90 backdrop-blur-md">
+      <header className="sticky top-14 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)]/90 backdrop-blur-md lg:top-[var(--rw-nav-offset,0px)]">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
-          <Link
-            href="/"
-            className="shrink-0 text-lg font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
           <form
             onSubmit={onSubmit}
             className="flex min-w-0 flex-1 items-center gap-2"
@@ -259,7 +336,7 @@ export default function SearchPageClient() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search or ask in plain English…"
+              placeholder="Search items"
               aria-label="Search"
               className="min-w-0 flex-1 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
             />
@@ -272,15 +349,15 @@ export default function SearchPageClient() {
               />
               NL
             </label>
-            <Button type="submit" variant="primary" size="sm">
-              Search
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              disabled={!query.trim()}
+            >
+              Search items
             </Button>
           </form>
-          <Link href="/sell">
-            <Button variant="sell" size="sm">
-              SELL
-            </Button>
-          </Link>
         </div>
       </header>
 
@@ -289,9 +366,47 @@ export default function SearchPageClient() {
           aria-label="Filters"
           className="h-fit space-y-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/80 p-4"
         >
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--rw-ink-muted)]">
+          <h2 className="text-sm font-semibold text-[var(--rw-ink-muted)]">
             Filters
           </h2>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium" htmlFor="f-city">
+              City
+            </label>
+            <select
+              id="f-city"
+              value={normalizeCityKey(draft.city || "lagos")}
+              onChange={(e) => {
+                const nextCity = normalizeCityKey(e.target.value);
+                const label = cityDisplayName(nextCity);
+                const allowed = communitiesForCity(nextCity);
+                const community =
+                  draft.community &&
+                  (allowed as readonly string[]).includes(draft.community)
+                    ? draft.community
+                    : undefined;
+                setDraft((d) => ({
+                  ...d,
+                  city: label,
+                  community,
+                }));
+              }}
+              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-2 text-sm"
+            >
+              {(cities.length
+                ? cities
+                : [
+                    { key: "lagos", displayName: "Lagos" },
+                    { key: "abuja", displayName: "Abuja" },
+                  ]
+              ).map((c) => (
+                <option key={c.key} value={normalizeCityKey(c.key || c.city)}>
+                  {c.displayName || c.key}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium" htmlFor="f-community">
@@ -306,7 +421,7 @@ export default function SearchPageClient() {
               className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-2 text-sm"
             >
               <option value="">Any</option>
-              {COMMUNITIES.map((c) => (
+              {communityOptions.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -317,7 +432,7 @@ export default function SearchPageClient() {
           <div>
             <p className="mb-1.5 text-sm font-medium">Radius</p>
             <div className="flex flex-wrap gap-1.5">
-              {RADIUS_OPTIONS.map((opt) => (
+              {radiusOptions.map((opt) => (
                 <Chip
                   key={String(opt.value)}
                   selected={
@@ -346,27 +461,37 @@ export default function SearchPageClient() {
               inputMode="numeric"
               value={priceMinNaira}
               onChange={(e) => {
-                const n = Number(e.target.value.replace(/\D/g, ""));
-                updateDraft(
-                  "priceMinKobo",
-                  e.target.value === "" || !Number.isFinite(n)
-                    ? undefined
-                    : nairaToKobo(n),
-                );
+                setPriceError(null);
+                const raw = e.target.value.replace(/\D/g, "");
+                if (!raw) {
+                  updateDraft("priceMinKobo", undefined);
+                  return;
+                }
+                updateDraft("priceMinKobo", nairaToKobo(Number(raw)));
               }}
             />
             <Input
               label="Max ₦"
               inputMode="numeric"
               value={priceMaxNaira}
+              error={priceError ?? undefined}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                if (priceRangeInvalid()) {
+                  e.preventDefault();
+                  setPriceError("Maximum must be higher than the minimum.");
+                } else {
+                  setPriceError(null);
+                }
+              }}
               onChange={(e) => {
-                const n = Number(e.target.value.replace(/\D/g, ""));
-                updateDraft(
-                  "priceMaxKobo",
-                  e.target.value === "" || !Number.isFinite(n)
-                    ? undefined
-                    : nairaToKobo(n),
-                );
+                setPriceError(null);
+                const raw = e.target.value.replace(/\D/g, "");
+                if (!raw) {
+                  updateDraft("priceMaxKobo", undefined);
+                  return;
+                }
+                updateDraft("priceMaxKobo", nairaToKobo(Number(raw)));
               }}
             />
           </div>
@@ -448,19 +573,31 @@ export default function SearchPageClient() {
           <Button
             variant="primary"
             className="w-full"
-            onClick={() =>
+            disabled={!query.trim()}
+            onClick={() => {
+              if (priceRangeInvalid()) {
+                setPriceError("Maximum must be higher than the minimum.");
+                return;
+              }
+              setPriceError(null);
               applyAndNavigate({
                 ...draft,
                 q: query.trim() || undefined,
-              })
-            }
+              });
+            }}
           >
             Apply filters
           </Button>
           <Button
             variant="secondary"
             className="w-full"
-            disabled={savingSearch}
+            disabled={
+              savingSearch ||
+              !query.trim() ||
+              query.trim() !== (searchParams.get("q") ?? "").trim() ||
+              !result ||
+              result.items.length === 0
+            }
             onClick={() => void saveCurrentSearch()}
           >
             {savingSearch ? "Saving…" : "Save this search"}
@@ -489,11 +626,11 @@ export default function SearchPageClient() {
           ) : null}
 
           {loading ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="flex flex-wrap gap-3">
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="aspect-[3/4] w-full rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading result"
                 />
               ))}
@@ -532,16 +669,24 @@ export default function SearchPageClient() {
                 {result.total} result{result.total === 1 ? "" : "s"}
                 {result.tookMs != null ? ` · ${result.tookMs}ms` : ""}
               </p>
-              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {result.items.map((item) => (
-                  <li key={item.id}>
-                    <DiscoveryListingCard
-                      listing={item}
-                      favourited={favourites.has(item.id)}
-                      onToggleFavourite={(l) => void toggleFavourite(l)}
-                    />
-                  </li>
-                ))}
+              <ul className="flex flex-wrap gap-3">
+                {result.items.map((item) => {
+                  const own = meId != null && item.seller.id === meId;
+                  return (
+                    <li key={item.id} className="w-[7.5rem] shrink-0">
+                      <DiscoveryListingCard
+                        listing={item}
+                        favourited={favourites.has(item.id)}
+                        onToggleFavourite={
+                          own ? undefined : (l) => void toggleFavourite(l)
+                        }
+                        onAddToCart={
+                          own ? undefined : (l) => void addListingToCart(l)
+                        }
+                      />
+                    </li>
+                  );
+                })}
               </ul>
               {result.nextCursor ? (
                 <div className="mt-8 flex justify-center">

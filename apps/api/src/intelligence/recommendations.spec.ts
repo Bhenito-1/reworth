@@ -198,6 +198,31 @@ describe('Recommendations v2', () => {
     );
   });
 
+  it('similar surface stays in the seed listing category', async () => {
+    const prisma = {
+      listing: {
+        findUnique: jest.fn().mockResolvedValue({ categoryId: 'cat-phones' }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const svc = new RecommendationService(prisma as never);
+    await svc.recommend({
+      city: 'Lagos',
+      listingId: 'seed-1',
+      limit: 6,
+      surface: 'similar',
+    });
+    expect(prisma.listing.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          categoryId: 'cat-phones',
+          city: 'Lagos',
+          status: 'LIVE',
+        }),
+      }),
+    );
+  });
+
   it('RecommendationService anonymous uses popularity fallback', async () => {
     const prisma = {
       listing: {

@@ -142,6 +142,9 @@ export class ConsignmentService {
         where: { id: row.listingId },
         data: { status: 'SOLD' },
       });
+      await this.prisma.favourite.deleteMany({
+        where: { listingId: row.listingId },
+      });
     }
 
     const updated = await this.prisma.consignment.update({

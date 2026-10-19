@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../../lib/api";
+import { sentenceCaseLabel } from "../../../lib/listings";
 import { getAccessToken } from "../../../lib/auth";
 import {
   leaveCommunity,
@@ -23,7 +24,7 @@ export default function MyCommunitiesPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -129,7 +130,7 @@ export default function MyCommunitiesPage() {
                     {m.community.name}
                   </Link>
                   <p className="text-sm text-[var(--rw-ink-muted)]">
-                    {m.status}
+                    {sentenceCaseLabel(m.status)}
                     {m.community.verified ? " · Verified" : ""}
                   </p>
                 </div>

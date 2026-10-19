@@ -4,12 +4,12 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { ScrollView } from "./components/BoundScroll";
 import { ApiError } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import {
@@ -28,11 +28,14 @@ import {
   listingImageUrl,
   type PublicListing,
 } from "./lib/types";
+import { brandAssets } from "./lib/brandAssets";
+import { colors } from "./theme/tokens";
 
 type Props = {
   userId: string | null;
   meId: string | null;
   onClose: () => void;
+  dismissLabel?: string;
   onOpenListing?: (listingId: string) => void;
 };
 
@@ -40,6 +43,7 @@ export function UserProfileModal({
   userId,
   meId,
   onClose,
+  dismissLabel = "Close",
   onOpenListing,
 }: Props) {
   const [profile, setProfile] = useState<PublicProfile | null>(null);
@@ -142,16 +146,25 @@ export function UserProfileModal({
     >
       <View style={styles.safe}>
         <View style={styles.header}>
-          <Pressable onPress={onClose} accessibilityRole="button">
-            <Text style={styles.close}>Close</Text>
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel={dismissLabel}
+          >
+            <Text style={styles.close}>{dismissLabel}</Text>
           </Pressable>
-          <Text style={styles.brand}>ReWorth</Text>
+          <Image
+            source={brandAssets.logo}
+            style={styles.headerLogo}
+            resizeMode="contain"
+            accessibilityLabel="ReWorth"
+          />
           <View style={{ width: 48 }} />
         </View>
 
         {loading ? (
           <View style={styles.center}>
-            <ActivityIndicator color="#0E9F6E" />
+            <ActivityIndicator color={colors.orange} />
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.body}>
@@ -160,21 +173,28 @@ export function UserProfileModal({
               <>
                 <View style={styles.heroRow}>
                   <View style={styles.avatar}>
-                    {profile.avatarUrl ? (
-                      <Image
-                        source={{ uri: profile.avatarUrl }}
-                        style={styles.avatarImg}
-                      />
-                    ) : (
-                      <Text style={styles.avatarLetter}>
-                        {(profile.displayName || "M")
-                          .slice(0, 1)
-                          .toUpperCase()}
-                      </Text>
-                    )}
+                    <Image
+                      source={
+                        profile.avatarUrl
+                          ? { uri: profile.avatarUrl }
+                          : brandAssets.profileAvatar
+                      }
+                      style={styles.avatarImg}
+                      resizeMode="cover"
+                    />
                   </View>
                   <View style={styles.heroText}>
-                    <Text style={styles.name}>{profile.displayName}</Text>
+                    <View style={styles.nameRow}>
+                      <Text style={styles.name}>{profile.displayName}</Text>
+                      {profile.identityVerified ? (
+                        <Image
+                          source={brandAssets.verified}
+                          style={styles.verifiedBadge}
+                          resizeMode="contain"
+                          accessibilityLabel="Verified"
+                        />
+                      ) : null}
+                    </View>
                     <Text style={styles.muted}>
                       {formatStars(profile.avgRating, profile.reviewCount)}
                     </Text>
@@ -206,7 +226,14 @@ export function UserProfileModal({
                 ) : null}
 
                 {profile.identityVerified ? (
-                  <Text style={styles.verified}>Identity Verified ✓</Text>
+                  <View style={styles.verifiedRow}>
+                    <Image
+                      source={brandAssets.trustIdentityChecked}
+                      style={styles.verifiedRowIcon}
+                      resizeMode="contain"
+                    />
+                    <Text style={styles.verified}>Identity Verified</Text>
+                  </View>
                 ) : null}
                 <Text style={styles.metaLine}>
                   {profile.successfulTransactions} successful transaction
@@ -327,11 +354,11 @@ function ListingRow({
   const src = listingImageUrl(images[0]);
   return (
     <Pressable style={styles.listingRow} onPress={onPress}>
-      {src ? (
-        <Image source={{ uri: src }} style={styles.thumb} />
-      ) : (
-        <View style={[styles.thumb, styles.thumbEmpty]} />
-      )}
+      <Image
+        source={src ? { uri: src } : brandAssets.listingPlaceholder}
+        style={styles.thumb}
+        resizeMode="cover"
+      />
       <View style={{ flex: 1 }}>
         <Text style={styles.listingTitle} numberOfLines={2}>
           {listing.title || "Untitled"}
@@ -345,7 +372,7 @@ function ListingRow({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#FAF9F7" },
+  safe: { flex: 1, backgroundColor: colors.canvas },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -354,31 +381,34 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
   },
-  brand: { fontSize: 20, fontWeight: "700", color: "#111315" },
-  close: { fontSize: 16, fontWeight: "600", color: "#0E9F6E" },
+  brand: { fontSize: 20, fontWeight: "700", color: colors.ink },
+  headerLogo: { width: 110, height: 28 },
+  close: { fontSize: 16, fontWeight: "600", color: colors.orange },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   body: { paddingHorizontal: 20, paddingBottom: 40 },
-  error: { color: "#DC2626", marginBottom: 12 },
+  error: { color: colors.error, marginBottom: 12 },
   heroRow: { flexDirection: "row", gap: 14, alignItems: "center" },
   avatar: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: "#D1FAE5",
+    backgroundColor: colors.orangeWash,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
   avatarImg: { width: 64, height: 64 },
-  avatarLetter: { fontSize: 24, fontWeight: "700", color: "#0E9F6E" },
+  avatarLetter: { fontSize: 24, fontWeight: "700", color: colors.orange },
   heroText: { flex: 1 },
-  name: { fontSize: 26, fontWeight: "700", color: "#111315" },
-  muted: { marginTop: 4, fontSize: 14, color: "#5C636A" },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  name: { fontSize: 26, fontWeight: "700", color: colors.ink, flexShrink: 1 },
+  verifiedBadge: { width: 22, height: 22 },
+  muted: { marginTop: 4, fontSize: 14, color: colors.muted },
   badge: {
     alignSelf: "flex-start",
     marginTop: 8,
-    backgroundColor: "#F5EDD0",
-    color: "#111315",
+    backgroundColor: colors.goldWash,
+    color: colors.ink,
     overflow: "hidden",
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -388,91 +418,97 @@ const styles = StyleSheet.create({
   },
   followBtn: {
     marginTop: 16,
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: "center",
   },
   followBtnOn: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
   },
-  followText: { color: "#FFFFFF", fontWeight: "700", fontSize: 15 },
-  followTextOn: { color: "#111315" },
+  followText: { color: colors.onAccent, fontWeight: "700", fontSize: 15 },
+  followTextOn: { color: colors.ink },
   disabled: { opacity: 0.55 },
-  verified: {
+  verifiedRow: {
     marginTop: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  verifiedRowIcon: { width: 22, height: 22 },
+  verified: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#0E9F6E",
+    color: colors.orange,
   },
-  metaLine: { marginTop: 6, fontSize: 15, color: "#111315" },
+  metaLine: { marginTop: 6, fontSize: 15, color: colors.ink },
   section: {
     marginTop: 28,
     marginBottom: 10,
     fontSize: 17,
     fontWeight: "700",
-    color: "#111315",
+    color: colors.ink,
   },
   listingRow: {
     flexDirection: "row",
     gap: 12,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E2DC",
+    borderBottomColor: colors.border,
   },
   thumb: {
     width: 64,
     height: 64,
     borderRadius: 12,
-    backgroundColor: "#E5E2DC",
+    overflow: "hidden",
+    backgroundColor: colors.border,
   },
   thumbEmpty: {},
-  listingTitle: { fontSize: 15, fontWeight: "600", color: "#111315" },
+  listingTitle: { fontSize: 15, fontWeight: "600", color: colors.ink },
   reviewCard: {
     marginBottom: 12,
     padding: 14,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#FFFFFF",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
   reviewHead: {
     flexDirection: "row",
     justifyContent: "space-between",
     gap: 8,
   },
-  reviewer: { fontWeight: "700", color: "#111315", flex: 1 },
-  stars: { color: "#C9A227", fontSize: 14 },
-  reviewBody: { marginTop: 8, fontSize: 14, lineHeight: 20, color: "#5C636A" },
+  reviewer: { fontWeight: "700", color: colors.ink, flex: 1 },
+  stars: { color: colors.gold, fontSize: 14 },
+  reviewBody: { marginTop: 8, fontSize: 14, lineHeight: 20, color: colors.muted },
   replyBox: {
     marginTop: 10,
     paddingLeft: 10,
     borderLeftWidth: 2,
-    borderLeftColor: "#0E9F6E",
+    borderLeftColor: colors.orange,
   },
   replyLabel: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#5C636A",
-    textTransform: "uppercase",
+    color: colors.muted,
   },
   replyForm: { marginTop: 10, gap: 8 },
   input: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     padding: 12,
     minHeight: 64,
     textAlignVertical: "top",
-    backgroundColor: "#FAF9F7",
-    color: "#111315",
+    backgroundColor: colors.canvas,
+    color: colors.ink,
   },
   toast: {
     marginTop: 16,
     textAlign: "center",
-    color: "#0E9F6E",
+    color: colors.orange,
     fontWeight: "600",
   },
 });

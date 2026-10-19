@@ -7,7 +7,7 @@ import { Button, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 
-type ConsentChannel = "SMS" | "MARKETING" | "EMAIL";
+type ConsentChannel = "MARKETING" | "EMAIL";
 
 type ConsentRow = {
   channel: ConsentChannel;
@@ -15,10 +15,15 @@ type ConsentRow = {
   updatedAt: string | null;
 };
 
-const CHANNEL_LABEL: Record<ConsentChannel, string> = {
-  SMS: "SMS alerts",
-  MARKETING: "Marketing messages",
-  EMAIL: "Email updates",
+const CHANNEL_COPY: Record<ConsentChannel, { label: string; hint: string }> = {
+  EMAIL: {
+    label: "Email",
+    hint: "Orders and important updates. Off means we send you no email.",
+  },
+  MARKETING: {
+    label: "Marketing",
+    hint: "Product ads and promotions. Off means no marketing email.",
+  },
 };
 
 export default function PrivacySettingsPage() {
@@ -36,7 +41,7 @@ export default function PrivacySettingsPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -48,7 +53,7 @@ export default function PrivacySettingsPage() {
       setConsents(res.consents);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not load");
@@ -119,7 +124,7 @@ export default function PrivacySettingsPage() {
     try {
       await apiFetch("/me/delete-request", { method: "POST", token });
       setToast({ message: "Account deleted", tone: "success" });
-      router.replace("/onboarding");
+      router.replace("/");
     } catch (err) {
       setToast({
         message: err instanceof ApiError ? err.message : "Delete failed",
@@ -154,7 +159,7 @@ export default function PrivacySettingsPage() {
         <p className="mt-8 text-sm text-red-700">{error}</p>
       ) : (
         <section className="mt-8 space-y-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+          <h2 className="text-sm font-semibold text-neutral-500">
             Consents
           </h2>
           {consents.map((row) => (
@@ -163,7 +168,12 @@ export default function PrivacySettingsPage() {
               className="flex items-center justify-between gap-4 border-b border-neutral-200 py-3"
             >
               <span className="text-sm text-neutral-800">
-                {CHANNEL_LABEL[row.channel]}
+                <span className="block font-medium">
+                  {CHANNEL_COPY[row.channel].label}
+                </span>
+                <span className="mt-1 block text-neutral-500">
+                  {CHANNEL_COPY[row.channel].hint}
+                </span>
               </span>
               <input
                 type="checkbox"
@@ -171,7 +181,7 @@ export default function PrivacySettingsPage() {
                 onChange={(e) =>
                   void toggleConsent(row.channel, e.target.checked)
                 }
-                aria-label={CHANNEL_LABEL[row.channel]}
+                aria-label={CHANNEL_COPY[row.channel].label}
               />
             </label>
           ))}
@@ -179,7 +189,7 @@ export default function PrivacySettingsPage() {
       )}
 
       <section className="mt-10 space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+        <h2 className="text-sm font-semibold text-neutral-500">
           Your data
         </h2>
         <Button

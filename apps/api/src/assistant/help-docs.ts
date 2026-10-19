@@ -17,8 +17,6 @@ export const HELP_DOCS: Record<string, string> = {
     'After payment, orders move FUNDED → handover → completion. Check My Orders for status and meetup details.',
   pickup_meet:
     'Choose pickup or a public meet point in your community. Never share your private address in chat.',
-  instant_buy:
-    'Instant Buy listings are fulfilled by ReWorth ops with a delivery SLA. Eligible items show an Instant Buy badge.',
   swap:
     'Swap and Swap+Cash let you trade items. Cash legs use the same escrow as buy orders.',
   disputes:
@@ -41,7 +39,6 @@ export function answerFromHelpDocs(query: string): {
     ['offers', /offer|negotiate|counter/],
     ['orders', /order\s*status|my\s*order|track\s*order|handover/],
     ['pickup_meet', /pickup|pick\s*up|meet\s*point|meetup|delivery/],
-    ['instant_buy', /instant\s*buy|sla|platform\s*fulfil/],
     ['swap', /swap|trade\s*item|give\s*away/],
     ['disputes', /dispute|not\s*as\s*described|refund\s*request/],
   ];
