@@ -12,6 +12,7 @@ import {
   MockStorageAdapter,
 } from '../providers/storage.provider';
 import { S3StorageAdapter } from '../providers/s3-storage.adapter';
+import { CloudinaryStorageAdapter } from '../providers/cloudinary-storage.adapter';
 import {
   LocalFsStorageAdapter,
   defaultMediaRoot,
@@ -101,6 +102,28 @@ function redisConnection(url: string | undefined) {
         if (driver === 'mock') {
           logger.log('Using MockStorageAdapter');
           return new MockStorageAdapter({ bucket, publicBase });
+        }
+
+        if (driver === 'cloudinary') {
+          const cloudName = config.get<string>('CLOUDINARY_CLOUD_NAME');
+          const apiKey = config.get<string>('CLOUDINARY_API_KEY');
+          const apiSecret = config.get<string>('CLOUDINARY_API_SECRET');
+          if (!cloudName || !apiKey || !apiSecret) {
+            throw new Error(
+              'STORAGE_DRIVER=cloudinary requires CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET',
+            );
+          }
+          logger.log(`Using CloudinaryStorageAdapter (cloud=${cloudName})`);
+          return new CloudinaryStorageAdapter({
+            cloudName,
+            apiKey,
+            apiSecret,
+            apiBase,
+            uploadSigningSecret:
+              config.get<string>('JWT_ACCESS_SECRET') ?? apiSecret,
+            legacyLocalRoot:
+              config.get<string>('MEDIA_LOCAL_DIR') ?? defaultMediaRoot(),
+          });
         }
 
         if (driver === 'local' || driver === 'fs') {

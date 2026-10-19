@@ -21,6 +21,7 @@ import {
   type AreaChoice,
 } from "./lib/areas";
 import { setTokens } from "./lib/auth";
+import { storeMediaPhoto } from "./lib/listings";
 import { getRegion, listRegions, type RegionCity } from "./lib/region";
 import { type MeResponse } from "./lib/types";
 import { colors, radius, space, tap, type as typeScale } from "./theme/tokens";
@@ -54,6 +55,11 @@ export function OnboardingFlow({
   const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
   const [community, setCommunity] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarLocal, setAvatarLocal] = useState<{
+    uri: string;
+    name: string;
+    type: string;
+  } | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -173,7 +179,13 @@ export function OnboardingFlow({
       aspect: [1, 1],
     });
     if (result.canceled || !result.assets[0]) return;
-    setAvatarUrl(result.assets[0].uri);
+    const asset = result.assets[0];
+    setAvatarUrl(asset.uri);
+    setAvatarLocal({
+      uri: asset.uri,
+      name: asset.fileName || "avatar.jpg",
+      type: asset.mimeType || "image/jpeg",
+    });
   }
 
   async function saveProfile() {
@@ -198,8 +210,12 @@ export function OnboardingFlow({
     }
     setLoading(true);
     try {
-      const remoteAvatar =
+      let remoteAvatar =
         avatarUrl && /^https?:\/\//i.test(avatarUrl) ? avatarUrl : undefined;
+      if (avatarLocal) {
+        const stored = await storeMediaPhoto(token, avatarLocal);
+        remoteAvatar = stored.publicUrl;
+      }
       const me = await apiFetch<MeResponse>("/me", {
         method: "PATCH",
         token,

@@ -36,7 +36,40 @@ export class MediaController {
   }
 
   /**
-   * Multipart direct upload — stores to disk/S3 then runs pipeline.
+   * Multipart store — puts bytes in active storage (Cloudinary/S3/local).
+   * No listing attachment. Field: `file`.
+   */
+  @Post('store')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_IMAGE_BYTES },
+    }),
+  )
+  async store(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile()
+    file:
+      | {
+          buffer: Buffer;
+          mimetype: string;
+          originalname: string;
+          size: number;
+        }
+      | undefined,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('file is required');
+    }
+    return this.media.storeObject(user.id, {
+      fileName: file.originalname || 'photo.jpg',
+      contentType: resolveUploadContentType(file),
+      body: file.buffer,
+    });
+  }
+
+  /**
+   * Multipart direct upload — stores then runs pipeline for a listing.
    * Field: `file`; body: listingId, sortOrder (optional).
    */
   @Post('direct')
@@ -66,20 +99,25 @@ export class MediaController {
       throw new BadRequestException('listingId is required');
     }
     const sortOrder = Number(body.sortOrder ?? 0);
-    const contentType =
-      file.mimetype && file.mimetype !== 'application/octet-stream'
-        ? file.mimetype
-        : file.originalname?.toLowerCase().endsWith('.png')
-          ? 'image/png'
-          : file.originalname?.toLowerCase().endsWith('.webp')
-            ? 'image/webp'
-            : 'image/jpeg';
     return this.media.uploadDirect(user.id, {
       listingId: body.listingId,
       sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
       fileName: file.originalname || 'photo.jpg',
-      contentType,
+      contentType: resolveUploadContentType(file),
       body: file.buffer,
     });
   }
+}
+
+function resolveUploadContentType(file: {
+  mimetype: string;
+  originalname: string;
+}): string {
+  if (file.mimetype && file.mimetype !== 'application/octet-stream') {
+    return file.mimetype;
+  }
+  const name = file.originalname?.toLowerCase() ?? '';
+  if (name.endsWith('.png')) return 'image/png';
+  if (name.endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
 }

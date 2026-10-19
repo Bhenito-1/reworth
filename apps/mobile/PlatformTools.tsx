@@ -28,7 +28,7 @@ import {
   type SavedBundle,
 } from "./lib/assistant";
 import { conditionLabel, sentenceCaseLabel } from "./lib/discovery";
-import { completeMedia, createListing, presignMedia } from "./lib/listings";
+import { storeMediaPhoto } from "./lib/listings";
 import {
   bookManagedPickup,
   consignmentStatusLabel,
@@ -581,29 +581,6 @@ function WorthPanel({ city }: { city: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function uriToBase64(uri: string): Promise<string | undefined> {
-    try {
-      const res = await fetch(uri);
-      const blob = await res.blob();
-      return await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const result = reader.result;
-          if (typeof result !== "string") {
-            resolve(undefined);
-            return;
-          }
-          const comma = result.indexOf(",");
-          resolve(comma >= 0 ? result.slice(comma + 1) : result);
-        };
-        reader.onerror = () => resolve(undefined);
-        reader.readAsDataURL(blob);
-      });
-    } catch {
-      return undefined;
-    }
-  }
-
   async function pickPhoto() {
     setError(null);
     try {
@@ -650,21 +627,8 @@ function WorthPanel({ city }: { city: string }) {
       if (!token) throw new Error("Sign in for a photo estimate");
       let photoKey: string | undefined;
       if (photo) {
-        const draft = await createListing(token, {});
-        const inline = await uriToBase64(photo.uri);
-        const len = inline ? Math.ceil((inline.length * 3) / 4) : 4096;
-        const presign = await presignMedia(
-          token,
-          draft.id,
-          photo.name,
-          photo.type,
-          Math.max(len, 64),
-        );
-        await completeMedia(token, draft.id, presign.key, 0, {
-          inlineBase64: inline,
-          contentType: photo.type,
-        });
-        photoKey = presign.key;
+        const stored = await storeMediaPhoto(token, photo);
+        photoKey = stored.key;
       }
       const result = await createValuation(token, { city, photoKey });
       setCard(result);
@@ -800,29 +764,6 @@ function ScanPanel({
     }
   }
 
-  async function uriToBase64(uri: string): Promise<string | undefined> {
-    try {
-      const res = await fetch(uri);
-      const blob = await res.blob();
-      return await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const result = reader.result;
-          if (typeof result !== "string") {
-            resolve(undefined);
-            return;
-          }
-          const comma = result.indexOf(",");
-          resolve(comma >= 0 ? result.slice(comma + 1) : result);
-        };
-        reader.onerror = () => resolve(undefined);
-        reader.readAsDataURL(blob);
-      });
-    } catch {
-      return undefined;
-    }
-  }
-
   async function runDetect() {
     setBusy(true);
     setError(null);
@@ -834,25 +775,9 @@ function ScanPanel({
       let photoKeys: string[] = [];
       if (photos.length) {
         setPhase("upload");
-        const draftListing = await (
-          await import("./lib/listings")
-        ).createListing(token, {});
-        for (let i = 0; i < photos.length; i++) {
-          const photo = photos[i];
-          const inline = await uriToBase64(photo.uri);
-          const len = inline ? Math.ceil((inline.length * 3) / 4) : 4096;
-          const presign = await presignMedia(
-            token,
-            draftListing.id,
-            photo.name,
-            photo.type,
-            Math.max(len, 64),
-          );
-          await completeMedia(token, draftListing.id, presign.key, i, {
-            inlineBase64: inline,
-            contentType: photo.type,
-          });
-          photoKeys.push(presign.key);
+        for (const photo of photos) {
+          const stored = await storeMediaPhoto(token, photo);
+          photoKeys.push(stored.key);
         }
       } else {
         photoKeys = ["room-scan/fixture-living-1.jpg"];

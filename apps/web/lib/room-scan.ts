@@ -3,12 +3,7 @@
  */
 
 import { apiFetch } from "./api";
-import type {
-  PresignMediaResponse,
-  RoomScan,
-  RoomScanDraft,
-  RoomScanItem,
-} from "./types";
+import type { RoomScan, RoomScanDraft, RoomScanItem } from "./types";
 
 export async function createRoomScan(
   token: string,
@@ -111,38 +106,24 @@ export async function pollRoomScanUntilReady(
 export async function uploadPlatformPhoto(
   token: string,
   file: File,
-  opts?: { listingId?: string },
+  _opts?: { listingId?: string },
 ): Promise<{ key: string; previewUrl: string; publicUrl?: string }> {
-  const body: Record<string, unknown> = {
-    contentType: file.type || "image/jpeg",
-    contentLength: file.size || 1024,
-    fileName: file.name || "photo.jpg",
-  };
-  if (opts?.listingId) body.listingId = opts.listingId;
+  const form = new FormData();
+  form.append("file", file);
 
-  const presign = await apiFetch<PresignMediaResponse>("/media/presign", {
-    method: "POST",
-    token,
-    body,
-  });
-
-  try {
-    const put = await fetch(presign.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": file.type || "image/jpeg" },
-      body: file,
-    });
-    if (!put.ok) {
-      // Mock / unsigned URLs often fail — key is enough
-    }
-  } catch {
-    // CORS / network — proceed with key
-  }
+  const stored = await apiFetch<{ key: string; publicUrl: string }>(
+    "/media/store",
+    {
+      method: "POST",
+      token,
+      body: form,
+    },
+  );
 
   return {
-    key: presign.key,
+    key: stored.key,
     previewUrl: URL.createObjectURL(file),
-    publicUrl: presign.publicUrl,
+    publicUrl: stored.publicUrl,
   };
 }
 

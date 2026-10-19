@@ -43,7 +43,7 @@ function ensure(token: string) {
   socketToken = token;
   const next = io(`${origin()}/chat`, {
     auth: { token },
-    transports: ["websocket"],
+    transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 10000,
