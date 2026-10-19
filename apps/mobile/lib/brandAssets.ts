@@ -74,11 +74,13 @@ export const brandAssets = {
   emptyOffers: require("../assets/brand/empty-states/no-offers.png"),
   emptySaved: require("../assets/brand/empty-states/no-saved-items.png"),
   emptySearch: require("../assets/brand/empty-states/no-search-results.png"),
+  /** Mobile landing / login hero (full composition). */
   onboarding: require("../assets/brand/onboarding/login-illustration.png"),
   movingSale: require("../assets/brand/social/moving-sale.png"),
   splash: require("../assets/brand/social/splash-logo-centred.png"),
   splashWide: require("../assets/brand/social/splash.png"),
-  landingPage: require("../assets/brand/landing-page.png"),
+  /** Same art as onboarding — primary mobile landing page. */
+  landingPage: require("../assets/brand/onboarding/login-illustration.png"),
   invite: require("../assets/brand/social/invite-someone.png"),
   listingPlaceholder: require("../assets/brand/illustrations/listing-placeholder.png"),
   profileAvatar: require("../assets/brand/social/profile-image.png"),

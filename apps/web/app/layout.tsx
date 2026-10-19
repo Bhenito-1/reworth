@@ -21,7 +21,7 @@ export const metadata: Metadata = {
     title: "ReWorth",
     description: "Lagos, your unused things are worth something.",
     siteName: "ReWorth",
-    images: [{ url: "/brand/landing-page.png" }],
+    images: [{ url: "/brand/landingpage.png" }],
   },
 };
 

@@ -1,80 +1,64 @@
 "use client";
 
 import Link from "next/link";
-
-const WAYS = [
-  { title: "Buy", body: "Find something you want." },
-  { title: "Sell", body: "List what you no longer need." },
-  { title: "Swap", body: "Trade with someone else." },
-  { title: "Give away", body: "Pass it on for free." },
-] as const;
+import { brandPublic } from "../lib/brand";
 
 /**
- * Guest entry. Paper on one side, ink on the other.
+ * Guest entry — full composition from brand/landingpage.png.
  */
 export function LandingPage() {
   return (
-    <main className="min-h-[100dvh] bg-[var(--rw-bg)] px-4 py-6 text-[var(--rw-ink)] sm:px-6 sm:py-8">
-      <div className="mx-auto w-full max-w-6xl">
-        <header className="mb-5 flex items-center gap-2.5 px-1">
-          <span
-            className="h-2 w-2 rounded-full bg-[var(--rw-accent)]"
-            aria-hidden
-          />
-          <p className="text-base font-semibold tracking-tight">ReWorth</p>
-        </header>
+    <div className="min-h-[100dvh] bg-white">
+      <a
+        href="#landing-cta"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-[var(--rw-accent)] focus:px-3 focus:py-2 focus:text-white"
+      >
+        Skip to get started
+      </a>
 
-        <div className="grid overflow-hidden rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] shadow-[var(--rw-shadow-float)] lg:grid-cols-2">
-          <section className="flex flex-col justify-center px-6 py-10 sm:px-12 sm:py-14">
-            <p className="text-sm font-medium text-[var(--rw-accent)]">
-              Buy, sell, swap, or give away
-            </p>
-            <h1 className="mt-4 max-w-[12ch] text-[2.35rem] font-semibold leading-[1.05] tracking-tight sm:text-5xl">
-              Your unused things are worth something.
-            </h1>
-            <p className="mt-5 max-w-sm text-[length:var(--rw-type-body)] leading-relaxed text-[var(--rw-ink-muted)]">
-              A marketplace for the things you no longer need.
-            </p>
-            <div className="mt-8 flex max-w-md flex-col gap-3 sm:flex-row">
-              <Link
-                href="/login"
-                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-[var(--rw-radius)] bg-[var(--rw-accent)] px-6 py-3.5 text-lg text-white hover:bg-[var(--rw-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)] focus-visible:ring-offset-2"
-              >
-                Log in
-              </Link>
-              <Link
-                href="/onboarding"
-                className="inline-flex min-h-11 flex-1 items-center justify-center rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-6 py-3.5 text-lg hover:bg-[var(--rw-accent-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)] focus-visible:ring-offset-2"
-              >
-                Create account
-              </Link>
-            </div>
-          </section>
+      <main
+        className="relative mx-auto w-full max-w-5xl bg-white"
+        aria-label="ReWorth welcome"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={brandPublic.landingPage}
+          alt="ReWorth — Give what you own new value. Unlock value from quality pre-owned items."
+          className="pointer-events-none block h-auto w-full select-none"
+        />
 
-          <ul
-            className="flex flex-col justify-center bg-[var(--rw-ink)] px-6 py-8 text-[var(--rw-bg)] sm:px-12 sm:py-10"
-            aria-label="What you can do on ReWorth"
+        <nav className="absolute inset-0 z-10" aria-label="Landing actions">
+          <Link
+            href="/onboarding"
+            id="landing-cta"
+            className="absolute left-[5.5%] top-[32%] h-[4.5%] w-[14%] overflow-hidden rounded-full text-[0px] text-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rw-accent)]"
+            aria-label="Get started"
           >
-            {WAYS.map((way, index) => (
-              <li
-                key={way.title}
-                className="rw-fade-up border-b border-[color-mix(in_srgb,var(--rw-bg)_16%,transparent)] py-5 last:border-b-0"
-                style={{ animationDelay: `${index * 80}ms` }}
-              >
-                <p className="text-[length:var(--rw-type-meta)] font-medium text-[var(--rw-accent)]">
-                  {String(index + 1).padStart(2, "0")}
-                </p>
-                <p className="mt-1 text-2xl font-semibold tracking-tight">
-                  {way.title}
-                </p>
-                <p className="mt-1 text-[length:var(--rw-type-body-sm)] leading-relaxed text-[color-mix(in_srgb,var(--rw-bg)_72%,transparent)]">
-                  {way.body}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </main>
+            Get Started
+          </Link>
+          <Link
+            href="/login"
+            className="absolute left-[82%] top-[2.4%] h-[4.2%] w-[12%] overflow-hidden rounded-full text-[0px] text-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rw-accent)]"
+            aria-label="Continue — log in"
+          >
+            Continue
+          </Link>
+          <Link
+            href="/onboarding"
+            className="absolute left-[21%] top-[32%] h-[4.5%] w-[13%] overflow-hidden rounded-full text-[0px] text-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rw-accent)]"
+            aria-label="Learn more — create account"
+          >
+            Learn More
+          </Link>
+          <Link
+            href="/onboarding"
+            className="absolute left-[72%] top-[78.5%] h-[4.2%] w-[14%] overflow-hidden rounded-full text-[0px] text-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rw-accent)]"
+            aria-label="Continue to ReWorth"
+          >
+            Continue
+          </Link>
+        </nav>
+      </main>
+    </div>
   );
 }

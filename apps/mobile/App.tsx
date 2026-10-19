@@ -632,7 +632,7 @@ export default function App() {
 
   if (!authed) {
     return (
-      <SafeAreaView style={[styles.safe, { backgroundColor: colors.canvas }]}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: "#FFFFFF" }]}>
         <StatusBar style="dark" />
         {guestMode === "landing" ? (
           <LandingScreen

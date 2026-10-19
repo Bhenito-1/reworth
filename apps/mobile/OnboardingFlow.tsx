@@ -1,9 +1,10 @@
 /**
- * Consumer onboarding — email register/login + profile customise.
+ * Consumer onboarding â email register/login + profile customise.
  */
 
 import { useEffect, useState } from "react";
 import {
+  Dimensions,
   Image,
   Pressable,
   StyleSheet,
@@ -22,8 +23,10 @@ import {
 } from "./lib/areas";
 import { setTokens } from "./lib/auth";
 import { getRegion, listRegions, type RegionCity } from "./lib/region";
+import { brandAssets } from "./lib/brandAssets";
 import { type MeResponse } from "./lib/types";
 import { colors, radius, space, tap, type as typeScale } from "./theme/tokens";
+import { hapticLight } from "./theme/haptics";
 
 type Step = "welcome" | "email" | "profile";
 
@@ -57,7 +60,6 @@ export function OnboardingFlow({
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [welcomeSlide, setWelcomeSlide] = useState(0);
 
   useEffect(() => {
     setError(null);
@@ -193,7 +195,7 @@ export function OnboardingFlow({
     }
     const token = accessToken;
     if (!token) {
-      setError("Session missing — start again");
+      setError("Session missing â start again");
       return;
     }
     setLoading(true);
@@ -218,61 +220,41 @@ export function OnboardingFlow({
     }
   }
 
-  const slides = [
-    { title: "Sell what you don’t need", line: "Photo → AI draft → live in Lagos." },
-    { title: "Buy with local trust", line: "Verified neighbours. Buyer protection." },
-    { title: "Swap or give away", line: "Your unused things are worth something." },
-  ];
-
   return (
     <ScrollView
-      contentContainerStyle={styles.pad}
+      contentContainerStyle={[
+        styles.pad,
+        step === "welcome" && styles.padLanding,
+      ]}
       keyboardShouldPersistTaps="handled"
     >
-      <Text style={styles.brand} accessibilityRole="header">
-        ReWorth
-      </Text>
+      {step !== "welcome" ? (
+        <Text style={styles.brand} accessibilityRole="header">
+          ReWorth
+        </Text>
+      ) : null}
 
       {step === "welcome" ? (
-        <View>
-          <Text style={styles.title}>{slides[welcomeSlide].title}</Text>
-          <Text style={styles.copy}>{slides[welcomeSlide].line}</Text>
-          <View style={styles.dots}>
-            {slides.map((_, i) => (
-              <View
-                key={i}
-                style={[styles.dot, i === welcomeSlide && styles.dotOn]}
-              />
-            ))}
-          </View>
-          <Pressable
-            style={styles.primaryBtn}
-            onPress={() => {
-              if (welcomeSlide < slides.length - 1) {
-                setWelcomeSlide((s) => s + 1);
-              } else {
-                setStep("email");
-              }
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Continue"
-          >
-            <Text style={styles.primaryBtnText}>
-              {welcomeSlide < slides.length - 1 ? "Next" : "Continue with email"}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => {
-              if (onBack && welcomeSlide === 0) onBack();
-              else setStep("email");
-            }}
-            accessibilityRole="button"
-          >
-            <Text style={styles.link}>
-              {onBack && welcomeSlide === 0 ? "Back" : "Skip"}
-            </Text>
-          </Pressable>
-        </View>
+        <Pressable
+          style={({ pressed }) => [
+            styles.landing,
+            pressed && styles.landingPressed,
+          ]}
+          onPress={() => {
+            void hapticLight();
+            setStep("email");
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Get started"
+          testID="landing-get-started"
+        >
+          <Image
+            source={brandAssets.landingPage}
+            style={styles.landingImage}
+            resizeMode="contain"
+            accessibilityIgnoresInvertColors
+          />
+        </Pressable>
       ) : null}
 
       {step === "email" ? (
@@ -341,7 +323,7 @@ export function OnboardingFlow({
           >
             <Text style={styles.primaryBtnText}>
               {loading
-                ? "…"
+                ? "â¦"
                 : intent === "login"
                   ? "Log in"
                   : "Create account"}
@@ -464,7 +446,7 @@ export function OnboardingFlow({
             accessibilityRole="button"
           >
             <Text style={styles.primaryBtnText}>
-              {loading ? "Saving…" : "Enter ReWorth"}
+              {loading ? "Savingâ¦" : "Enter ReWorth"}
             </Text>
           </Pressable>
         </View>
@@ -510,7 +492,7 @@ function PasswordBox({
           accessibilityLabel={visible ? `Hide ${label}` : `Show ${label}`}
           style={styles.passwordToggle}
         >
-          <Text style={styles.passwordToggleText}>{visible ? "◉" : "⌣"}</Text>
+          <Text style={styles.passwordToggleText}>{visible ? "â" : "â£"}</Text>
         </Pressable>
       </View>
     </View>
@@ -523,12 +505,35 @@ const styles = StyleSheet.create({
     paddingBottom: space.xxl,
     gap: space.sm,
   },
+  padLanding: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    flexGrow: 1,
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+  },
   brand: {
     fontSize: typeScale.titleSm,
     fontWeight: "700",
     color: colors.ink,
     marginBottom: space.xl,
     letterSpacing: -0.3,
+  },
+  landing: {
+    width: "100%",
+    minHeight: Dimensions.get("window").height - 48,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+  },
+  landingPressed: {
+    opacity: 0.96,
+  },
+  landingImage: {
+    width: "100%",
+    height: "100%",
+    maxHeight: Dimensions.get("window").height - 48,
   },
   title: {
     fontSize: typeScale.titleSm,
@@ -644,18 +649,6 @@ const styles = StyleSheet.create({
     color: colors.emeraldPressed,
     fontWeight: "600",
   },
-  dots: {
-    flexDirection: "row",
-    gap: space.sm,
-    marginBottom: space.lg,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.border,
-  },
-  dotOn: { backgroundColor: colors.emerald },
   avatarBtn: {
     alignSelf: "center",
     width: 88,

@@ -15,8 +15,10 @@ export const brandPublic = {
   trustedDelivery: "/brand/trust/trusted-delivery.png",
   movingSale: "/brand/social/moving-sale.png",
   movingSaleHero: "/brand/social/moving-sale-hero.jpg",
-  /** Full-bleed marketing hero. */
-  landingPage: "/brand/landing-page.png",
+  /** Website marketing landing (full composition). */
+  landingPage: "/brand/landingpage.png",
+  /** Marketplace home hero crop (distinct from full landing). */
+  homeHero: "/brand/social/splash.png",
   splash: "/brand/social/splash.png",
   splashCentred: "/brand/social/splash-logo-centred.png",
   profileAvatar: "/brand/social/profile-image.png",

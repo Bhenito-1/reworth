@@ -1,10 +1,13 @@
-# ReWorth Maestro — 01 Register / List (stub for device/sim UAT)
+# ReWorth Maestro â 01 Register / List (stub for device/sim UAT)
 # Requires Expo app + Metro; not run in default CI.
 # Demo seller (after seed:staging): ori@demo.reworth.ng / DemoOri!2026
 appId: com.reworth.app
 ---
 - launchApp
 - assertVisible: "ReWorth"
+- tapOn:
+    id: "landing-get-started"
+    optional: true
 # Register or login path (email/password)
 - tapOn: "Log in"
 - tapOn:
@@ -17,7 +20,7 @@ appId: com.reworth.app
 # Sell flow
 - tapOn: "Sell"
 - tapOn: "Add photos"
-# … attach fixture image …
+# â¦ attach fixture image â¦
 - tapOn: "Continue"
 - assertVisible: "Title"
 - inputText: "Maestro test chair"
