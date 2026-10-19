@@ -54,6 +54,7 @@ describe('CloudinaryStorageAdapter', () => {
     });
     const form = init?.body as FormData;
     expect(form.get('public_id')).toBe('uploads/user-1/photo-123');
+    expect(form.get('api_key')).toBe('test-api-key');
   });
 
   it('creates and verifies signed API upload URLs without exposing Cloudinary credentials', async () => {

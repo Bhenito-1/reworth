@@ -52,9 +52,15 @@ export class CloudinaryStorageAdapter implements StorageProvider {
       : Buffer.from(input.body);
     const publicId = cloudinaryPublicId(input.key);
     const form = new FormData();
-    form.set('file', new Blob([Uint8Array.from(body)], { type: input.contentType }), 'upload');
+    // Prefer File when available (Node 20+); avoids Uint8Array.from copies on large photos.
+    const filePart =
+      typeof File !== 'undefined'
+        ? new File([body], 'upload', { type: input.contentType })
+        : new Blob([body], { type: input.contentType });
+    form.set('file', filePart, 'upload');
     form.set('public_id', publicId);
     form.set('overwrite', 'true');
+    form.set('api_key', this.apiKey);
 
     const response = await fetch(this.uploadEndpoint(), {
       method: 'POST',

@@ -33,6 +33,15 @@ export type MediaImageJob = {
   listingImageId: string;
   listingId: string;
   key: string;
+  /** When set, pipeline uses these bytes instead of re-fetching from storage/CDN. */
+  bodyBase64?: string;
+};
+
+type CompleteOptions = {
+  /** Force await pipeline before returning (needed so clients see READY). */
+  processInline?: boolean;
+  /** Bytes already uploaded — skip placeholder seeding and CDN re-fetch. */
+  body?: Buffer;
 };
 
 @Injectable()
@@ -94,7 +103,11 @@ export class MediaService {
     };
   }
 
-  async complete(userId: string, dto: CompleteMediaDto) {
+  async complete(
+    userId: string,
+    dto: CompleteMediaDto,
+    opts: CompleteOptions = {},
+  ) {
     const listing = await this.prisma.listing.findUnique({
       where: { id: dto.listingId },
     });
@@ -102,6 +115,7 @@ export class MediaService {
       throw new BadRequestException('Listing not found or not owned');
     }
 
+    let uploadedBody = opts.body;
     // Persist bytes when client could not PUT to storage (mock / CORS).
     if (dto.inlineBase64) {
       try {
@@ -119,6 +133,7 @@ export class MediaService {
             body,
             contentType,
           });
+          uploadedBody = body;
         }
       } catch (err) {
         if (err instanceof BadRequestException) throw err;
@@ -126,9 +141,13 @@ export class MediaService {
           `inlineBase64 putObject failed: ${(err as Error).message}`,
         );
       }
-    } else if (this.storage.getObject) {
-      // Mock Sell path often completes with a key and no PUT — seed a tiny JPEG
-      // so vision assist and the image pipeline have bytes.
+    } else if (
+      !uploadedBody &&
+      this.storage.name === 'mock-storage' &&
+      this.storage.getObject
+    ) {
+      // Mock Sell path often completes with a key and no PUT — seed a tiny JPEG.
+      // Never do this for Cloudinary/S3/local: it can overwrite a real upload.
       try {
         const existing = await this.storage.getObject(this.bucket, dto.key);
         if (!existing || existing.length === 0) {
@@ -138,6 +157,7 @@ export class MediaService {
             body: PLACEHOLDER_JPEG,
             contentType: 'image/jpeg',
           });
+          uploadedBody = PLACEHOLDER_JPEG;
         }
       } catch {
         /* non-fatal */
@@ -153,13 +173,18 @@ export class MediaService {
       },
     });
 
+    const processInline = opts.processInline === true || this.inline;
     const job: MediaImageJob = {
       listingImageId: image.id,
       listingId: dto.listingId,
       key: dto.key,
+      // Only attach bytes for inline processing — never push multi‑MB payloads to Redis.
+      ...(uploadedBody && processInline
+        ? { bodyBase64: uploadedBody.toString('base64') }
+        : {}),
     };
 
-    if (this.inline) {
+    if (processInline) {
       await this.processImageJob(job);
     } else {
       try {
@@ -171,13 +196,22 @@ export class MediaService {
         this.logger.warn(
           `Queue enqueue failed, processing inline: ${(err as Error).message}`,
         );
-        await this.processImageJob(job);
+        await this.processImageJob({
+          ...job,
+          ...(uploadedBody
+            ? { bodyBase64: uploadedBody.toString('base64') }
+            : {}),
+        });
       }
     }
 
-    return this.prisma.listingImage.findUniqueOrThrow({
+    const ready = await this.prisma.listingImage.findUniqueOrThrow({
       where: { id: image.id },
     });
+    this.logger.log(
+      `media complete key=${dto.key} status=${ready.status} storage=${this.storage.name}`,
+    );
+    return ready;
   }
 
   async processImageJob(job: MediaImageJob): Promise<void> {
@@ -194,7 +228,9 @@ export class MediaService {
     }
 
     let body: Buffer | null = null;
-    if (this.storage.getObject) {
+    if (job.bodyBase64) {
+      body = Buffer.from(job.bodyBase64, 'base64');
+    } else if (this.storage.getObject) {
       body = await this.storage.getObject(this.bucket, job.key);
     }
 
@@ -280,6 +316,9 @@ export class MediaService {
 
     const safeName = opts.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const key = `uploads/${userId}/${randomUUID()}-${safeName}`;
+    this.logger.log(
+      `media store key=${key} bytes=${opts.body.length} storage=${this.storage.name}`,
+    );
     const uploaded = await this.storage.putObject({
       bucket: this.bucket,
       key,
@@ -321,11 +360,17 @@ export class MediaService {
       body: opts.body,
     });
 
-    return this.complete(userId, {
-      key: stored.key,
-      listingId: opts.listingId,
-      sortOrder: opts.sortOrder,
-    });
+    // Always finish to READY in this request. Clients (web/mobile) reject PENDING,
+    // and Render+Redis often leaves jobs queued when BULLMQ_INLINE is unset.
+    return this.complete(
+      userId,
+      {
+        key: stored.key,
+        listingId: opts.listingId,
+        sortOrder: opts.sortOrder,
+      },
+      { processInline: true, body: opts.body },
+    );
   }
 
   /** Attach already-uploaded keys to a listing (creates PENDING then processes). */
