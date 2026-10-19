@@ -102,11 +102,6 @@ export class RecommendationService {
     const limit = Math.min(Math.max(ctx.limit ?? 12, 1), 40);
     const surface = ctx.surface ?? 'home';
 
-    const hideOwn = (items: PublicListingDto[]) =>
-      ctx.userId
-        ? items.filter((item) => item.seller.id !== ctx.userId)
-        : items;
-
     if (ctx.userId && this.recProvider && this.experiments) {
       const variant = await this.experiments.assignVariant(
         ctx.userId,
@@ -121,29 +116,25 @@ export class RecommendationService {
           surface,
           seed: ctx.seed ?? `${ctx.userId}:${surface}`,
         };
-        return hideOwn(await this.recProvider.recommend(recCtx));
+        return this.recProvider.recommend(recCtx);
       }
     } else if (ctx.userId && this.recProvider && !this.experiments) {
-      return hideOwn(
-        await this.recProvider.recommend({
-          userId: ctx.userId,
-          city,
-          listingId: ctx.listingId,
-          limit,
-          surface,
-          seed: ctx.seed ?? `${ctx.userId}:${surface}`,
-        }),
-      );
-    }
-
-    return hideOwn(
-      await this.popularityFallback({
+      return this.recProvider.recommend({
+        userId: ctx.userId,
         city,
         listingId: ctx.listingId,
         limit,
         surface,
-      }),
-    );
+        seed: ctx.seed ?? `${ctx.userId}:${surface}`,
+      });
+    }
+
+    return this.popularityFallback({
+      city,
+      listingId: ctx.listingId,
+      limit,
+      surface,
+    });
   }
 
   private async popularityFallback(input: {

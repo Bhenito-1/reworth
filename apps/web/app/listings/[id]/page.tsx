@@ -106,11 +106,10 @@ export default function ListingPdpPage() {
   const similarInCategory = useMemo(
     () =>
       similar.filter((item) => {
-        if (meId && item.seller?.id === meId) return false;
         if (!listing?.category?.id) return false;
         return item.category?.id === listing.category.id;
       }),
-    [similar, meId, listing?.category?.id],
+    [similar, listing?.category?.id],
   );
   const [priceIntel, setPriceIntel] = useState<PriceIntelligence | null>(null);
   const [reportViewerOpen, setReportViewerOpen] = useState(false);

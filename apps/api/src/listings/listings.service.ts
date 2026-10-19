@@ -243,7 +243,6 @@ export class ListingsService {
     } else {
       where.quantityAvailable = { gt: 0 };
       where.NOT = { riskFlags: { has: 'swap-response' } };
-      if (viewerId) where.sellerId = { not: viewerId };
     }
 
     const rows = await this.prisma.listing.findMany({

@@ -210,25 +210,19 @@ export class HomeService {
       .filter((r) => r.distanceKm != null)
       .sort((a, b) => (a.distanceKm ?? 99) - (b.distanceKm ?? 99));
 
-    const others = (rows: Row[]) =>
-      query.viewerId
-        ? rows.filter((row) => row.sellerId !== query.viewerId)
-        : rows;
-    const browse = others(withDistance);
-
-    const justListed = [...browse].sort(
+    const justListed = [...withDistance].sort(
       (a, b) =>
         (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0),
     );
 
     const priceDropIds = new Set(await this.priceDropListingIds(5));
-    const priceDrops = browse.filter((r) => priceDropIds.has(r.id));
+    const priceDrops = withDistance.filter((r) => priceDropIds.has(r.id));
 
     const popularMeta = new Map<
       string,
       { views: number; saves: number; publishedAt: Date | null }
     >();
-    for (const r of browse) {
+    for (const r of withDistance) {
       const saves = r.events.filter((e) => e.type === 'SAVED').length;
       popularMeta.set(r.id, {
         views: r.views,
@@ -237,11 +231,11 @@ export class HomeService {
       });
     }
     const popularNear = this.recommendations.rank(
-      toItems(others(inRadius(withDistance)), 40),
+      toItems(inRadius(withDistance), 40),
       popularMeta,
     );
 
-    const verified = others(withDistance).filter((r) =>
+    const verified = withDistance.filter((r) =>
       r.seller?.verifications?.some(
         (v) => v.level === 'L3_IDENTITY' && v.status === 'VERIFIED',
       ),
@@ -249,18 +243,16 @@ export class HomeService {
 
     let recommended: PublicListingDto[];
     if (query.viewerId) {
-      recommended = (
-        await this.recommendations.recommend({
-          userId: query.viewerId,
-          city: cityLabel,
-          limit: 12,
-          surface: 'home',
-          seed: `${query.viewerId}:home`,
-        })
-      ).filter((item) => item.seller.id !== query.viewerId);
+      recommended = await this.recommendations.recommend({
+        userId: query.viewerId,
+        city: cityLabel,
+        limit: 12,
+        surface: 'home',
+        seed: `${query.viewerId}:home`,
+      });
     } else {
       recommended = this.recommendations
-        .rank(toItems(browse, 40), popularMeta)
+        .rank(toItems(withDistance, 40), popularMeta)
         .slice(0, 12);
     }
 
@@ -279,7 +271,7 @@ export class HomeService {
       limit: 12,
     });
 
-    const nearbyItems = others(nearbyPool);
+    const nearbyItems = nearbyPool;
 
     return [
       {
