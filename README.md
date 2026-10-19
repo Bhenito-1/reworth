@@ -60,6 +60,12 @@ docker compose -f infra/docker-compose.yml up -d postgres redis s3mock
 
 Fallback: `STORAGE_DRIVER=local` serves files from API disk at `/api/v1/media/files`.
 
+For Cloudinary-backed media (web + mobile), set `STORAGE_DRIVER=cloudinary` and provide
+`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` to the
+API service only. Clients upload via `/api/v1/media/direct` (listings) or
+`/api/v1/media/store` (avatars, room-scan, worth); the API writes to Cloudinary and
+returns `res.cloudinary.com` URLs (including sized `w_640` / webp transforms).
+
 ```bash
 # Golden-path e2e (skips if API down)
 pnpm exec playwright install chromium

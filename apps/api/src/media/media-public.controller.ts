@@ -1,7 +1,6 @@
 import {
   Controller,
   Inject,
-  NotFoundException,
   Put,
   Query,
   Req,
@@ -14,11 +13,9 @@ import {
   STORAGE_PROVIDER,
   type StorageProvider,
 } from '../providers/storage.provider';
-import { LocalFsStorageAdapter } from '../providers/local-fs-storage.adapter';
 
 /**
- * Signed local upload (no JWT). Used when STORAGE_DRIVER=local replaces adobe/s3mock.
- * Public GETs are served via express.static in main.ts.
+ * Signed API-proxied upload (no JWT) for storage providers without public PUT URLs.
  */
 @Controller('media')
 export class MediaPublicController {
@@ -40,15 +37,12 @@ export class MediaPublicController {
     @Req() req: Request & { body?: Buffer },
     @Res() res: Response,
   ) {
-    if (!(this.storage instanceof LocalFsStorageAdapter)) {
-      throw new NotFoundException('Local upload is not enabled');
-    }
     if (!key || !expiresRaw || !signature) {
       throw new UnauthorizedException('Missing upload signature');
     }
     const expires = Number(expiresRaw);
     const signedType = contentType ?? '';
-    if (!this.storage.verifyUpload(key, expires, signedType, signature)) {
+    if (!this.storage.verifyUpload?.(key, expires, signedType, signature)) {
       throw new UnauthorizedException('Invalid or expired upload signature');
     }
 

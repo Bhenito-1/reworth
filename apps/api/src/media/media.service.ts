@@ -214,6 +214,9 @@ export class MediaService {
         key: job.key,
         body,
         publicUrl: (k) => this.storage.publicUrl(k),
+        deliveryUrl: this.storage.deliveryUrl
+          ? (k, t) => this.storage.deliveryUrl!(k, t)
+          : undefined,
         mode: this.pipelineMode,
       });
 
@@ -252,14 +255,12 @@ export class MediaService {
   }
 
   /**
-   * Authenticated direct upload — stores bytes then runs the image pipeline.
-   * Preferred over silent-failing browser PUT to presigned URLs.
+   * Authenticated store — puts bytes in the active storage driver (Cloudinary/S3/local)
+   * without attaching to a listing. Used by room-scan, worth, avatars.
    */
-  async uploadDirect(
+  async storeObject(
     userId: string,
     opts: {
-      listingId: string;
-      sortOrder: number;
       fileName: string;
       contentType: string;
       body: Buffer;
@@ -277,6 +278,36 @@ export class MediaService {
       throw new BadRequestException('File exceeds 10MB limit');
     }
 
+    const safeName = opts.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const key = `uploads/${userId}/${randomUUID()}-${safeName}`;
+    const uploaded = await this.storage.putObject({
+      bucket: this.bucket,
+      key,
+      body: opts.body,
+      contentType: opts.contentType,
+    });
+
+    return {
+      key,
+      publicUrl: uploaded.url || this.storage.publicUrl(key),
+      storage: this.storage.name,
+    };
+  }
+
+  /**
+   * Authenticated direct upload — stores bytes then runs the image pipeline.
+   * Preferred over silent-failing browser PUT to presigned URLs.
+   */
+  async uploadDirect(
+    userId: string,
+    opts: {
+      listingId: string;
+      sortOrder: number;
+      fileName: string;
+      contentType: string;
+      body: Buffer;
+    },
+  ) {
     const listing = await this.prisma.listing.findUnique({
       where: { id: opts.listingId },
     });
@@ -284,17 +315,14 @@ export class MediaService {
       throw new BadRequestException('Listing not found or not owned');
     }
 
-    const safeName = opts.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const key = `uploads/${userId}/${randomUUID()}-${safeName}`;
-    await this.storage.putObject({
-      bucket: this.bucket,
-      key,
-      body: opts.body,
+    const stored = await this.storeObject(userId, {
+      fileName: opts.fileName,
       contentType: opts.contentType,
+      body: opts.body,
     });
 
     return this.complete(userId, {
-      key,
+      key: stored.key,
       listingId: opts.listingId,
       sortOrder: opts.sortOrder,
     });

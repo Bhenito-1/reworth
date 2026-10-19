@@ -35,6 +35,13 @@ export interface StorageProvider {
   getObject?(bucket: string, key: string): Promise<Buffer | null>;
   deleteObject(bucket: string, key: string): Promise<void>;
   publicUrl(key: string): string;
+  /**
+   * Optional CDN delivery URL with provider-native transforms
+   * (e.g. Cloudinary `w_640,f_webp`). Falls back to publicUrl when omitted.
+   */
+  deliveryUrl?(key: string, transformation?: string): string;
+  /** Validate an API-proxied upload URL when direct object-store PUTs aren't used. */
+  verifyUpload?(key: string, expires: number, contentType: string, signature: string): boolean;
 }
 
 export const STORAGE_PROVIDER = Symbol('STORAGE_PROVIDER');

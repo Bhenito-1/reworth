@@ -165,6 +165,37 @@ export async function attachListingImages(
   });
 }
 
+/** Authenticated multipart store — puts bytes in Cloudinary/S3 (no listing). */
+export async function storeMediaPhoto(
+  token: string,
+  file: {
+    uri: string;
+    name: string;
+    type: string;
+    file?: Blob;
+  },
+): Promise<{ key: string; publicUrl: string }> {
+  const form = new FormData();
+  const name = file.name || "photo.jpg";
+  if (Platform.OS === "web") {
+    const blob =
+      file.file && file.file.size > 0 ? file.file : await blobFromUri(file.uri);
+    form.append("file", namedFile(blob, name));
+  } else {
+    form.append("file", {
+      uri: file.uri,
+      name,
+      type: file.type || "image/jpeg",
+    } as unknown as Blob);
+  }
+
+  return apiFetch<{ key: string; publicUrl: string }>("/media/store", {
+    method: "POST",
+    token,
+    body: form,
+  });
+}
+
 /** Authenticated multipart upload — stores bytes and marks image READY. */
 export async function uploadListingPhotoDirect(
   token: string,

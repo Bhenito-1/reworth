@@ -109,7 +109,11 @@ async function bootstrap() {
 
   // Local disk media (replaces adobe/s3mock when STORAGE_DRIVER=local)
   const storageDriver = (process.env.STORAGE_DRIVER ?? 'local').toLowerCase();
-  if (storageDriver === 'local' || storageDriver === 'fs') {
+  if (
+    storageDriver === 'local' ||
+    storageDriver === 'fs' ||
+    storageDriver === 'cloudinary'
+  ) {
     const bucket = process.env.S3_BUCKET ?? 'reworth-media';
     const root = process.env.MEDIA_LOCAL_DIR
       ? resolve(process.env.MEDIA_LOCAL_DIR)

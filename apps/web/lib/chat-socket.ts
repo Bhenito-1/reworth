@@ -29,23 +29,72 @@ type Handlers = {
 let socket: Socket | null = null;
 let socketToken: string | null = null;
 let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+let lifecycleBound = false;
+/** True while the tab is frozen / in bfcache — avoid noisy reconnect loops. */
+let suspended = false;
 const listeners = new Set<Handlers>();
 
 function origin(): string {
   return API_URL.replace(/\/api\/v1\/?$/, "");
 }
 
+function bindLifecycle() {
+  if (lifecycleBound || typeof window === "undefined") return;
+  lifecycleBound = true;
+
+  const suspend = () => {
+    if (!socket || suspended) return;
+    suspended = true;
+    // Close cleanly so Chrome can bfcache the page without a failed WS error.
+    socket.io.reconnection(false);
+    socket.disconnect();
+  };
+
+  const resume = () => {
+    if (!suspended) return;
+    suspended = false;
+    if (!socketToken || listeners.size === 0) return;
+    const token = socketToken;
+    if (socket) {
+      socket.io.reconnection(true);
+      if (!socket.connected) socket.connect();
+      return;
+    }
+    socketToken = null;
+    ensure(token);
+  };
+
+  window.addEventListener("pagehide", suspend);
+  window.addEventListener("freeze", suspend);
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) resume();
+  });
+  document.addEventListener("resume", resume);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") resume();
+  });
+}
+
 function ensure(token: string) {
+  bindLifecycle();
   if (releaseTimer) {
     clearTimeout(releaseTimer);
     releaseTimer = null;
   }
-  if (socket && socketToken === token) return;
+  if (suspended) {
+    socketToken = token;
+    return;
+  }
+  if (socket && socketToken === token) {
+    if (!socket.connected) socket.connect();
+    return;
+  }
   socket?.disconnect();
   socketToken = token;
   const next = io(`${origin()}/chat`, {
     auth: { token },
-    transports: ["websocket"],
+    // Prefer websocket; allow polling fallback on hosts that interrupt WS.
+    transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 10000,
@@ -89,6 +138,7 @@ export function subscribeChat(token: string, handlers: Handlers): () => void {
       socket?.disconnect();
       socket = null;
       socketToken = null;
+      suspended = false;
     }, 1500);
   };
 }

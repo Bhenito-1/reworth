@@ -33,6 +33,8 @@ export type PipelineInput = {
   key: string;
   body: Buffer | null;
   publicUrl: (variantKey: string) => string;
+  /** When set (Cloudinary), build real transform URLs for w640/webp etc. */
+  deliveryUrl?: (key: string, transformation?: string) => string;
   mode: 'mock' | 'sharp';
 };
 
@@ -69,8 +71,8 @@ function buildMockVariants(
   key: string,
   publicUrl: (k: string) => string,
 ): ImageVariants {
-  // Point every size at the original object so mock/local storage works
-  // without generating real WebP/AVIF derivatives.
+  // Point every size at the original object so mock/local/S3 storage works
+  // without generating real WebP/AVIF derivatives on disk.
   const url = publicUrl(key);
   return {
     original: url,
@@ -78,6 +80,35 @@ function buildMockVariants(
     w1080: { webp: url, avif: url },
     w1600: { webp: url, avif: url },
   };
+}
+
+/** Cloudinary on-the-fly transforms — no extra stored files needed. */
+function buildCloudinaryVariants(
+  key: string,
+  deliveryUrl: (k: string, transformation?: string) => string,
+): ImageVariants {
+  return {
+    original: deliveryUrl(key),
+    w640: {
+      webp: deliveryUrl(key, 'w_640,c_limit,f_webp,q_auto'),
+      avif: deliveryUrl(key, 'w_640,c_limit,f_avif,q_auto'),
+    },
+    w1080: {
+      webp: deliveryUrl(key, 'w_1080,c_limit,f_webp,q_auto'),
+      avif: deliveryUrl(key, 'w_1080,c_limit,f_avif,q_auto'),
+    },
+    w1600: {
+      webp: deliveryUrl(key, 'w_1600,c_limit,f_webp,q_auto'),
+      avif: deliveryUrl(key, 'w_1600,c_limit,f_avif,q_auto'),
+    },
+  };
+}
+
+function buildVariants(input: PipelineInput): ImageVariants {
+  if (input.deliveryUrl) {
+    return buildCloudinaryVariants(input.key, input.deliveryUrl);
+  }
+  return buildMockVariants(input.key, input.publicUrl);
 }
 
 /**
@@ -123,7 +154,7 @@ export async function runImagePipeline(
     dHash: mockDHash(input.key, sizeBytes || 1024),
     exifStripped: true,
     gps: undefined,
-    variants: buildMockVariants(input.key, input.publicUrl),
+    variants: buildVariants(input),
   };
 }
 
@@ -189,8 +220,8 @@ async function runSharpPipeline(
   const dHash = BigInt('0b' + bits).toString(16).padStart(16, '0');
 
   const base = input.key.replace(/\.[^.]+$/, '');
-  const variants = buildMockVariants(input.key, input.publicUrl);
-  // Record intended variant keys (actual upload of variants can be async later)
+  const variants = buildVariants(input);
+  // Record intended variant keys (Cloudinary transforms or mock aliases)
   void base;
 
   return {
