@@ -121,7 +121,7 @@ export default function MovingSalePage() {
               {Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-44 shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading listing"
                 />
               ))}
@@ -202,7 +202,7 @@ export default function MovingSalePage() {
                   {liveItems.map((item) => (
                     <li
                       key={item.id}
-                      className="w-[7.5rem] shrink-0"
+                      className="w-44 shrink-0"
                       onClick={() => {
                         const token = getAccessToken();
                         void recordMovingSaleEvent(

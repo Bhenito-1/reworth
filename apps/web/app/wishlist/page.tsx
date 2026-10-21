@@ -108,7 +108,7 @@ export default function WishlistPage() {
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-44 shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading wishlist"
                 />
               ))}
@@ -136,7 +136,7 @@ export default function WishlistPage() {
           ) : (
             <ul className="flex flex-wrap gap-3">
               {(items ?? []).map((row) => (
-                <li key={row.favouriteId} className="w-[7.5rem] shrink-0">
+                <li key={row.favouriteId} className="w-44 shrink-0">
                   <DiscoveryListingCard
                     listing={row.listing}
                     favourited
