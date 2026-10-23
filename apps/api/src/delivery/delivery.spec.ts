@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ConflictException } from '@nestjs/common';
 import { NotificationChannel } from '@prisma/client';
+import { createHmac } from 'crypto';
 import { computeDeliveryFeeKobo } from '../providers/delivery.provider';
 import { haversineKm } from '../providers/search.provider';
 import { MockDeliveryProvider } from '../providers/mock-delivery.provider';
+import { PartnerDeliveryProvider } from '../providers/partner-delivery.provider';
 import { MockEmailProvider } from '../providers/mock-email.provider';
 import { MockPushProvider } from '../providers/mock-push.provider';
 import {
@@ -373,6 +375,43 @@ describe('NotificationsService', () => {
           c.channel === NotificationChannel.IN_APP &&
           c.meta?.digest === true,
       ),
+    ).toBe(true);
+  });
+});
+
+describe('PartnerDeliveryProvider', () => {
+  it('dry-run createShipment returns partner_dry ref and next-day ETA', async () => {
+    const provider = new PartnerDeliveryProvider({
+      apiUrl: '',
+      apiKey: '',
+      mode: 'dry-run',
+    });
+    const created = await provider.createShipment({
+      orderId: '11111111-2222-3333-4444-555555555555',
+      quoteKobo: 150000,
+      fromLat: 6.45,
+      fromLng: 3.4,
+      toLat: 6.5,
+      toLng: 3.5,
+    });
+    expect(created.providerRef.startsWith('partner_dry_')).toBe(true);
+    expect(created.status).toBe('ASSIGNED');
+    expect(created.etaFrom).toBeInstanceOf(Date);
+    expect(created.etaTo!.getTime()).toBeGreaterThan(created.etaFrom!.getTime());
+  });
+
+  it('verifyWebhookSignature accepts valid HMAC when secret set', () => {
+    const secret = 'test-delivery-webhook';
+    const raw = JSON.stringify({ orderId: 'o1', status: 'DELIVERED' });
+    const sig = createHmac('sha256', secret).update(raw).digest('hex');
+    expect(
+      PartnerDeliveryProvider.verifyWebhookSignature(raw, sig, secret),
+    ).toBe(true);
+    expect(
+      PartnerDeliveryProvider.verifyWebhookSignature(raw, 'bad', secret),
+    ).toBe(false);
+    expect(
+      PartnerDeliveryProvider.verifyWebhookSignature(raw, undefined, undefined),
     ).toBe(true);
   });
 });

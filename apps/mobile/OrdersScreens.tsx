@@ -13,14 +13,28 @@ import { ScrollView } from "./components/BoundScroll";
 import { ApiError, apiFetch } from "./lib/api";
 import { getAccessToken } from "./lib/auth";
 import { brandAssets, orderStatusBadgeSource } from "./lib/brandAssets";
+import { DeliveryExceptionBanner } from "./components/DeliveryExceptionBanner";
+import { DeliveryJourneyTimeline } from "./components/DeliveryJourneyTimeline";
 import {
+  DeliveryTrackingSheet,
+  type DeliveryCorridor,
+} from "./components/DeliveryTrackingSheet";
+import {
+  buildDeliveryCorridor,
+  deliveryWindowHint,
   discloseOrderAddress,
   fallbackDeliveryDestination,
+  formatDeliveryEta,
   getDeliveryQuote,
   getOrderShipment,
-  shipmentStatusLabel,
+  privacyBeforePayCopy,
   type DeliveryShipment,
 } from "./lib/delivery";
+import {
+  canOpenDeliveryDispute,
+  classifyDeliveryException,
+  DELIVERY_DISPUTE_HINTS,
+} from "./lib/deliveryExceptions";
 import { getListing } from "./lib/listings";
 import { cancelSwapProposal, createGiveawayClaim, getGiftDeliveryQuote } from "./lib/swap";
 import {
@@ -31,7 +45,6 @@ import {
   confirmReceipt,
   confirmSellerOrder,
   createOrder,
-  DISPUTE_REASONS,
   disputeIdFromEvents,
   disputeReasonLabel,
   disputeStatusLabel,
@@ -335,12 +348,13 @@ export function CheckoutModal({
   const [listing, setListing] = useState<PublicListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fulfilment] = useState<FulfilmentMethod>("DELIVERY");
+  const [fulfilment, setFulfilment] = useState<FulfilmentMethod>("DELIVERY");
   const [busy, setBusy] = useState(false);
   const [payment, setPayment] = useState<PaymentDto | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [deliveryFeeKobo, setDeliveryFeeKobo] = useState(0);
+  const [quoteEta, setQuoteEta] = useState(deliveryWindowHint());
   const [swapPair, setSwapPair] = useState<OrderDetail["swap"]>(null);
   const [giftArea, setGiftArea] = useState("");
   const [quoteBusy, setQuoteBusy] = useState(false);
@@ -360,12 +374,16 @@ export function CheckoutModal({
       setPayment(null);
       setOrderId(null);
       setDeliveryFeeKobo(0);
+      setQuoteEta(deliveryWindowHint());
       setGiftArea("");
       try {
         const token = await getAccessToken();
         const data = await getListing(listingId, token);
         if (cancelled) return;
         setListing(data);
+        if (data.fulfilmentDelivery !== false) setFulfilment("DELIVERY");
+        else if (data.fulfilmentMeet) setFulfilment("MEET_POINT");
+        else if (data.fulfilmentPickup) setFulfilment("PICKUP");
         if (params?.payOrderId) {
           if (!token) {
             setError("Sign in to pay the delivery fee.");
@@ -452,7 +470,7 @@ export function CheckoutModal({
       }
       const order = await createOrder(token, {
         listingId,
-        fulfilmentMethod: "DELIVERY",
+        fulfilmentMethod: fulfilment,
         ...(quantity > 1 ? { quantity } : {}),
         ...(params?.orderIntentId
           ? { orderIntentId: params.orderIntentId }
@@ -467,19 +485,24 @@ export function CheckoutModal({
         return;
       }
 
-      setQuoteBusy(true);
-      const dest = fallbackDeliveryDestination(
-        (listing as { geoLat?: number | null })?.geoLat,
-        (listing as { geoLng?: number | null })?.geoLng,
-      );
-      const quote = await getDeliveryQuote(
-        token,
-        order.id,
-        dest.toLat,
-        dest.toLng,
-      );
-      setDeliveryFeeKobo(quote.deliveryFeeKobo ?? quote.feeKobo);
-      setQuoteBusy(false);
+      if (fulfilment === "DELIVERY") {
+        setQuoteBusy(true);
+        const dest = fallbackDeliveryDestination(
+          (listing as { geoLat?: number | null })?.geoLat,
+          (listing as { geoLng?: number | null })?.geoLng,
+        );
+        const quote = await getDeliveryQuote(
+          token,
+          order.id,
+          dest.toLat,
+          dest.toLng,
+        );
+        setDeliveryFeeKobo(quote.deliveryFeeKobo ?? quote.feeKobo);
+        setQuoteEta(deliveryWindowHint());
+        setQuoteBusy(false);
+      } else {
+        setDeliveryFeeKobo(0);
+      }
 
       const pay = await initiatePayment(token, {
         orderId: order.id,
@@ -636,15 +659,84 @@ export function CheckoutModal({
                 </View>
                 )}
 
-                <Text style={styles.section}>ReWorth delivery</Text>
-                <Text style={styles.muted}>
-                  {isSwapCheckout
-                    ? "You pay the delivery fee and a ₦500 swap fee."
-                    : isGift
-                    ? `Delivery to ${giftArea || "your area"}. The fee is ₦1,500 plus ₦150 per kilometre.`
-                    : "Every order is delivered by ReWorth. The courier is simulated for now. Fee is ₦1,500 plus ₦150 per kilometre."}
-                  {quoteBusy ? " Quoting…" : ""}
-                </Text>
+                <Text style={styles.section}>How do you want it?</Text>
+                {!isSwapCheckout && !isGift ? (
+                  <View style={styles.fulfilmentCards}>
+                    {(
+                      [
+                        {
+                          id: "DELIVERY" as const,
+                          title: "ReWorth delivery",
+                          body: `${quoteEta} · Fee shown before you pay`,
+                          enabled: listing?.fulfilmentDelivery !== false,
+                        },
+                        {
+                          id: "MEET_POINT" as const,
+                          title: "Safe meetup",
+                          body: "Meet at a known spot · no rider fee",
+                          enabled: Boolean(listing?.fulfilmentMeet),
+                        },
+                        {
+                          id: "PICKUP" as const,
+                          title: "Buyer pickup",
+                          body: "Collect from seller · address after pay",
+                          enabled: Boolean(listing?.fulfilmentPickup),
+                        },
+                      ] as const
+                    )
+                      .filter((c) => c.enabled)
+                      .map((card) => {
+                        const on = fulfilment === card.id;
+                        return (
+                          <Pressable
+                            key={card.id}
+                            style={[
+                              styles.fulfilmentCard,
+                              on && styles.fulfilmentCardOn,
+                            ]}
+                            onPress={() => {
+                              setFulfilment(card.id);
+                              if (card.id !== "DELIVERY") setDeliveryFeeKobo(0);
+                            }}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: on }}
+                            accessibilityLabel={card.title}
+                          >
+                            <Text
+                              style={[
+                                styles.fulfilmentCardTitle,
+                                on && styles.fulfilmentCardTitleOn,
+                              ]}
+                            >
+                              {card.title}
+                            </Text>
+                            <Text style={styles.fulfilmentCardBody}>
+                              {card.body}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                  </View>
+                ) : (
+                  <Text style={styles.muted}>
+                    {isSwapCheckout
+                      ? "You pay the delivery fee and a ₦500 swap fee."
+                      : `Delivery to ${giftArea || "your area"}. Fee is quoted for your corridor.`}
+                    {quoteBusy ? " Quoting…" : ""}
+                  </Text>
+                )}
+                {fulfilment === "DELIVERY" ? (
+                  <Text style={styles.muted}>
+                    {privacyBeforePayCopy()}
+                    {deliveryFeeKobo > 0
+                      ? ` · ${formatDeliveryEta(null, null)}`
+                      : quoteBusy
+                        ? " · Quoting…"
+                        : ` · ${quoteEta}`}
+                  </Text>
+                ) : (
+                  <Text style={styles.muted}>{privacyBeforePayCopy()}</Text>
+                )}
 
                 <View style={styles.breakdown}>
                   {isSwapCheckout ? null : (
@@ -761,6 +853,8 @@ export function OrderDetailModal({
   const [shipment, setShipment] = useState<DeliveryShipment | null>(null);
   const [discloseBusy, setDiscloseBusy] = useState(false);
   const [disclosedAddress, setDisclosedAddress] = useState<string | null>(null);
+  const [trackingOpen, setTrackingOpen] = useState(false);
+  const [corridor, setCorridor] = useState<DeliveryCorridor | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!orderId) return;
@@ -952,6 +1046,7 @@ export function OrderDetailModal({
   const disputeId = order ? disputeIdFromEvents(order.events) : null;
 
   return (
+    <>
     <Modal
       visible={Boolean(orderId)}
       animationType="slide"
@@ -1073,19 +1168,86 @@ export function OrderDetailModal({
                   <Row label="Refund" value={refundStatusFromOrder(order)} />
                 </View>
 
+                {shipment && order
+                  ? (() => {
+                      const ex = classifyDeliveryException(
+                        shipment,
+                        String(order.status),
+                      );
+                      if (!ex) return null;
+                      const allowDispute = canOpenDeliveryDispute({
+                        isBuyer: Boolean(isBuyer),
+                        hasOpenDispute: Boolean(disputeId),
+                        orderStatus: String(order.status),
+                        shipmentStatus: shipment.status,
+                      });
+                      return (
+                        <DeliveryExceptionBanner
+                          exception={ex}
+                          role={isSeller ? "seller" : "buyer"}
+                          onDispute={
+                            allowDispute
+                              ? () => {
+                                  if (ex.suggestedDisputeReason) {
+                                    setDisputeReason(ex.suggestedDisputeReason);
+                                  }
+                                  setShowDispute(true);
+                                }
+                              : undefined
+                          }
+                          onDismissSoft={
+                            isBuyer && ex.kind === "item_issue"
+                              ? () => void run("confirm")
+                              : undefined
+                          }
+                        />
+                      );
+                    })()
+                  : null}
+
                 {shipment ? (
-                  <View style={styles.protect}>
-                    <Text style={styles.protectTitle}>Delivery tracking</Text>
-                    <Text style={styles.badge}>
-                      {shipmentStatusLabel(shipment.status)}
-                    </Text>
-                    {shipment.events?.map((e) => (
-                      <Text key={e.id} style={styles.muted}>
-                        {shipmentStatusLabel(e.status)} ·{" "}
-                        {new Date(e.createdAt).toLocaleString()}
-                      </Text>
-                    ))}
-                  </View>
+                  <DeliveryJourneyTimeline
+                    shipment={shipment}
+                    role={isSeller ? "seller" : "buyer"}
+                    onOpenTracking={() => {
+                      void (async () => {
+                        const token = await getAccessToken();
+                        if (!token || !order) {
+                          setTrackingOpen(true);
+                          return;
+                        }
+                        try {
+                          const listing = await getListing(
+                            order.listingId,
+                            token,
+                          );
+                          const geo = listing as {
+                            geoLat?: number | null;
+                            geoLng?: number | null;
+                          };
+                          setCorridor(
+                            buildDeliveryCorridor({
+                              listingLat: geo.geoLat,
+                              listingLng: geo.geoLng,
+                              distanceKm: shipment.distanceKm,
+                              sellerLabel:
+                                listing.community ||
+                                listing.city ||
+                                "Seller area",
+                              buyerLabel: "Your delivery area",
+                            }),
+                          );
+                        } catch {
+                          setCorridor(
+                            buildDeliveryCorridor({
+                              distanceKm: shipment.distanceKm,
+                            }),
+                          );
+                        }
+                        setTrackingOpen(true);
+                      })();
+                    }}
+                  />
                 ) : null}
 
                 {isSeller &&
@@ -1324,10 +1486,12 @@ export function OrderDetailModal({
                       onPress={() => void run("cancel")}
                     />
                   ) : null}
-                  {isBuyer &&
-                  (order.status === "RECEIVED" ||
-                    order.status === "COMPLETED") &&
-                  !disputeId ? (
+                  {canOpenDeliveryDispute({
+                    isBuyer: Boolean(isBuyer),
+                    hasOpenDispute: Boolean(disputeId),
+                    orderStatus: String(order.status),
+                    shipmentStatus: shipment?.status,
+                  }) ? (
                     <ActionBtn
                       label="Open dispute"
                       disabled={busy}
@@ -1338,9 +1502,13 @@ export function OrderDetailModal({
 
                 {showDispute ? (
                   <View style={styles.disputeBox}>
-                    <Text style={styles.section}>Dispute reason</Text>
+                    <Text style={styles.section}>What went wrong?</Text>
+                    <Text style={styles.muted}>
+                      Pick the closest reason. Add photos in the next step if
+                      you can — it speeds up resolution.
+                    </Text>
                     <View style={styles.rowWrap}>
-                      {DISPUTE_REASONS.map((r) => (
+                      {DELIVERY_DISPUTE_HINTS.map((r) => (
                         <Pressable
                           key={r.value}
                           style={[
@@ -1360,6 +1528,16 @@ export function OrderDetailModal({
                         </Pressable>
                       ))}
                     </View>
+                    {DELIVERY_DISPUTE_HINTS.find((r) => r.value === disputeReason)
+                      ?.hint ? (
+                      <Text style={styles.muted}>
+                        {
+                          DELIVERY_DISPUTE_HINTS.find(
+                            (r) => r.value === disputeReason,
+                          )?.hint
+                        }
+                      </Text>
+                    ) : null}
                     <TextInput
                       style={styles.input}
                       value={disputeDetail}
@@ -1455,6 +1633,27 @@ export function OrderDetailModal({
         )}
       </View>
     </Modal>
+    <DeliveryTrackingSheet
+      visible={trackingOpen}
+      shipment={shipment}
+      corridor={corridor}
+      role={isSeller ? "seller" : "buyer"}
+      onClose={() => setTrackingOpen(false)}
+      onOpenDispute={
+        isBuyer && !disputeId
+          ? () => {
+              setTrackingOpen(false);
+              setShowDispute(true);
+            }
+          : disputeId
+            ? () => {
+                setTrackingOpen(false);
+                onOpenDispute(disputeId);
+              }
+            : undefined
+      }
+    />
+    </>
   );
 }
 
@@ -1879,6 +2078,30 @@ const styles = StyleSheet.create({
     height: "100%",
   },
   section: { fontSize: 16, fontWeight: "600", marginTop: 8 },
+  fulfilmentCards: { gap: 8, marginTop: 4 },
+  fulfilmentCard: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: colors.surface,
+  },
+  fulfilmentCardOn: {
+    borderColor: colors.orange,
+    backgroundColor: colors.orangeWash,
+  },
+  fulfilmentCardTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: colors.ink,
+  },
+  fulfilmentCardTitleOn: { color: colors.navy },
+  fulfilmentCardBody: {
+    marginTop: 4,
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 18,
+  },
   rowWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
     paddingHorizontal: 12,

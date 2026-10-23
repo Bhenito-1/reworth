@@ -120,10 +120,14 @@
 - `ListingModeration` snapshot on publish; admin listings detail shows images + scores
 - `with-root-env.mjs` Windows fix so `pnpm prisma:deploy` works
 
+## Active epic — Delivery journey (2026-10-23)
+
+- Design: `docs/DELIVERY_JOURNEY_DESIGN.md` · Sprint: `docs/SPRINT_DELIVERY_JOURNEY.md`
+- **Sprint complete (D1–D5 code):** checkout · timeline · map/help · exceptions · partner adapter (dry-run default; live keys on staging)
+
 ## Resume
 
-1. Staging rails: `docs/STAGING_RAILS.md` (Termii → Paystack test keys + webhook → Expo push) — secrets in host env only  
-2. Nigeria GTM: `docs/NIGERIA_MARKET_LAUNCH.md` (Lagos founding-seller density in parallel)  
-3. Maestro ≤60s device record: `maestro test e2e/mobile/00_demo_60s.yaml` / `pwsh scripts/record-maestro-demo.ps1`  
-4. Staging k6 500 VU: `docs/PERF.md`  
-5. Store: EAS `projectId` · AASA TEAMID · Play SHA
+1. Staging rails: `docs/STAGING_RAILS.md` (Termii → Paystack → Expo push → delivery partner §4)  
+2. Nigeria GTM: `docs/NIGERIA_MARKET_LAUNCH.md`  
+3. Maestro ≤60s device record  
+4. Staging k6 500 VU · Store IDs

@@ -9,6 +9,7 @@ export * from './search.provider';
 export * from './geocoding.provider';
 export * from './delivery.provider';
 export { MockDeliveryProvider } from './mock-delivery.provider';
+export { PartnerDeliveryProvider } from './partner-delivery.provider';
 export * from './push.provider';
 export * from './mock-push.provider';
 export * from './email.provider';

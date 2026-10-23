@@ -14,21 +14,28 @@ import {
 } from "@reworth/ui-web";
 import { ReviewForm } from "../../../components/trust/ReviewForm";
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
+import { DeliveryExceptionBanner } from "../../../components/DeliveryExceptionBanner";
+import { DeliveryJourneyTimeline } from "../../../components/DeliveryJourneyTimeline";
+import { DeliveryTrackingPanel } from "../../../components/DeliveryTrackingPanel";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 import {
   discloseOrderAddress,
   getOrderShipment,
-  shipmentStatusLabel,
   type DeliveryShipment,
 } from "../../../lib/delivery";
+import {
+  canOpenDeliveryDispute,
+  classifyDeliveryException,
+  DELIVERY_DISPUTE_HINTS,
+} from "../../../lib/deliveryExceptions";
+import { getListing } from "../../../lib/listings";
 import { fetchRecommendations } from "../../../lib/intelligence";
 import { cancelSwapProposal } from "../../../lib/swap";
 import {
   cancelOrder,
   confirmOrder,
   confirmReceipt,
-  DISPUTE_REASONS,
   disputeIdFromEvents,
   fulfilmentLabel,
   getOrder,
@@ -109,6 +116,11 @@ export default function OrderDetailPage() {
   const [reviewBusy, setReviewBusy] = useState(false);
   const [alsoLike, setAlsoLike] = useState<PublicListing[]>([]);
   const [shipment, setShipment] = useState<DeliveryShipment | null>(null);
+  const [corridor, setCorridor] = useState<{
+    sellerLabel: string;
+    buyerLabel: string;
+    distanceKm: number | null;
+  } | null>(null);
   const [discloseBusy, setDiscloseBusy] = useState(false);
   const [disclosedAddress, setDisclosedAddress] = useState<string | null>(null);
 
@@ -132,11 +144,28 @@ export default function OrderDetailPage() {
         try {
           const ship = await getOrderShipment(token, detail.id);
           setShipment(ship);
+          try {
+            const listing = await getListing(detail.listingId, token);
+            setCorridor({
+              sellerLabel:
+                listing.community || listing.city || "Seller area",
+              buyerLabel: "Your delivery area",
+              distanceKm: ship.distanceKm,
+            });
+          } catch {
+            setCorridor({
+              sellerLabel: "Seller area",
+              buyerLabel: "Your delivery area",
+              distanceKm: ship.distanceKm,
+            });
+          }
         } catch {
           setShipment(null);
+          setCorridor(null);
         }
       } else {
         setShipment(null);
+        setCorridor(null);
       }
       if (detail.status === "COMPLETED" && me.id === detail.buyerId) {
         const resolved = await resolveOrderReviewState({
@@ -178,6 +207,10 @@ export default function OrderDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (searchParams.get("dispute") === "1") setDisputeOpen(true);
+  }, [searchParams]);
 
   async function confirmSale() {
     const token = getAccessToken();
@@ -446,14 +479,16 @@ export default function OrderDetailPage() {
     isSeller &&
     (order.status === "FUNDED" || order.status === "IN_AUTHENTICATION");
   const canConfirm = isBuyer && ["HANDED_OVER", "DELIVERED", "SHIPPED"].includes(order.status);
-  const canDispute =
-    isBuyer &&
-    (order.status === "RECEIVED" ||
-      order.status === "COMPLETED" ||
-      order.status === "DELIVERED" ||
-      order.status === "SHIPPED" ||
-      order.status === "HANDED_OVER") &&
-    !disputeId;
+  const canDispute = canOpenDeliveryDispute({
+    isBuyer: Boolean(isBuyer),
+    hasOpenDispute: Boolean(disputeId),
+    orderStatus: String(order.status),
+    shipmentStatus: shipment?.status,
+  });
+  const deliveryException = classifyDeliveryException(
+    shipment,
+    String(order.status),
+  );
 
   return (
     <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
@@ -715,28 +750,41 @@ export default function OrderDetailPage() {
           </aside>
         ) : null}
 
+        {deliveryException ? (
+          <DeliveryExceptionBanner
+            exception={deliveryException}
+            role={isSeller ? "seller" : "buyer"}
+            onDispute={
+              canDispute
+                ? () => {
+                    if (deliveryException.suggestedDisputeReason) {
+                      setDisputeReason(
+                        deliveryException.suggestedDisputeReason,
+                      );
+                    }
+                    setDisputeOpen(true);
+                  }
+                : undefined
+            }
+          />
+        ) : null}
+
         {shipment ? (
-          <section
-            className="mt-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
-            aria-labelledby="shipment-heading"
-          >
-            <h2 id="shipment-heading" className="text-base font-semibold">
-              Delivery tracking
-            </h2>
-            <p className="mt-1 text-sm font-medium text-[var(--rw-accent)]">
-              {shipmentStatusLabel(shipment.status)}
-            </p>
-            {shipment.events?.length ? (
-              <ol className="mt-3 space-y-2 text-sm text-[var(--rw-ink-muted)]">
-                {shipment.events.map((e) => (
-                  <li key={e.id}>
-                    {shipmentStatusLabel(e.status)} ·{" "}
-                    {new Date(e.createdAt).toLocaleString("en-NG")}
-                  </li>
-                ))}
-              </ol>
+          <div className="mt-4 space-y-0">
+            <DeliveryJourneyTimeline
+              shipment={shipment}
+              role={isSeller ? "seller" : "buyer"}
+            />
+            {corridor ? (
+              <DeliveryTrackingPanel
+                shipment={shipment}
+                corridor={corridor}
+                role={isSeller ? "seller" : "buyer"}
+                orderId={order.id}
+                canDispute={canDispute}
+              />
             ) : null}
-          </section>
+          </div>
         ) : null}
 
         {isSeller &&
@@ -948,9 +996,12 @@ export default function OrderDetailPage() {
       >
         <form className="flex flex-col gap-4" onSubmit={(e) => void submitDispute(e)}>
           <fieldset>
-            <legend className="mb-2 text-sm font-medium">Reason</legend>
+            <legend className="mb-2 text-sm font-medium">What went wrong?</legend>
+            <p className="mb-2 text-sm text-[var(--rw-ink-muted)]">
+              Pick the closest reason. Photos speed up resolution.
+            </p>
             <div className="flex flex-wrap gap-2">
-              {DISPUTE_REASONS.map((r) => (
+              {DELIVERY_DISPUTE_HINTS.map((r) => (
                 <Chip
                   key={r.value}
                   selected={disputeReason === r.value}
@@ -960,6 +1011,14 @@ export default function OrderDetailPage() {
                 </Chip>
               ))}
             </div>
+            {DELIVERY_DISPUTE_HINTS.find((r) => r.value === disputeReason)?.hint ? (
+              <p className="mt-2 text-xs text-[var(--rw-ink-muted)]">
+                {
+                  DELIVERY_DISPUTE_HINTS.find((r) => r.value === disputeReason)
+                    ?.hint
+                }
+              </p>
+            ) : null}
           </fieldset>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="dispute-detail" className="text-sm font-medium">

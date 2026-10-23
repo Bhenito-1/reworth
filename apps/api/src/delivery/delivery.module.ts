@@ -6,6 +6,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { DELIVERY_PROVIDER } from '../providers/delivery.provider';
 import { MockDeliveryProvider } from '../providers/mock-delivery.provider';
+import { PartnerDeliveryProvider } from '../providers/partner-delivery.provider';
 import { RegionConfigService } from '../region/region-config.service';
 import {
   DeliveryWebhookController,
@@ -21,7 +22,9 @@ export function createDeliveryProvider(
   const provider = (
     config.get<string>('DELIVERY_PROVIDER') ?? 'mock'
   ).toLowerCase();
-  void provider;
+  if (provider === 'partner') {
+    return PartnerDeliveryProvider.fromEnv(regions);
+  }
   return new MockDeliveryProvider(regions);
 }
 

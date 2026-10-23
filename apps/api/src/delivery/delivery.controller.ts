@@ -2,16 +2,21 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
+  Req,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   CurrentUser,
   type AuthUser,
 } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { PartnerDeliveryProvider } from '../providers/partner-delivery.provider';
 import { DeliveryService } from './delivery.service';
 import {
   DeliveryQuoteQueryDto,
@@ -69,7 +74,28 @@ export class DeliveryWebhookController {
   constructor(private readonly delivery: DeliveryService) {}
 
   @Post('delivery')
-  webhook(@Body() dto: DeliveryWebhookDto) {
+  webhook(
+    @Body() dto: DeliveryWebhookDto,
+    @Headers('x-reworth-delivery-signature') signature: string | undefined,
+    @Req() req: Request & { rawBody?: Buffer | string },
+  ) {
+    const secret = process.env.DELIVERY_WEBHOOK_SECRET;
+    if (secret) {
+      const raw =
+        typeof req.rawBody === 'string'
+          ? req.rawBody
+          : req.rawBody
+            ? req.rawBody.toString('utf8')
+            : JSON.stringify(dto);
+      const ok = PartnerDeliveryProvider.verifyWebhookSignature(
+        raw,
+        signature,
+        secret,
+      );
+      if (!ok) {
+        throw new UnauthorizedException('Invalid delivery webhook signature');
+      }
+    }
     return this.delivery.handleWebhook(dto);
   }
 }
