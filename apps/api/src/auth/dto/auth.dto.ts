@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  Matches,
   MinLength,
   ValidateNested,
 } from 'class-validator';
@@ -45,6 +46,19 @@ export class RegisterDto {
   @IsString()
   @MinLength(1)
   displayName?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DeviceDto)
+  device?: DeviceDto;
+}
+
+export class VerifyEmailOtpDto {
+  @IsEmail()
+  email!: string;
+
+  @Matches(/^\d{6}$/)
+  code!: string;
 
   @IsOptional()
   @ValidateNested()
