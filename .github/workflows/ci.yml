@@ -10,6 +10,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  audit:
+    name: Dependency audit (prod)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Dependency audit (prod)
+        run: pnpm audit:prod
+
   build:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
@@ -31,7 +57,7 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile=false
+        run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma client
         run: pnpm --filter @reworth/api prisma:generate
@@ -44,15 +70,12 @@ jobs:
       - name: Hex audit (design-system paths)
         run: node scripts/hex-audit.mjs
 
-      - name: Dependency audit (prod)
-        working-directory: apps/api
-        run: pnpm audit --prod --audit-level=critical
-
       - name: Lint
         run: pnpm lint
 
+      # Same packages as the build step. Mobile tsc is a separate backlog.
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm turbo run typecheck --filter=@reworth/api --filter=@reworth/web --filter=@reworth/admin
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reworth
 
@@ -66,9 +89,10 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reworth
 
-      # Golden-path Playwright. Specs skip when /healthz ≠ 200 (default CI green).
-      # Set repo variable E2E=1 and start API + seed:staging to enforce real runs.
-      - name: Playwright e2e (skip if API down)
+      # Real runs need repo variable E2E=1 plus API + web + seed:staging.
+      # Specs skip when /healthz is down, so this stays off the required path.
+      - name: Playwright e2e
+        if: vars.E2E == '1'
         run: pnpm exec playwright install --with-deps chromium && pnpm test:e2e
         env:
           API_BASE_URL: http://localhost:3001/api/v1
