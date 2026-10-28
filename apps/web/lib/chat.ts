@@ -32,11 +32,13 @@ export type ConversationListItem = {
   lastMessagePreview: string | null;
   unreadCount: number;
   muted?: boolean;
+  blockedByMe?: boolean;
   activeOffer: {
     id: string;
     amountKobo: number;
     status: OfferStatus | string;
   } | null;
+  deletedAt?: string | null;
   createdAt: string;
 };
 
@@ -98,6 +100,21 @@ export function conversationThumbUrl(thumb: string | null): string | null {
   return null;
 }
 
+/** Chat list line. Hides card JSON and ids. */
+export function safeChatPreview(preview: string | null | undefined): string {
+  const trimmed = preview?.trim() ?? "";
+  if (!trimmed) return "";
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    if (/swap-accepted/i.test(trimmed)) return "Swap accepted";
+    if (/swap-rejected/i.test(trimmed)) return "Swap rejected";
+    if (/swap-cancelled/i.test(trimmed)) return "Swap cancelled";
+    if (/swapProposalId/i.test(trimmed)) return "Swap proposal";
+    if (/offerId/i.test(trimmed)) return "Offer";
+    return "New message";
+  }
+  return trimmed;
+}
+
 export function offerStatusLabel(status: string): string {
   switch (status) {
     case "PENDING":
@@ -121,6 +138,16 @@ export function listConversations(
   token: string,
 ): Promise<ConversationListItem[]> {
   return apiFetch<ConversationListItem[]>("/conversations", { token });
+}
+
+export function deleteConversation(
+  token: string,
+  conversationId: string,
+): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(`/conversations/${conversationId}`, {
+    method: "DELETE",
+    token,
+  });
 }
 
 export function createConversation(
@@ -161,6 +188,61 @@ export function postMessage(
   },
 ): Promise<ChatMessage> {
   return apiFetch<ChatMessage>(`/conversations/${conversationId}/messages`, {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export type MeetupPinPayload = {
+  v: 1;
+  kind: "MEETUP_PIN";
+  lat: number;
+  lng: number;
+  label: string;
+};
+
+export function parseMeetupPin(
+  body: string | null | undefined,
+): MeetupPinPayload | null {
+  if (!body?.trim().startsWith("{")) return null;
+  try {
+    const raw = JSON.parse(body) as Partial<MeetupPinPayload>;
+    if (raw?.kind !== "MEETUP_PIN" || raw.v !== 1) return null;
+    if (
+      typeof raw.lat !== "number" ||
+      typeof raw.lng !== "number" ||
+      !Number.isFinite(raw.lat) ||
+      !Number.isFinite(raw.lng)
+    ) {
+      return null;
+    }
+    return {
+      v: 1,
+      kind: "MEETUP_PIN",
+      lat: raw.lat,
+      lng: raw.lng,
+      label:
+        typeof raw.label === "string" && raw.label.trim()
+          ? raw.label.trim()
+          : "Meetup point",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function meetupMapsUrl(pin: MeetupPinPayload): string {
+  return `https://www.google.com/maps?q=${encodeURIComponent(`${pin.lat},${pin.lng}`)}`;
+}
+
+/** ADR-011 Phase C — private meetup pin (web companion). */
+export function postMeetupPin(
+  token: string,
+  conversationId: string,
+  body: { lat: number; lng: number; label?: string; clientMsgId?: string },
+): Promise<ChatMessage> {
+  return apiFetch<ChatMessage>(`/conversations/${conversationId}/meetup-pin`, {
     method: "POST",
     token,
     body,

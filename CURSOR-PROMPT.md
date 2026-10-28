@@ -59,10 +59,9 @@ You are the complete full-stack development team for **ReWorth**, a consumer rec
 | Web + Admin | Next.js 15 App Router, TypeScript, Tailwind |
 | API | NestJS modular monolith, REST `/api/v1` |
 | Database | PostgreSQL 16 + Prisma; Redis + BullMQ |
-| Media | S3-compatible (MinIO in dev), presigned uploads |
+| Media | S3-compatible (adobe/s3mock in dev), presigned uploads |
 | Search | OpenSearch + Postgres FTS fallback adapter |
-| Auth | JWT (short access + rotating refresh), phone OTP, Google/Apple OAuth |
-| SMS | Termii or Twilio + console mock |
+| Auth | JWT (short access + rotating refresh), email/password, Google/Apple OAuth |
 | Payments | Paystack + mock PSP; escrow-shaped (ADR-002 / PRD §17) |
 | AI | Multimodal LLM (OpenAI GPT-4o default) + rule-based mock |
 | Locale | NGN, en-NG, WAT |
@@ -100,7 +99,7 @@ A feature is done only when: functional requirements pass · UX approved · resp
 **Deliverables (summary):**
 - Commit `PRD.md`, this file, `CURSOR-PROMPT-PHASE2-3.md`, `AGENTS.md`, Cursor rules, ADRs, doc stubs.
 - Turborepo: `apps/api|web|admin|mobile` + `packages/shared|ui-web|config`.
-- Docker Compose: Postgres 16, Redis, MinIO, OpenSearch, Mailhog.
+- Docker Compose: Postgres 16, Redis, adobe/s3mock, OpenSearch, Mailhog.
 - Design system: palette `#FAF9F7` / `#111315` / `#0E9F6E` + soft gold verification; SELL dominant; ListingCard pattern; mobile bottom nav Home · Discover · SELL · Chats · Profile.
 - `GET /api/v1/healthz` (+ readyz/metrics stub); web landing with brand + tagline + SELL CTA; admin shell.
 
@@ -114,7 +113,7 @@ A feature is done only when: functional requirements pass · UX approved · resp
 
 **In scope (summary):** Phone OTP (rate-limited), JWT access + rotating refresh with reuse detection, Google/Apple OAuth, optional email/password (Argon2id), devices, profiles, L1/L2/L3 verification (NIN/BVN/gov ID via licensed-provider interface — never store raw IDs), 7 admin roles + Super Admin from env, onboarding UI (web + mobile), admin login + 2FA shell.
 
-**Acceptance:** Demo <90s with mock SMS; stolen refresh revokes family; L3 mock badge with no raw ID in DB/logs; Support 403 on Finance + audit; tag `v0.1-auth`.
+**Acceptance:** Demo <90s with email auth; stolen refresh revokes family; L3 mock badge with no raw ID in DB/logs; Support 403 on Finance + audit; tag `v0.1-auth`.
 
 ---
 
@@ -122,7 +121,7 @@ A feature is done only when: functional requirements pass · UX approved · resp
 
 **Goal:** Photograph → AI draft → publish in ~60 seconds.
 
-**In scope (summary):** Categories from PRD §26; listing fields PRD §9 + vehicle JSONB §27; presigned MinIO/S3 uploads; BullMQ image pipeline (EXIF strip, resize, WebP/AVIF, dHash); multimodal AI draft (title, description, category, condition, price range) + rule-based mock; Sell mode purchase-ready; Swap / Swap+Cash / Give Away data-modelled only; listing state machine Draft → … → Sold/Rejected; PDP.
+**In scope (summary):** Categories from PRD §26; listing fields PRD §9 + vehicle JSONB §27; presigned S3 uploads (adobe/s3mock in dev); BullMQ image pipeline (EXIF strip, resize, WebP/AVIF, dHash); multimodal AI draft (title, description, category, condition, price range) + rule-based mock; Sell mode purchase-ready; Swap / Swap+Cash / Give Away data-modelled only; listing state machine Draft → … → Sold/Rejected; PDP.
 
 **Acceptance:** Golden-path publish ~60s with mock AI; media never proxied through API; tag `v0.2-listings`.
 

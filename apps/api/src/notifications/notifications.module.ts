@@ -7,6 +7,7 @@ import {
   MailhogEmailProvider,
   MockEmailProvider,
 } from '../providers/mock-email.provider';
+import { ResendEmailProvider } from '../providers/resend-email.provider';
 import { ExpoPushProvider } from '../providers/expo-push.provider';
 import { MockPushProvider } from '../providers/mock-push.provider';
 import { PUSH_PROVIDER } from '../providers/push.provider';
@@ -20,11 +21,22 @@ export function createEmailProvider(config: ConfigService) {
   const provider = (
     config.get<string>('EMAIL_PROVIDER') ?? 'mock'
   ).toLowerCase();
+  const from =
+    config.get<string>('EMAIL_FROM') ?? 'noreply@reworth.local';
+  if (provider === 'resend') {
+    return new ResendEmailProvider(
+      config.get<string>('RESEND_API_KEY') ?? '',
+      from,
+      {
+        replyTo: config.get<string>('EMAIL_REPLY_TO') ?? undefined,
+      },
+    );
+  }
   if (provider === 'mailhog') {
     return new MailhogEmailProvider(
       config.get<string>('SMTP_HOST') ?? 'localhost',
       Number(config.get('SMTP_PORT') ?? 1025),
-      config.get<string>('EMAIL_FROM') ?? 'noreply@reworth.local',
+      from,
     );
   }
   return new MockEmailProvider();

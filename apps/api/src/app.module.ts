@@ -23,6 +23,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { OffersModule } from './offers/offers.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
+import { PayoutsModule } from './payouts/payouts.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { RiskModule } from './risk/risk.module';
@@ -42,13 +43,14 @@ import { CorporateModule } from './corporate/corporate.module';
 import { PartnerModule } from './partner/partner.module';
 import { CircularModule } from './circular/circular.module';
 import { MonetizationModule } from './monetization/monetization.module';
+import { CartModule } from './cart/cart.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      // Monorepo: Nest cwd is apps/api; root .env lives two levels up.
-      envFilePath: ['.env', join(process.cwd(), '../../.env')],
+      // Prefer monorepo-root .env; apps/api/.env is only a local override/mirror.
+      envFilePath: [join(process.cwd(), '../../.env'), '.env'],
     }),
     LoggerModule.forRoot({
       pinoHttp: {
@@ -57,6 +59,15 @@ import { MonetizationModule } from './monetization/monetization.module';
             ? { target: 'pino-pretty', options: { singleLine: true } }
             : undefined,
         autoLogging: true,
+        // Drop headers (including the bearer token) so each request log stays small.
+        serializers: {
+          req(req: { id?: string; method?: string; url?: string }) {
+            return { id: req.id, method: req.method, url: req.url };
+          },
+          res(res: { statusCode?: number }) {
+            return { statusCode: res.statusCode };
+          },
+        },
       },
     }),
     ThrottlerModule.forRoot([
@@ -105,7 +116,9 @@ import { MonetizationModule } from './monetization/monetization.module';
     NotificationsModule,
     DeliveryModule,
     OrdersModule,
+    CartModule,
     PaymentsModule,
+    PayoutsModule,
     DisputesModule,
     ReviewsModule,
     VerticalsModule,

@@ -1,14 +1,113 @@
 /**
- * Device push token registration (store readiness).
- * Uses expo-notifications when installed; otherwise registers a mock token in __DEV__.
+ * Device push token registration + notification deep-link listeners.
+ * Uses expo-notifications when available; otherwise registers a mock token in __DEV__.
  */
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { apiFetch } from "./api";
+import { parseDeepLink } from "./notifications";
 
-export async function registerDevicePushToken(token: string): Promise<void> {
+const PUSH_PROMPT_KEY = "reworth_push_prompt";
+const ESSENTIAL_ONLY_KEY = "reworth_notifications_essential_only";
+
+export type PushPromptChoice = "allow" | "deny" | "later";
+
+export async function getPushPromptChoice(): Promise<PushPromptChoice | null> {
+  try {
+    const value = await AsyncStorage.getItem(PUSH_PROMPT_KEY);
+    if (value === "allow" || value === "deny" || value === "later") return value;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function isEssentialOnlyApplied(): Promise<boolean> {
+  try {
+    return (await AsyncStorage.getItem(ESSENTIAL_ONLY_KEY)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export async function markEssentialOnlyApplied(): Promise<void> {
+  try {
+    await AsyncStorage.setItem(ESSENTIAL_ONLY_KEY, "1");
+  } catch {
+    /* the next launch can apply the preference again */
+  }
+}
+
+export async function setPushPromptChoice(choice: PushPromptChoice): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PUSH_PROMPT_KEY, choice);
+  } catch {
+    /* the prompt can show again next visit */
+  }
+}
+
+export type PushRoute =
+  | { kind: "order" | "dispute" | "chat" | "listing"; id: string }
+  | { kind: "moving_sale"; id: string }
+  | { kind: "community"; id: string }
+  | { kind: "bundle"; id: string }
+  | { kind: "storefront"; id: string }
+  | { kind: "other" };
+
+type NotificationSubscription = { remove: () => void };
+
+function deepLinkFromPayload(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as Record<string, unknown>;
+  if (typeof record.deepLink === "string") return record.deepLink;
+  if (typeof record.url === "string") return record.url;
+  return null;
+}
+
+export function routeFromPushData(data: unknown): PushRoute | null {
+  const deepLink = deepLinkFromPayload(data);
+  if (deepLink) {
+    const parsed = parseDeepLink(deepLink);
+    if (!parsed) return null;
+    if (parsed.kind === "other") {
+      // Extended paths not in the core chat/order parser
+      const path = deepLink.replace(/^reworth:\/\//i, "/").replace(/^\/+/, "/");
+      const moving = path.match(/^\/moving-sales\/([\w-]+)/i);
+      if (moving) return { kind: "moving_sale", id: moving[1] };
+      const community = path.match(/^\/communities\/([\w-]+)/i);
+      if (community) return { kind: "community", id: community[1] };
+      return { kind: "other" };
+    }
+    if (parsed.id) {
+      return { kind: parsed.kind, id: parsed.id };
+    }
+  }
+  return null;
+}
+
+/**
+ * Register for permission + persist Expo push token on the API.
+ */
+export async function registerDevicePushToken(
+  token: string,
+  opts?: { requestPermission?: boolean },
+): Promise<void> {
   let pushToken: string | null = null;
   let platform = Platform.OS;
+  const requestPermission = opts?.requestPermission === true;
+
+  if (!requestPermission) return;
+
+  if (Platform.OS === "web") {
+    pushToken = "ExponentPushToken[web-in-app]";
+    await apiFetch("/devices/push-token", {
+      method: "POST",
+      token,
+      body: { token: pushToken, platform },
+    });
+    return;
+  }
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -18,12 +117,27 @@ export async function registerDevicePushToken(token: string): Promise<void> {
       getExpoPushTokenAsync: (opts?: {
         projectId?: string;
       }) => Promise<{ data: string }>;
+      setNotificationHandler: (handler: {
+        handleNotification: () => Promise<{
+          shouldShowAlert: boolean;
+          shouldPlaySound: boolean;
+          shouldSetBadge: boolean;
+        }>;
+      }) => void;
     };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Constants = require("expo-constants") as {
       expoConfig?: { extra?: { eas?: { projectId?: string } } };
       easConfig?: { projectId?: string };
     };
+
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
 
     let { status } = await Notifications.getPermissionsAsync();
     if (status !== "granted") {
@@ -54,4 +168,49 @@ export async function registerDevicePushToken(token: string): Promise<void> {
     token,
     body: { token: pushToken, platform },
   });
+}
+
+/**
+ * Listen for notification taps (and cold-start last response).
+ * Returns an unsubscribe function.
+ */
+export function setupPushListeners(
+  onRoute: (route: PushRoute) => void,
+): () => void {
+  const subs: NotificationSubscription[] = [];
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Notifications = require("expo-notifications") as {
+      addNotificationResponseReceivedListener: (
+        listener: (response: {
+          notification: { request: { content: { data?: unknown } } };
+        }) => void,
+      ) => NotificationSubscription;
+      getLastNotificationResponseAsync: () => Promise<{
+        notification: { request: { content: { data?: unknown } } };
+      } | null>;
+    };
+
+    subs.push(
+      Notifications.addNotificationResponseReceivedListener((response) => {
+        const route = routeFromPushData(
+          response.notification.request.content.data,
+        );
+        if (route && route.kind !== "other") onRoute(route);
+      }),
+    );
+
+    void Notifications.getLastNotificationResponseAsync().then((last) => {
+      if (!last) return;
+      const route = routeFromPushData(last.notification.request.content.data);
+      if (route && route.kind !== "other") onRoute(route);
+    });
+  } catch {
+    /* expo-notifications unavailable (web / incomplete install) */
+  }
+
+  return () => {
+    for (const s of subs) s.remove();
+  };
 }

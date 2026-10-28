@@ -27,7 +27,7 @@ export type PresignUploadResult = {
   publicUrl: string;
 };
 
-/** Object storage abstraction (MinIO / S3-compatible). */
+/** Object storage abstraction (adobe/s3mock locally, AWS S3 in prod). */
 export interface StorageProvider {
   readonly name: string;
   putObject(input: PutObjectInput): Promise<PutObjectResult>;
@@ -35,6 +35,13 @@ export interface StorageProvider {
   getObject?(bucket: string, key: string): Promise<Buffer | null>;
   deleteObject(bucket: string, key: string): Promise<void>;
   publicUrl(key: string): string;
+  /**
+   * Optional CDN delivery URL with provider-native transforms
+   * (e.g. Cloudinary `w_640,f_webp`). Falls back to publicUrl when omitted.
+   */
+  deliveryUrl?(key: string, transformation?: string): string;
+  /** Validate an API-proxied upload URL when direct object-store PUTs aren't used. */
+  verifyUpload?(key: string, expires: number, contentType: string, signature: string): boolean;
 }
 
 export const STORAGE_PROVIDER = Symbol('STORAGE_PROVIDER');
@@ -95,7 +102,7 @@ export class MockStorageAdapter implements StorageProvider {
   }
 }
 
-/** Local stub that records operations without talking to MinIO. */
-export class MinioStorageStub extends MockStorageAdapter {
-  readonly name = 'minio-stub';
+/** Local stub that records operations without talking to S3. */
+export class S3StorageStub extends MockStorageAdapter {
+  readonly name = 's3-stub';
 }

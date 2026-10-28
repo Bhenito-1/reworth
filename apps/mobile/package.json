@@ -2,7 +2,7 @@
   "name": "@reworth/mobile",
   "version": "0.0.0",
   "private": true,
-  "main": "expo/AppEntry.js",
+  "main": "index.js",
   "scripts": {
     "dev": "expo start",
     "android": "expo start --android",
@@ -13,17 +13,25 @@
     "build": "echo \"mobile build via EAS\""
   },
   "dependencies": {
+    "@babel/runtime": "^8.0.5",
+    "@expo/metro-runtime": "~4.0.1",
     "@react-native-async-storage/async-storage": "1.23.1",
     "expo": "~52.0.23",
     "expo-constants": "~17.0.3",
+    "expo-haptics": "~14.0.1",
     "expo-image-picker": "~16.0.6",
+    "expo-location": "~18.0.10",
     "expo-notifications": "~0.29.11",
     "expo-status-bar": "~2.0.1",
     "react": "18.3.1",
-    "react-native": "0.76.5"
+    "react-dom": "18.3.1",
+    "react-native": "0.76.5",
+    "react-native-maps": "1.18.0",
+    "react-native-web": "~0.19.13",
+    "socket.io-client": "4.8.3"
   },
   "devDependencies": {
     "@types/react": "~18.3.12",
-    "typescript": "^5.7.2"
+    "typescript": "^5.9.3"
   }
 }

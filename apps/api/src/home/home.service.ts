@@ -63,18 +63,20 @@ export class HomeService {
 
   async getHome(query: {
     community?: string;
+    city?: string;
     radiusKm?: number;
     lat?: number;
     lng?: number;
     viewerId?: string | null;
   }): Promise<HomeResponse> {
     const community = query.community ?? '';
+    const city = (query.city ?? '').trim();
     const radiusKm = query.radiusKm;
     const grid = this.cache.gridCell(query.lat, query.lng);
     const key = this.cache.buildKey(
       community,
       radiusKm ?? 'all',
-      `${grid}:${query.viewerId ?? 'anon'}`,
+      `${grid}:${city || 'any'}:${query.viewerId ?? 'anon'}`,
     );
 
     const cached = await this.cache.get<HomeResponse>(key);
@@ -119,22 +121,51 @@ export class HomeService {
 
   private async buildRails(query: {
     community?: string;
+    city?: string;
     radiusKm?: number;
     lat?: number;
     lng?: number;
     viewerId?: string | null;
   }): Promise<HomeRail[]> {
-    const live = await this.prisma.listing.findMany({
+    const cityFilter = query.city?.trim();
+    const cityLabel =
+      cityFilter?.toLowerCase() === 'abuja'
+        ? 'Abuja'
+        : cityFilter?.toLowerCase() === 'lagos' || !cityFilter
+          ? 'Lagos'
+          : cityFilter;
+    const cityWhere = cityFilter
+      ? { city: { equals: cityLabel, mode: 'insensitive' as const } }
+      : null;
+
+    const liveWhereBase = {
+      status: 'LIVE' as const,
+      AND: [
+        this.visibility.visibleListingWhere(query.viewerId),
+        ...(cityWhere ? [cityWhere] : []),
+      ],
+    };
+
+    let live = await this.prisma.listing.findMany({
       where: {
-        status: 'LIVE',
-        ...(query.community ? { community: query.community } : {}),
-        AND: [this.visibility.visibleListingWhere(query.viewerId)],
+        ...liveWhereBase,
+        quantityAvailable: { gt: 0 },
+        NOT: { riskFlags: { has: 'swap-response' } },
+        seller: { status: 'ACTIVE' },
+        ...(query.community
+          ? {
+              community: {
+                equals: query.community,
+                mode: 'insensitive' as const,
+              },
+            }
+          : {}),
       },
       include: {
         ...listingInclude,
         events: {
-          where: { type: { in: ['VIEWED', 'SAVED', 'PRICE_CHANGED'] } },
-          select: { type: true, payload: true },
+          where: { type: 'SAVED' },
+          select: { type: true },
         },
       },
       orderBy: { publishedAt: 'desc' },
@@ -214,7 +245,7 @@ export class HomeService {
     if (query.viewerId) {
       recommended = await this.recommendations.recommend({
         userId: query.viewerId,
-        city: 'Lagos',
+        city: cityLabel,
         limit: 12,
         surface: 'home',
         seed: `${query.viewerId}:home`,
@@ -225,20 +256,30 @@ export class HomeService {
         .slice(0, 12);
     }
 
+    if (query.community) {
+      const wanted = query.community.trim().toLowerCase();
+      recommended = recommended.filter(
+        (item) => (item.community ?? '').trim().toLowerCase() === wanted,
+      );
+    }
+
     const movingSaleItems = await this.movingSales.topForHome({
       lat: query.lat,
       lng: query.lng,
       radiusKm: query.radiusKm,
+      community: query.community,
       limit: 12,
     });
+
+    const nearbyItems = nearbyPool;
 
     return [
       {
         id: 'nearby',
         title: 'Nearby',
-        items: toItems(nearbyPool),
+        items: toItems(nearbyItems),
         emptyMessage:
-          nearbyPool.length === 0
+          nearbyItems.length === 0
             ? 'No listings nearby — try expanding your radius'
             : undefined,
       },

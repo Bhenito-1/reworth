@@ -84,6 +84,8 @@ export class WeightedRecProvider implements RecProvider {
       }
     }
 
+    if (ctx.surface === 'similar' && !seedListing?.categoryId) return [];
+
     const userFeat = ctx.userId
       ? ((await this.features.getUserFeatures(ctx.userId, city)) as UserFeat)
       : ({} as UserFeat);
@@ -91,7 +93,13 @@ export class WeightedRecProvider implements RecProvider {
     const rows = await this.prisma.listing.findMany({
       where: {
         status: 'LIVE',
+        quantityAvailable: { gt: 0 },
+        NOT: { riskFlags: { has: 'swap-response' } },
+        seller: { status: 'ACTIVE' },
         city, // HARD city filter
+        ...(ctx.surface === 'similar' && seedListing?.categoryId
+          ? { categoryId: seedListing.categoryId }
+          : {}),
         ...(ctx.listingId ? { id: { not: ctx.listingId } } : {}),
       },
       include: listingInclude,

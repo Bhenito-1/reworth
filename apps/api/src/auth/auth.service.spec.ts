@@ -1,28 +1,24 @@
-import { HttpException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminRole, DevicePlatform } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
-import { SMS_PROVIDER } from '../providers/sms.provider';
+import { PrismaService } from '../prisma/prisma.service';
+import { EMAIL_PROVIDER } from '../providers/email.provider';
 import { AuthService } from './auth.service';
 import { hashWithPepper } from './crypto.util';
 
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: ReturnType<typeof buildPrismaMock>;
-  const otpPepper = 'test-otp-pepper';
   const refreshPepper = 'test-refresh-secret';
-  const sms = { name: 'console-sms', send: jest.fn().mockResolvedValue({ messageId: '1', status: 'sent' }) };
+  const email = {
+    name: 'mock-email',
+    send: jest.fn().mockResolvedValue({ messageId: '1', status: 'sent' }),
+  };
 
   function buildPrismaMock() {
     return {
-      otpChallenge: {
-        count: jest.fn(),
-        create: jest.fn(),
-        findFirst: jest.fn(),
-        update: jest.fn(),
-      },
       user: {
         findUnique: jest.fn(),
         create: jest.fn(),
@@ -40,6 +36,7 @@ describe('AuthService', () => {
         updateMany: jest.fn(),
       },
       userRole: { findMany: jest.fn().mockResolvedValue([]) },
+      adminTotp: { findUnique: jest.fn().mockResolvedValue(null) },
     };
   }
 
@@ -48,13 +45,12 @@ describe('AuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
-        { provide: 'PrismaService', useValue: prisma },
+        { provide: PrismaService, useValue: prisma },
         {
           provide: ConfigService,
           useValue: {
             get: (key: string) => {
               const map: Record<string, string> = {
-                OTP_PEPPER: otpPepper,
                 JWT_REFRESH_SECRET: refreshPepper,
                 JWT_ACCESS_SECRET: 'access-secret',
                 JWT_ACCESS_TTL: '15m',
@@ -76,75 +72,20 @@ describe('AuthService', () => {
           provide: AuditService,
           useValue: { log: jest.fn().mockResolvedValue(null) },
         },
-        { provide: SMS_PROVIDER, useValue: sms },
+        { provide: EMAIL_PROVIDER, useValue: email },
       ],
-    })
-      .overrideProvider(AuthService)
-      .useFactory({
-        factory: (
-          config: ConfigService,
-          jwt: JwtService,
-          audit: AuditService,
-        ) =>
-          new AuthService(
-            prisma as never,
-            jwt,
-            config,
-            audit,
-            sms as never,
-          ),
-        inject: [ConfigService, JwtService, AuditService],
-      })
-      .compile();
+    }).compile();
 
-    // Re-bind with direct construction for clearer typing
     service = new AuthService(
       prisma as never,
       module.get(JwtService),
       module.get(ConfigService),
       module.get(AuditService),
-      sms as never,
+      email as never,
     );
 
     jest.clearAllMocks();
-    sms.send.mockResolvedValue({ messageId: '1', status: 'sent' });
-  });
-
-  describe('OTP', () => {
-    it('rejects when rate limit 3/15min exceeded', async () => {
-      prisma.otpChallenge.count.mockResolvedValueOnce(3);
-      await expect(
-        service.requestOtp({ phone: '+2348012345678' }),
-      ).rejects.toBeInstanceOf(HttpException);
-    });
-
-    it('rejects expired OTP on verify', async () => {
-      prisma.otpChallenge.findFirst.mockResolvedValue({
-        id: 'c1',
-        phone: '+2348012345678',
-        codeHash: hashWithPepper('123456', otpPepper),
-        attempts: 0,
-        expiresAt: new Date(Date.now() - 1000),
-        consumedAt: null,
-      });
-      await expect(
-        service.verifyOtp({ phone: '+2348012345678', code: '123456' }),
-      ).rejects.toThrow(UnauthorizedException);
-    });
-
-    it('rejects after max 5 attempts', async () => {
-      prisma.otpChallenge.findFirst.mockResolvedValue({
-        id: 'c1',
-        phone: '+2348012345678',
-        codeHash: hashWithPepper('123456', otpPepper),
-        attempts: 5,
-        expiresAt: new Date(Date.now() + 60_000),
-        consumedAt: null,
-      });
-      await expect(
-        service.verifyOtp({ phone: '+2348012345678', code: '000000' }),
-      ).rejects.toThrow(/max attempts/i);
-    });
+    email.send.mockResolvedValue({ messageId: '1', status: 'sent' });
   });
 
   describe('refresh rotation + reuse', () => {
@@ -221,12 +162,39 @@ describe('AuthService', () => {
       expect(prisma.user.create).toHaveBeenCalled();
     });
   });
+
+  describe('register (email)', () => {
+    it('creates consumer account and issues session', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({
+        id: 'u-reg',
+        email: 'new@reworth.ng',
+        profile: { displayName: 'Ada' },
+        roles: [],
+      });
+      prisma.device.create.mockResolvedValue({ id: 'd1' });
+      prisma.refreshToken.create.mockResolvedValue({ id: 'rt1' });
+      prisma.userRole.findMany.mockResolvedValue([]);
+      (prisma as { adminTotp?: { findUnique: jest.Mock } }).adminTotp = {
+        findUnique: jest.fn().mockResolvedValue(null),
+      };
+
+      const result = await service.register({
+        email: 'new@reworth.ng',
+        password: 'password123',
+        displayName: 'Ada',
+        device: { name: 'Phone', platform: DevicePlatform.IOS },
+      });
+
+      expect(result.userId).toBe('u-reg');
+      expect(result.accessToken).toBe('access.jwt');
+      expect(prisma.user.create).toHaveBeenCalled();
+    });
+  });
 });
 
 describe('RBAC finance guard behaviour', () => {
   it('documents Support cannot hit finance (RolesGuard)', () => {
-    // Controllers declare @Roles(FINANCE, SUPER_ADMIN) on finance/summary.
-    // Support-only roles fail RolesGuard and emit RBAC_DENIED audit.
     const supportRoles: AdminRole[] = [AdminRole.CUSTOMER_SUPPORT];
     const required: AdminRole[] = [AdminRole.FINANCE, AdminRole.SUPER_ADMIN];
     const has =

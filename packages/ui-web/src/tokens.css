@@ -1,43 +1,103 @@
 :root {
-  --rw-bg: #faf9f7;
+  /* ReWorth brand palette — docs/DESIGN.md (Moving Sale creative) */
+  --rw-navy: #172a3a;
+  --rw-navy-dark: #10202d;
+  --rw-orange: #d96a32;
+  --rw-orange-hover: #c65e2b;
+  --rw-beige: #f2e7d5;
+  --rw-slate: #59636d;
+  --rw-soft-white: #fcfaf6;
+
+  --rw-bg: #fcfaf6;
   --rw-bg-elevated: #ffffff;
-  --rw-ink: #111315;
-  --rw-ink-muted: #5c636a;
-  --rw-accent: #0e9f6e;
-  --rw-accent-hover: #0b825a;
-  --rw-accent-muted: #d1fae5;
+  --rw-bg-warm: #f2e7d5;
+  --rw-ink: #172a3a;
+  --rw-ink-muted: #59636d;
+  /* Accent = Burnt Orange (primary CTAs / Sell / active) */
+  --rw-accent: #d96a32;
+  --rw-accent-hover: #c65e2b;
+  --rw-accent-muted: #f8e6dc;
+  /* Secondary action = Midnight Navy */
+  --rw-secondary: #172a3a;
+  --rw-secondary-hover: #10202d;
   --rw-gold: #c9a227;
   --rw-gold-muted: #f5edd0;
-  --rw-border: #e5e2dc;
-  --rw-success: #0e9f6e;
-  --rw-success-muted: #d1fae5;
-  --rw-warn: #d97706;
+  --rw-border: #e4ddd4;
+  --rw-disabled: #b6b4b0;
+  --rw-success: #2f7d5b;
+  --rw-success-muted: #e4f0ea;
+  --rw-warn: #d99632;
   --rw-warn-muted: #fef3c7;
-  --rw-error: #dc2626;
-  --rw-error-muted: #fee2e2;
+  --rw-error: #c94a3a;
+  --rw-error-muted: #fce8e6;
+  --rw-on-accent: #ffffff;
   --rw-radius: 0.75rem;
-  --rw-radius-lg: 1.25rem;
-  --rw-shadow-sell: 0 8px 24px rgba(14, 159, 110, 0.35);
+  --rw-radius-lg: 1rem;
+  --rw-type-display: 1.75rem;
+  --rw-type-title: 1.5rem;
+  --rw-type-title-sm: 1.25rem;
+  --rw-type-body: 1.0625rem;
+  --rw-type-body-sm: 0.9375rem;
+  --rw-type-meta: 0.8125rem;
+  --rw-space-xs: 0.25rem;
+  --rw-space-sm: 0.5rem;
+  --rw-space-md: 0.75rem;
+  --rw-space-lg: 1rem;
+  --rw-space-xl: 1.5rem;
+  --rw-space-xxl: 2rem;
+  --rw-shadow-float: 0 4px 16px rgba(23, 42, 58, 0.08);
+  --rw-shadow-sell: 0 8px 24px rgba(217, 106, 50, 0.35);
+
+  /* Prompt-compatible aliases */
+  --color-primary: var(--rw-navy);
+  --color-primary-dark: var(--rw-navy-dark);
+  --color-accent: var(--rw-accent);
+  --color-accent-hover: var(--rw-accent-hover);
+  --color-background: var(--rw-bg);
+  --color-surface: var(--rw-bg-elevated);
+  --color-surface-warm: var(--rw-bg-warm);
+  --color-text-primary: var(--rw-ink);
+  --color-text-secondary: var(--rw-ink-muted);
+  --color-border: var(--rw-border);
+  --color-disabled: var(--rw-disabled);
+  --color-success: var(--rw-success);
+  --color-warning: var(--rw-warn);
+  --color-error: var(--rw-error);
+
   color-scheme: light;
 }
 
 .dark {
-  --rw-bg: #0f1214;
-  --rw-bg-elevated: #1a1e22;
-  --rw-ink: #f3f4f5;
-  --rw-ink-muted: #9aa1a8;
-  --rw-accent: #12b981;
-  --rw-accent-hover: #34d399;
-  --rw-accent-muted: #064e3b;
+  --rw-navy: #172a3a;
+  --rw-navy-dark: #10202d;
+  --rw-orange: #d96a32;
+  --rw-orange-hover: #e07a45;
+  --rw-beige: #2a3d4d;
+  --rw-slate: #cfd4d7;
+  --rw-soft-white: #fcfaf6;
+
+  --rw-bg: #172a3a;
+  --rw-bg-elevated: #203747;
+  --rw-bg-warm: #2a3d4d;
+  --rw-ink: #fcfaf6;
+  --rw-ink-muted: #cfd4d7;
+  --rw-accent: #d96a32;
+  --rw-accent-hover: #e07a45;
+  --rw-accent-muted: #3d2a22;
+  --rw-secondary: #fcfaf6;
+  --rw-secondary-hover: #e4ddd4;
   --rw-gold: #e0b84a;
   --rw-gold-muted: #3d3418;
-  --rw-border: #2a3036;
-  --rw-success: #12b981;
-  --rw-success-muted: #064e3b;
-  --rw-warn: #fbbf24;
+  --rw-border: #2f4556;
+  --rw-disabled: #6b7280;
+  --rw-success: #3d9b72;
+  --rw-success-muted: #1a3d30;
+  --rw-warn: #e0a84a;
   --rw-warn-muted: #422006;
-  --rw-error: #f87171;
-  --rw-error-muted: #450a0a;
-  --rw-shadow-sell: 0 8px 24px rgba(18, 185, 129, 0.4);
+  --rw-error: #e07060;
+  --rw-error-muted: #3d1f1c;
+  --rw-on-accent: #ffffff;
+  --rw-shadow-float: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --rw-shadow-sell: 0 8px 24px rgba(217, 106, 50, 0.4);
   color-scheme: dark;
 }

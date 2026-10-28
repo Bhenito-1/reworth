@@ -95,4 +95,31 @@ export class MockGeocodingProvider implements GeocodingProvider {
     if (/victoria|vi\b/.test(community.toLowerCase())) return this.fixtures.VI;
     return this.fixtures.OTHER_LAGOS;
   }
+
+  async reverse(lat: number, lng: number): Promise<GeocodeResult | null> {
+    if (this.regions) {
+      const nearest = this.regions.nearestFromLatLng(lat, lng);
+      if (nearest) {
+        return {
+          community: nearest.community,
+          geoLat: nearest.geoLat,
+          geoLng: nearest.geoLng,
+          label: nearest.label,
+        };
+      }
+    }
+    // Offline fixture: nearest of embedded Lagos centroids
+    let best: GeocodeResult | null = null;
+    let bestKm = Number.POSITIVE_INFINITY;
+    for (const fix of Object.values(this.fixtures)) {
+      const dLat = lat - fix.geoLat;
+      const dLng = lng - fix.geoLng;
+      const km = Math.sqrt(dLat * dLat + dLng * dLng) * 111;
+      if (km < bestKm) {
+        bestKm = km;
+        best = fix;
+      }
+    }
+    return best;
+  }
 }

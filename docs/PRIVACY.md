@@ -6,7 +6,7 @@
 
 - Collect only data needed to operate buy · sell · chat · escrow · logistics in Lagos communities
 - Users can **access**, **correct**, **export**, and **request deletion** (subject to lawful retention)
-- Consent for SMS / marketing / email is recorded and changeable
+- Consent for marketing / email is recorded and changeable
 - Exact addresses are never exposed in browse/search payloads
 - Identity documents: store provider references / hashes only — never raw NIN/BVN in logs or public UI
 
@@ -17,7 +17,7 @@
 | Access / export | `GET /me/export` · Web `/settings/privacy` · Mobile Privacy settings | JSON package: profile, addresses, listings summary, order ids, devices, consents — **no** password hashes or refresh tokens |
 | Correction | `PATCH /me` | Profile fields |
 | Deletion | `POST /me/delete-request` | Status → DELETED; phone/email pseudonymised; profile scrubbed; sessions revoked; **orders/payments retained** with PII stripped where applicable (retention for disputes / finance) |
-| Consent | `GET/PUT /me/consents` | Channels: `SMS`, `MARKETING`, `EMAIL` |
+| Consent | `GET/PUT /me/consents` | Channels: `MARKETING`, `EMAIL` |
 
 ## Retention (product policy — confirm with counsel)
 
@@ -33,12 +33,12 @@
 
 Nigeria Data Protection Regulation expectations that ReWorth aims to meet in product design:
 
-1. **Lawful basis** — contract performance (marketplace) + consent (marketing SMS)
+1. **Lawful basis** — contract performance (marketplace) + consent (marketing email)
 2. **Purpose limitation** — recommerce transactions, trust & safety, support
 3. **Data minimisation** — community-level location in discovery; private address only post-intent
 4. **Security** — see `docs/SECURITY.md`
 5. **Rights** — export / correct / delete flows above
-6. **Processors** — SMS (Termii/Twilio), payments (Paystack), identity vendor, object storage — DPAs required before prod
+6. **Processors** — payments (Paystack), identity vendor, object storage, email provider — DPAs required before prod
 
 ## Contact (placeholder)
 

@@ -4,11 +4,16 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
+import { suspendedAccountMessage } from './suspended-account';
 
 export type AccessTokenPayload = {
   sub: string;
   typ: 'access';
   roles: string[];
+  /** True when the subject holds ≥1 AdminRole (Phase 8). */
+  admin?: boolean;
+  /** True when AdminTotp is verified+enabled for this subject. */
+  totpVerified?: boolean;
 };
 
 @Injectable()
@@ -20,7 +25,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.get<string>('JWT_ACCESS_SECRET') ?? 'dev-access-secret',
+      secretOrKey:
+        config.get<string>('JWT_ACCESS_SECRET') ?? 'dev-access-secret',
     });
   }
 
@@ -32,8 +38,13 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       where: { id: payload.sub },
       include: { roles: true },
     });
-    if (!user || user.status === 'SUSPENDED' || user.status === 'DELETED') {
+    if (!user || user.status === 'DELETED') {
       throw new UnauthorizedException('User unavailable');
+    }
+    if (user.status === 'SUSPENDED') {
+      throw new UnauthorizedException(
+        suspendedAccountMessage(),
+      );
     }
     return {
       id: user.id,

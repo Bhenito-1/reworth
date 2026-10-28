@@ -1,5 +1,7 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional, forwardRef } from '@nestjs/common';
 import { Prisma, RiskLevel } from '@prisma/client';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { FRAUD, SUPPORT } from '../admin/admin-roles';
 import { PrismaService } from '../prisma/prisma.service';
 import { FraudRulesService } from '../listings/fraud-rules.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -43,6 +45,7 @@ export class RiskEngineService {
     @Inject(forwardRef(() => FraudRulesService))
     private readonly fraud: FraudRulesService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
   async evaluateOnPublish(
@@ -286,7 +289,14 @@ export class RiskEngineService {
 
     const score = sumFiredWeights(fired);
     const level = levelFromScore(score, thresholds) as RiskLevel;
-    const flags = fired.map((f) => f.code);
+    const flags = Array.from(
+      new Set([
+        ...fired.map((f) => f.code),
+        ...(listing.riskFlags.includes('swap-response')
+          ? ['swap-response']
+          : []),
+      ]),
+    );
     const forceUnderReview = level === 'HIGH';
 
     await this.prisma.riskAssessment.create({
@@ -347,6 +357,18 @@ export class RiskEngineService {
       await this.prisma.listing.update({
         where: { id: listingId },
         data: { riskFlags: flags },
+      });
+    }
+
+    if (level === 'HIGH') {
+      await this.alerts?.notify({
+        roles: FRAUD,
+        kind: 'RISK',
+        title: 'Seller flagged high risk',
+        body: `Risk score ${score}${flags.length ? `. Flags: ${flags.join(', ')}` : ''}.`,
+        href: '/fraud',
+        entityType: 'Listing',
+        entityId: listingId,
       });
     }
 
@@ -450,12 +472,21 @@ export class RiskEngineService {
     flags: string[],
   ): Promise<void> {
     try {
-      await this.prisma.supportTicket.create({
+      const ticket = await this.prisma.supportTicket.create({
         data: {
           userId,
           subject: 'High risk user',
           status: 'OPEN',
         },
+      });
+      await this.alerts?.notify({
+        roles: SUPPORT,
+        kind: 'SUPPORT',
+        title: 'Support ticket opened',
+        body: 'A high-risk seller needs a look.',
+        href: '/support',
+        entityType: 'SupportTicket',
+        entityId: ticket.id,
       });
     } catch (err) {
       this.logger.warn({ err, userId }, 'Failed to create high-risk support ticket');

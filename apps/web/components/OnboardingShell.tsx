@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { brandPublic } from "../lib/brand";
 
 type OnboardingShellProps = {
   children: ReactNode;
@@ -7,6 +8,9 @@ type OnboardingShellProps = {
   totalSteps?: number;
   title: string;
   subtitle?: string;
+  /** Public path under /brand/… */
+  illustration?: string;
+  illustrationAlt?: string;
 };
 
 export function OnboardingShell({
@@ -15,6 +19,8 @@ export function OnboardingShell({
   totalSteps = 4,
   title,
   subtitle,
+  illustration,
+  illustrationAlt = "",
 }: OnboardingShellProps) {
   return (
     <main className="relative min-h-[100dvh] overflow-hidden bg-[var(--rw-bg)] text-[var(--rw-ink)]">
@@ -23,7 +29,7 @@ export function OnboardingShell({
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 70% 50% at 80% 0%, rgba(14,159,110,0.14), transparent 55%), radial-gradient(ellipse 40% 35% at 10% 90%, rgba(201,162,39,0.1), transparent 50%), linear-gradient(165deg, #FAF9F7 0%, #F3F0EA 50%, #E8F5EF 100%)",
+            "radial-gradient(ellipse 70% 50% at 80% 0%, rgba(217,106,50,0.12), transparent 55%), radial-gradient(ellipse 40% 35% at 10% 90%, rgba(201,162,39,0.1), transparent 50%), linear-gradient(165deg, #FCFAF6 0%, #F3F0EA 55%, #F8E6DC 100%)",
         }}
       />
 
@@ -31,13 +37,18 @@ export function OnboardingShell({
         <header className="mb-10 flex items-center justify-between gap-4">
           <Link
             href="/"
-            className="font-[family-name:var(--font-geist-sans)] text-xl font-semibold tracking-tight text-[var(--rw-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+            className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
           >
-            ReWorth
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={brandPublic.logo}
+              alt="ReWorth"
+              className="h-8 w-auto"
+            />
           </Link>
           {step !== undefined ? (
             <p
-              className="text-sm text-[var(--rw-ink-muted)]"
+              className="text-sm tabular-nums text-[var(--rw-ink-muted)]"
               aria-label={`Step ${step} of ${totalSteps}`}
             >
               {step} / {totalSteps}
@@ -58,7 +69,7 @@ export function OnboardingShell({
               <span
                 key={i}
                 className={[
-                  "h-1 flex-1 rounded-full transition-colors",
+                  "h-1 flex-1 rounded-full transition-colors duration-300",
                   i < step ? "bg-[var(--rw-accent)]" : "bg-[var(--rw-border)]",
                 ].join(" ")}
               />
@@ -67,11 +78,21 @@ export function OnboardingShell({
         ) : null}
 
         <div className="rw-fade-up flex flex-1 flex-col">
+          {illustration ? (
+            <div className="mb-6 flex h-40 items-center justify-center overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-bg-elevated)] sm:h-48">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={illustration}
+                alt={illustrationAlt}
+                className="h-full w-full object-contain p-4"
+              />
+            </div>
+          ) : null}
           <h1 className="text-3xl font-semibold tracking-tight text-[var(--rw-ink)] sm:text-4xl">
             {title}
           </h1>
           {subtitle ? (
-            <p className="mt-3 text-base leading-relaxed text-[var(--rw-ink-muted)]">
+            <p className="mt-3 max-w-md text-base leading-relaxed text-[var(--rw-ink-muted)]">
               {subtitle}
             </p>
           ) : null}

@@ -4,20 +4,22 @@
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
-    "build": "prisma generate && nest build",
+    "build": "node scripts/with-root-env.mjs prisma generate && nest build",
     "start": "node dist/main.js",
     "lint": "node -e \"console.log('lint ok')\"",
-    "typecheck": "prisma generate && tsc --noEmit",
-    "test": "prisma generate && jest",
+    "typecheck": "node scripts/with-root-env.mjs prisma generate && tsc --noEmit",
+    "test": "node scripts/with-root-env.mjs prisma generate && jest",
     "test:watch": "jest --watch",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "prisma db seed",
-    "seed:staging": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed-staging.ts",
-    "demo:delivery": "ts-node --compiler-options {\"module\":\"CommonJS\"} scripts/demo-delivery.ts"
+    "prisma:generate": "node scripts/with-root-env.mjs prisma generate",
+    "prisma:migrate": "node scripts/with-root-env.mjs prisma migrate dev",
+    "prisma:deploy": "node scripts/with-root-env.mjs prisma migrate deploy",
+    "prisma:studio": "node scripts/with-root-env.mjs prisma studio",
+    "prisma:seed": "node scripts/with-root-env.mjs prisma db seed",
+    "seed:staging": "node scripts/with-root-env.mjs node -r ts-node/register/transpile-only prisma/seed-staging.ts",
+    "demo:delivery": "node scripts/with-root-env.mjs node -r ts-node/register/transpile-only scripts/demo-delivery.ts"
   },
   "prisma": {
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+    "seed": "node -r ts-node/register/transpile-only prisma/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.721.0",
@@ -33,6 +35,7 @@
     "@nestjs/throttler": "^6.3.0",
     "@nestjs/websockets": "^10.4.22",
     "@prisma/client": "^6.1.0",
+    "@reworth/shared": "workspace:^",
     "argon2": "^0.41.1",
     "bullmq": "^5.34.5",
     "class-transformer": "^0.5.1",
@@ -41,6 +44,7 @@
     "file-type": "^16.5.4",
     "helmet": "^8.3.0",
     "ioredis": "^5.4.2",
+    "multer": "^2.3.0",
     "nestjs-pino": "^4.2.0",
     "otplib": "^13.5.0",
     "passport": "^0.7.0",
@@ -62,6 +66,7 @@
     "@reworth/config": "workspace:*",
     "@types/express": "^5.0.6",
     "@types/jest": "^29.5.14",
+    "@types/multer": "^2.3.0",
     "@types/node": "^22.10.2",
     "@types/passport-jwt": "^4.0.1",
     "@types/uuid": "^10.0.0",
@@ -70,7 +75,7 @@
     "prisma": "^6.1.0",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.9.3"
   },
   "jest": {
     "moduleFileExtensions": [

@@ -7,9 +7,9 @@
 | Control (PRD §44) | Status | Where / notes |
 | --- | --- | --- |
 | TLS in transit | Mitigated | Terminated at reverse proxy / platform; local HTTP for compose |
-| Encryption at rest | Deferred | Postgres/MinIO volume encryption = infra responsibility at launch |
+| Encryption at rest | Deferred | Postgres/S3 volume encryption = infra responsibility at launch |
 | Argon2id passwords | Implemented | `apps/api/src/auth/crypto.util.ts` |
-| OTP rate limits | Implemented | `auth.service.ts` 3/15m, 5/day + `@Throttle` auth bucket |
+| Auth throttle | Implemented | `@Throttle` auth bucket on login/register (SMS OTP removed, ADR-010) |
 | JWT access + refresh rotation | Implemented | `auth.service.ts`; reuse detection revokes family |
 | Admin TOTP 2FA | Implemented | Setup available; org policy may enforce later |
 | RBAC (7 admin roles) | Implemented | `docs/RBAC.md`, `admin-roles.ts`, `AdminOnlyGuard` |
@@ -19,7 +19,7 @@
 | CSP + security headers | Implemented | `helmet` in `apps/api/src/main.ts`; Next headers below |
 | Input validation | Implemented | `ValidationPipe` whitelist + forbid; Zod helpers `zod-boundary.ts` |
 | Secrets hygiene | Implemented | `.env.example` placeholders only; CI must not print secrets |
-| Dependency audit gate | Implemented | `pnpm audit --prod` in CI (moderate+) |
+| Dependency audit gate | Implemented | `pnpm audit --prod --audit-level=critical` in CI (critical blockers; moderate findings tracked pre-launch) |
 | User token ≠ admin API | Implemented | `AdminOnlyGuard` + tests |
 | Device session visibility | Implemented | `GET/DELETE /me/devices`, logout-all |
 | Risk / fraud signals | Implemented | Risk engine + `RiskEvent` / `RiskAssessment` |
@@ -35,14 +35,14 @@
 | A04 Insecure design | Escrow-shaped payments (ADR-002); risk scoring on publish |
 | A05 Security misconfiguration | Helmet headers; CORS allowlist; powered-by hidden |
 | A06 Vulnerable components | `pnpm audit` CI gate |
-| A07 Auth failures | OTP limits, refresh reuse detection, suspended users rejected |
+| A07 Auth failures | Auth throttle, refresh reuse detection, suspended users rejected |
 | A08 Data integrity | Paystack webhook HMAC; audit logs for admin mutations |
 | A09 Logging failures | Pino request logs; audit trail; avoid logging secrets/PII gov IDs |
-| A10 SSRF | Presigned uploads to MinIO; no user-controlled server-side fetch of arbitrary URLs |
+| A10 SSRF | Presigned uploads to S3 (adobe/s3mock locally); no user-controlled server-side fetch of arbitrary URLs |
 
 ## Pen-test checklist (external)
 
-- [ ] Auth: OTP brute-force, refresh reuse, JWT alg confusion
+- [ ] Auth: login brute-force, refresh reuse, JWT alg confusion
 - [ ] IDOR: listings, chats, orders, disputes, `/me/export`
 - [ ] Admin: role bypass, TOTP skip, CSRF on cookie (if cookies added)
 - [ ] Upload: polyglot files, oversized, SVG XSS, malware EICAR
@@ -51,7 +51,7 @@
 - [ ] Chat PII leak + off-platform solicitation evasion
 - [ ] Risk/moderation bypass (price/title obfuscation)
 - [ ] Privacy: export completeness, delete residual PII
-- [ ] Infra: TLS, secrets in CI logs, open Redis/MinIO ports
+- [ ] Infra: TLS, secrets in CI logs, open Redis/s3mock ports
 
 ## Secrets audit
 

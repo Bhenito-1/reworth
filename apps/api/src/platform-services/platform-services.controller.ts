@@ -6,24 +6,18 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { OPS } from '../admin/admin-roles';
 import {
   CurrentUser,
   type AuthUser,
 } from '../common/decorators/current-user.decorator';
-import { Roles } from '../common/decorators/roles.decorator';
-import { AdminOnlyGuard } from '../common/guards/admin-only.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
 import { ConsignmentService } from './consignment.service';
 import {
   CreateConsignmentDto,
   CreateManagedPickupDto,
   CreateValuationDto,
   MarkConsignmentSoldDto,
-  ScheduleInstantBuyDto,
 } from './dto/platform-services.dto';
-import { InstantBuyService } from './instant-buy.service';
 import { ManagedPickupService } from './managed-pickup.service';
 import { ValuationProductService } from './valuation-product.service';
 
@@ -31,7 +25,6 @@ import { ValuationProductService } from './valuation-product.service';
 export class PlatformServicesController {
   constructor(
     private readonly valuations: ValuationProductService,
-    private readonly instantBuy: InstantBuyService,
     private readonly consignments: ConsignmentService,
     private readonly pickups: ManagedPickupService,
   ) {}
@@ -48,61 +41,6 @@ export class PlatformServicesController {
       listingId: dto.listingId,
       city: dto.city,
     });
-  }
-
-  @Get('instant-buy/fulfilments/:id')
-  @UseGuards(JwtAuthGuard)
-  getFulfilment(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    const isOps = user.roles?.some((r) =>
-      ['SUPER_ADMIN', 'OPERATIONS', 'OPS'].includes(r),
-    );
-    return this.instantBuy.get(id, user.id, Boolean(isOps));
-  }
-
-  @Post('instant-buy/fulfilments/:id/schedule')
-  @UseGuards(JwtAuthGuard)
-  schedule(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Body() dto: ScheduleInstantBuyDto,
-  ) {
-    const isOps = user.roles?.some((r) =>
-      ['SUPER_ADMIN', 'OPERATIONS'].includes(r),
-    );
-    return this.instantBuy.schedulePickup(
-      id,
-      user.id,
-      new Date(dto.slotStartAt),
-      new Date(dto.slotEndAt),
-      Boolean(isOps),
-    );
-  }
-
-  @Post('instant-buy/fulfilments/:id/picked-up')
-  @UseGuards(JwtAuthGuard, RolesGuard, AdminOnlyGuard)
-  @Roles(...OPS)
-  pickedUp(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.instantBuy.markPickedUp(id, user.id, true);
-  }
-
-  @Post('instant-buy/fulfilments/:id/in-transit')
-  @UseGuards(JwtAuthGuard, RolesGuard, AdminOnlyGuard)
-  @Roles(...OPS)
-  inTransit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.instantBuy.markInTransit(id, user.id, true);
-  }
-
-  @Post('instant-buy/fulfilments/:id/delivered')
-  @UseGuards(JwtAuthGuard, RolesGuard, AdminOnlyGuard)
-  @Roles(...OPS)
-  delivered(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.instantBuy.markDelivered(id, user.id, true);
-  }
-
-  @Post('instant-buy/fulfilments/:id/confirm')
-  @UseGuards(JwtAuthGuard)
-  buyerConfirm(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.instantBuy.buyerConfirm(id, user.id);
   }
 
   @Post('consignments')

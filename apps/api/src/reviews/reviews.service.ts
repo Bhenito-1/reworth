@@ -18,8 +18,14 @@ import {
   ReplyReviewDto,
   ReportReviewDto,
 } from './dto/reviews.dto';
+import { aggregateBuyerRatings } from './buyer-rating';
 import { publicTrustBadge } from './trust-score.compute';
 import { TrustScoreService } from './trust-score.service';
+
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return Math.round((values.reduce((sum, n) => sum + n, 0) / values.length) * 10) / 10;
+}
 
 const REVIEW_BLOCKLIST = [
   'whatsapp',
@@ -41,6 +47,10 @@ export type ReviewDto = {
   transactionExperience: number;
   body: string | null;
   photoKeys: string[];
+  /** Item the buyer rated, when this review is shown on another listing. */
+  listingTitle?: string | null;
+  /** Buyer bought a different item in the same category. */
+  similar?: boolean;
   status: ReviewStatus;
   reply: string | null;
   repliedAt: Date | null;
@@ -83,12 +93,11 @@ export class ReviewsService {
     if (order.status !== 'COMPLETED') {
       throw new ForbiddenException('Can only review completed orders');
     }
-    if (reviewerId !== order.buyerId && reviewerId !== order.sellerId) {
-      throw new ForbiddenException('Only order parties can review');
+    if (reviewerId !== order.buyerId) {
+      throw new ForbiddenException('Only the buyer can rate the seller');
     }
 
-    const revieweeId =
-      reviewerId === order.buyerId ? order.sellerId : order.buyerId;
+    const revieweeId = order.sellerId;
 
     const existing = await this.prisma.review.findUnique({
       where: {
@@ -114,61 +123,110 @@ export class ReviewsService {
         transactionExperience: dto.transactionExperience,
         body: dto.body?.trim() || null,
         photoKeys: dto.photoKeys ?? [],
-        status: ReviewStatus.PENDING_MUTUAL,
+        status: ReviewStatus.PUBLISHED,
+        publishedAt: new Date(),
       },
     });
-
-    const counterpart = await this.prisma.review.findUnique({
-      where: {
-        orderId_reviewerId: { orderId, reviewerId: revieweeId },
-      },
-    });
-
-    if (counterpart && counterpart.status === ReviewStatus.PENDING_MUTUAL) {
-      const publishedAt = new Date();
-      await this.prisma.review.updateMany({
-        where: { orderId, status: ReviewStatus.PENDING_MUTUAL },
-        data: { status: ReviewStatus.PUBLISHED, publishedAt },
-      });
-
-      await this.notifications.notify({
-        userId: order.buyerId,
-        category: NotificationCategory.REVIEW_RECEIVED,
-        title: 'Reviews published',
-        body: 'Both sides left a review — they are now visible on your profiles.',
-        deepLink: `reworth://orders/${orderId}/reviews`,
-        meta: { orderId },
-      });
-      await this.notifications.notify({
-        userId: order.sellerId,
-        category: NotificationCategory.REVIEW_RECEIVED,
-        title: 'Reviews published',
-        body: 'Both sides left a review — they are now visible on your profiles.',
-        deepLink: `reworth://orders/${orderId}/reviews`,
-        meta: { orderId },
-      });
-
-      await Promise.all([
-        this.trust.recompute(order.buyerId, 'review_published'),
-        this.trust.recompute(order.sellerId, 'review_published'),
-      ]);
-
-      const refreshed = await this.prisma.review.findUniqueOrThrow({
-        where: { id: created.id },
-      });
-      return this.toDto(refreshed);
-    }
 
     await this.notifications.notify({
       userId: revieweeId,
       category: NotificationCategory.REVIEW_RECEIVED,
-      title: 'Review waiting',
-      body: 'The other party left a review. Leave yours to unlock mutual publication.',
-      deepLink: `reworth://orders/${orderId}/reviews`,
-      meta: { orderId, reviewId: created.id },
+      title: 'New rating',
+      body: 'A buyer rated this order. It is now on the listing.',
+      deepLink: `reworth://listings/${order.listingId}`,
+      meta: { orderId, reviewId: created.id, listingId: order.listingId },
     });
 
+    await this.trust.recompute(order.sellerId, 'review_published');
     return this.toDto(created);
+  }
+
+  /**
+   * Buyer ratings of this seller's purchase process.
+   * Includes this item and the seller's other or same-category items.
+   * Seller-written reviews are excluded.
+   */
+  async listForListing(listingId: string): Promise<{
+    soldUnits: number;
+    average: number | null;
+    count: number;
+    items: ReviewDto[];
+    seller: {
+      average: number | null;
+      count: number;
+      items: ReviewDto[];
+    };
+  }> {
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: listingId },
+      select: {
+        id: true,
+        sellerId: true,
+        categoryId: true,
+        quantitySold: true,
+      },
+    });
+    if (!listing) throw new NotFoundException('Listing not found');
+    const soldUnits = listing.quantitySold ?? 0;
+
+    const rows = await this.prisma.review.findMany({
+      where: {
+        status: ReviewStatus.PUBLISHED,
+        revieweeId: listing.sellerId,
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        order: {
+          select: {
+            id: true,
+            buyerId: true,
+            checkoutId: true,
+            listing: { select: { id: true, title: true, categoryId: true } },
+          },
+        },
+        reviewer: { include: { profile: true } },
+      },
+    });
+    const buyerReviews = rows.filter(
+      (row) => row.reviewerId === row.order.buyerId,
+    );
+    const sellerItems = buyerReviews.map((row) => {
+      const bought = row.order.listing;
+      return {
+        ...this.toDto(row),
+        listingTitle: bought?.title ?? null,
+        similar: Boolean(
+          bought &&
+            bought.id !== listing.id &&
+            listing.categoryId &&
+            bought.categoryId === listing.categoryId,
+        ),
+      };
+    });
+    const sellerRating = aggregateBuyerRatings(
+      buyerReviews.map((row) => ({
+        buyerId: row.order.buyerId,
+        orderId: row.order.id,
+        checkoutId: row.order.checkoutId,
+        score: row.transactionExperience,
+      })),
+    );
+    const onThisListing = sellerItems.filter((item) => {
+      const row = buyerReviews.find((r) => r.id === item.id);
+      return row?.order.listing?.id === listing.id;
+    });
+
+    return {
+      soldUnits,
+      average: mean(onThisListing.map((item) => item.transactionExperience)),
+      count: onThisListing.length,
+      items: onThisListing,
+      seller: {
+        average: sellerRating.average,
+        count: sellerRating.count,
+        items: sellerItems,
+      },
+    };
   }
 
   async reply(
@@ -231,9 +289,12 @@ export class ReviewsService {
       orderBy: { publishedAt: 'desc' },
       include: {
         reviewer: { include: { profile: true } },
+        order: { select: { buyerId: true } },
       },
     });
-    return rows.map((r) => this.toDto(r));
+    return rows
+      .filter((row) => row.reviewerId === row.order.buyerId)
+      .map((row) => this.toDto(row));
   }
 
   async getPublicProfile(
@@ -248,11 +309,16 @@ export class ReviewsService {
         trustScore: true,
       },
     });
-    if (!user || user.deletedAt || user.status === 'DELETED') {
+    if (
+      !user ||
+      user.deletedAt ||
+      user.status === 'DELETED' ||
+      user.status === 'SUSPENDED'
+    ) {
       throw new NotFoundException('User not found');
     }
 
-    const [successfulTransactions, reviewAgg, listings, follow] =
+    const [successfulTransactions, reviewRows, listings, follow] =
       await Promise.all([
         this.prisma.order.count({
           where: {
@@ -260,10 +326,13 @@ export class ReviewsService {
             OR: [{ buyerId: userId }, { sellerId: userId }],
           },
         }),
-        this.prisma.review.aggregate({
+        this.prisma.review.findMany({
           where: { revieweeId: userId, status: ReviewStatus.PUBLISHED },
-          _avg: { overall: true },
-          _count: { _all: true },
+          select: {
+            transactionExperience: true,
+            reviewerId: true,
+            order: { select: { id: true, buyerId: true, checkoutId: true } },
+          },
         }),
         this.prisma.listing.findMany({
           where: {
@@ -303,10 +372,18 @@ export class ReviewsService {
           : Promise.resolve(null),
       ]);
 
-    const avgRating =
-      reviewAgg._count._all > 0
-        ? Math.round((reviewAgg._avg.overall ?? 0) * 10) / 10
-        : null;
+    const buyerRatings = reviewRows.filter(
+      (row) => row.reviewerId === row.order.buyerId,
+    );
+    const sellerRating = aggregateBuyerRatings(
+      buyerRatings.map((row) => ({
+        buyerId: row.order.buyerId,
+        orderId: row.order.id,
+        checkoutId: row.order.checkoutId,
+        score: row.transactionExperience,
+      })),
+    );
+    const avgRating = sellerRating.average;
 
     const trustTier = publicTrustBadge(user.trustScore?.tier ?? null);
     const usuallyRespondsWithinMinutes =
@@ -324,7 +401,7 @@ export class ReviewsService {
       ),
       successfulTransactions,
       avgRating,
-      reviewCount: reviewAgg._count._all,
+      reviewCount: sellerRating.count,
       trustTier,
       usuallyRespondsWithinMinutes,
       activeListings: listings.map((l) => toPublicListing(l)),

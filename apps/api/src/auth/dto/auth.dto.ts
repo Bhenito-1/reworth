@@ -18,35 +18,6 @@ export class DeviceDto {
   platform!: DevicePlatform;
 }
 
-export class OtpRequestDto {
-  @IsString()
-  @MinLength(8)
-  phone!: string;
-}
-
-export class OtpVerifyDto {
-  @IsString()
-  @MinLength(8)
-  phone!: string;
-
-  @IsString()
-  @MinLength(4)
-  code!: string;
-
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => DeviceDto)
-  device?: DeviceDto;
-
-  @IsOptional()
-  @IsString()
-  referralCode?: string;
-
-  @IsOptional()
-  @IsString()
-  deviceFingerprintHash?: string;
-}
-
 export class LoginDto {
   @IsEmail()
   email!: string;
@@ -54,6 +25,26 @@ export class LoginDto {
   @IsString()
   @MinLength(8)
   password!: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DeviceDto)
+  device?: DeviceDto;
+}
+
+/** Consumer email registration. */
+export class RegisterDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @MinLength(8)
+  password!: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  displayName?: string;
 
   @IsOptional()
   @ValidateNested()

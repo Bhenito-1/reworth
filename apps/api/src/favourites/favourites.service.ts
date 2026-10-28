@@ -123,6 +123,15 @@ export class FavouritesService {
   }
 
   async getMeFavourites(userId: string) {
+    await this.prisma.favourite.deleteMany({
+      where: {
+        userId,
+        OR: [
+          { listing: { quantityAvailable: { lte: 0 } } },
+          { listing: { status: { notIn: ['LIVE', 'RESERVED'] } } },
+        ],
+      },
+    });
     const [favourites, follows, searches] = await Promise.all([
       this.prisma.favourite.findMany({
         where: { userId },
@@ -149,7 +158,11 @@ export class FavouritesService {
 
     return {
       items: favourites
-        .filter((f) => f.listing.status === 'LIVE' || f.listing.status === 'RESERVED')
+        .filter(
+          (f) =>
+            (f.listing.status === 'LIVE' || f.listing.status === 'RESERVED') &&
+            (f.listing.quantityAvailable ?? 0) > 0,
+        )
         .map((f) => ({
           favouriteId: f.id,
           savedAt: f.createdAt,

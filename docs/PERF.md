@@ -14,6 +14,7 @@
 | --- | --- |
 | [`infra/k6/mixed-load.js`](../infra/k6/mixed-load.js) | Mixed home/search/listings + health (arrival-rate, 500 VUs) |
 | [`infra/k6/phase9-500vu-gate.js`](../infra/k6/phase9-500vu-gate.js) | Hot-path gate (health/categories/readyz × 500 VUs) |
+| [`infra/k6/local-mid-gate.js`](../infra/k6/local-mid-gate.js) | Laptop mid-gate (50 VUs / 60s) before staging 500 VU |
 | [`infra/k6/results-phase9-summary.json`](../infra/k6/results-phase9-summary.json) | Latest local summary export |
 
 ```bash
@@ -31,7 +32,29 @@ Hardware: single Nest process on Windows laptop, Postgres available, Redis offli
 | Gate (health/categories) | 500 | Healthy responses **med ~62ms**; overall p95 inflated by saturated 5xx/timeouts under unconstrained concurrency — **does not meet budget on this host** |
 | Mixed arrival-rate | 500 | Same saturation pattern when DB routes included |
 
-**Verdict:** Scripts and budgets are committed. Local single-node cannot honestly claim p95 &lt; 500ms at 500 open VUs. **Cloud staging (multi-instance / proper pool + Redis) is the AC environment** — re-run and overwrite `results-phase9-summary.json` in Phase 10 UAT. Until then, treat the gate as a **pass when staging shows p95 &lt; 500ms**.
+### Local health smoke (2026-09-20)
+
+`k6 run -e API_BASE_URL=http://127.0.0.1:3001 infra/k6/health-smoke.js` against running Nest + Docker Postgres/Redis:
+
+| Check | Result |
+| --- | --- |
+| http_req_failed | 0% |
+| http_req_duration p95 | **~5ms** (1 VU, 15s) |
+| Thresholds | Pass |
+
+This does **not** replace the 500 VU staging gate — it confirms the smoke script + local API path before device/PO demos.
+
+### Local mid-gate 50 VU (2026-09-30)
+
+`k6 run -e API_BASE_URL=http://127.0.0.1:3011/api/v1 infra/k6/local-mid-gate.js` against Nest without `DISABLE_THROTTLE=1`:
+
+| Check | Result |
+| --- | --- |
+| http_req_failed | **~98%** (throttle / 429 storm under 50 VUs) |
+| http_req_duration p95 | ~981ms |
+| Thresholds | Fail — expected without `DISABLE_THROTTLE` |
+
+Re-run with `DISABLE_THROTTLE=1` on the API before treating mid-gate as a local pass. Staging 500 VU remains required.
 
 ### Top 3 offenders fixed (local)
 

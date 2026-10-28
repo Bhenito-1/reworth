@@ -6,12 +6,16 @@ import { useRouter } from "next/navigation";
 import { Button, Chip, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListingCard";
 import { ApiError } from "../../lib/api";
+import { CONDITION_LABELS } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
+import { addToCart } from "../../lib/cart";
 import {
   buildSearchQueryString,
   compactFilters,
   deleteSavedSearch,
   getMeFavourites,
+  savedListingCanCart,
+  savedListingNote,
   unfollowSeller,
   unfavouriteListing,
   updateSavedSearch,
@@ -41,7 +45,7 @@ export default function MyPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
@@ -51,7 +55,7 @@ export default function MyPage() {
       setData(res);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not load saved");
@@ -77,10 +81,24 @@ export default function MyPage() {
             }
           : prev,
       );
-      setToast({ message: "Removed from saved", tone: "success" });
+      setToast({ message: "Removed from wishlist", tone: "success" });
     } catch (err) {
       setToast({
         message: err instanceof ApiError ? err.message : "Failed",
+        tone: "error",
+      });
+    }
+  }
+
+  async function addListingToCart(listing: PublicListing) {
+    const token = getAccessToken();
+    if (!token) return;
+    try {
+      await addToCart(token, listing.id);
+      setToast({ message: "Added to cart", tone: "success" });
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Could not add to cart",
         tone: "error",
       });
     }
@@ -172,26 +190,10 @@ export default function MyPage() {
 
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
-      <header className="sticky top-0 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)]/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <Link
-            href="/"
-            className="text-lg font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
-          <Link href="/sell">
-            <Button variant="sell" size="sm">
-              SELL
-            </Button>
-          </Link>
-        </div>
-      </header>
-
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <h1 className="text-3xl font-semibold tracking-tight">Saved</h1>
         <p className="mt-1 text-[var(--rw-ink-muted)]">
-          Items, sellers, and searches you follow.
+          Wishlist items, sellers, and searches you follow.
         </p>
 
         <div
@@ -201,7 +203,7 @@ export default function MyPage() {
         >
           {(
             [
-              ["items", "Items"],
+              ["items", "Wishlist"],
               ["sellers", "Sellers"],
               ["searches", "Searches"],
             ] as const
@@ -229,11 +231,11 @@ export default function MyPage() {
 
         <div className="mt-8" role="tabpanel">
           {loading ? (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="flex flex-wrap gap-3">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="aspect-[3/4] rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading"
                 />
               ))}
@@ -249,7 +251,11 @@ export default function MyPage() {
               }
             />
           ) : tab === "items" ? (
-            <ItemsTab items={data?.items ?? []} onToggle={toggleFavourite} />
+            <ItemsTab
+              items={data?.items ?? []}
+              onToggle={toggleFavourite}
+              onAddToCart={addListingToCart}
+            />
           ) : tab === "sellers" ? (
             <SellersTab
               sellers={data?.sellers ?? []}
@@ -282,31 +288,39 @@ export default function MyPage() {
 function ItemsTab({
   items,
   onToggle,
+  onAddToCart,
 }: {
   items: FavouriteItem[];
   onToggle: (l: PublicListing) => void;
+  onAddToCart: (l: PublicListing) => void;
 }) {
   if (items.length === 0) {
     return (
       <EmptyState
-        title="No saved items"
-        description="Tap the heart on a listing to save it here."
+        title="Your wishlist is empty"
+        description="Tap the heart on a listing to keep it here, then add it to the cart when you want to order."
         action={
           <Link href="/search">
-            <Button variant="primary">Browse</Button>
+            <Button variant="primary">Search for favorites</Button>
           </Link>
         }
       />
     );
   }
   return (
-    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+    <ul className="flex flex-wrap gap-3">
       {items.map((row) => (
-        <li key={row.favouriteId}>
+        <li key={row.favouriteId} className="w-[7.5rem] shrink-0">
           <DiscoveryListingCard
             listing={row.listing}
             favourited
+            note={savedListingNote(row.listing)}
             onToggleFavourite={(l) => void onToggle(l)}
+            onAddToCart={
+              savedListingCanCart(row.listing)
+                ? (l) => void onAddToCart(l)
+                : undefined
+            }
           />
         </li>
       ))}
@@ -380,7 +394,7 @@ function SearchesTab({
         description="Save filters from the search page to get match alerts here."
         action={
           <Link href="/search">
-            <Button variant="primary">Search</Button>
+            <Button variant="primary">Open search</Button>
           </Link>
         }
       />
@@ -452,7 +466,8 @@ function summarizeFilters(filters: Record<string, unknown>): string {
   if (typeof filters.community === "string" && filters.community)
     parts.push(filters.community);
   if (filters.radiusKm != null) parts.push(`${filters.radiusKm} km`);
-  if (typeof filters.condition === "string" && filters.condition)
-    parts.push(filters.condition);
+  if (typeof filters.condition === "string" && filters.condition) {
+    parts.push(CONDITION_LABELS[filters.condition] ?? filters.condition);
+  }
   return parts.join(" · ") || "Custom filters";
 }

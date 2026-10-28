@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OffersService } from './offers.service';
 import { NotificationStub } from '../chat/notification.stub';
@@ -112,6 +112,16 @@ describe('OffersService lifecycle', () => {
     expect(result.id).toBe('offer-2');
     expect(result.parentOfferId).toBe('offer-1');
     expect(result.status).toBe('PENDING');
+  });
+
+  it('rejects a buyer countering their own offer', async () => {
+    const prisma = {
+      offer: { findUnique: jest.fn().mockResolvedValue(baseOffer()) },
+    };
+    const service = new OffersService(prisma as never, config, notifications);
+    await expect(
+      service.counter('offer-1', 'buyer-1', { amountKobo: 45_000_00 }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('double-accept race → second call 409', async () => {

@@ -36,15 +36,15 @@ describe('Phase 9 security posture', () => {
   it('zod boundary accepts valid consent and rejects fuzz samples', () => {
     expect(
       parseOrThrow(consentUpdateSchema, {
-        channel: 'SMS',
+        channel: 'MARKETING',
         granted: true,
       }),
-    ).toEqual({ channel: 'SMS', granted: true });
+    ).toEqual({ channel: 'MARKETING', granted: true });
 
     expect(() =>
       parseOrThrow(consentUpdateSchema, {
         channel: 'SMS',
-        granted: 'yes',
+        granted: true,
       }),
     ).toThrow(/Validation failed/);
 

@@ -92,6 +92,9 @@ describe('OrderStateMachine', () => {
     OrderStateMachine.assertTransition('CREATED', 'PAYMENT_PENDING');
     OrderStateMachine.assertTransition('PAYMENT_PENDING', 'FUNDED');
     OrderStateMachine.assertTransition('FUNDED', 'HANDED_OVER');
+    OrderStateMachine.assertTransition('FUNDED', 'SHIPPED');
+    OrderStateMachine.assertTransition('SHIPPED', 'DELIVERED');
+    OrderStateMachine.assertTransition('DELIVERED', 'RECEIVED');
     OrderStateMachine.assertTransition('HANDED_OVER', 'RECEIVED');
     OrderStateMachine.assertTransition('RECEIVED', 'COMPLETED');
   });
@@ -516,11 +519,7 @@ describe('disputes', () => {
       notifications,
       psp,
     );
-    const disputes = new DisputesService(
-      prisma as never,
-      orders,
-      notifications,
-      psp,
+    const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
 
     await disputes.open('order-1', 'buyer-1', {
@@ -603,11 +602,7 @@ describe('disputes', () => {
       notifications,
       psp,
     );
-    const disputes = new DisputesService(
-      prisma as never,
-      orders,
-      notifications,
-      psp,
+    const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
     await disputes.resolve('disp-2', 'admin-1', {
       resolution: 'PARTIAL_REFUND',
@@ -632,11 +627,7 @@ describe('disputes', () => {
       notifications,
       psp,
     );
-    const disputes = new DisputesService(
-      prisma as never,
-      orders,
-      notifications,
-      psp,
+    const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
     await expect(
       disputes.open('order-1', 'buyer-1', { reason: 'COUNTERFEIT' }),
@@ -752,11 +743,7 @@ describe('disputes', () => {
       },
     );
 
-    const disputes = new DisputesService(
-      prisma as never,
-      orders,
-      notifications,
-      psp,
+    const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
     await disputes.open('order-1', 'buyer-1', { reason: 'UNDISCLOSED_DAMAGE' });
     expect(order2.status).toBe('DISPUTE_HOLD');
@@ -791,11 +778,7 @@ describe('disputes', () => {
       notifications,
       psp,
     );
-    const disputes = new DisputesService(
-      prisma as never,
-      orders,
-      notifications,
-      psp,
+    const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
     const n = await disputes.expireSellerResponses();
     expect(n).toBe(1);

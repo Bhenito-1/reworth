@@ -14,8 +14,8 @@
 
 - [ ] Appoint NDPR Data Protection Officer contact
 - [ ] Privacy policy + Terms URLs in App Store / Play Console
-- [ ] Processor agreements: Termii/Twilio, Paystack, MinIO/S3, OpenAI (if enabled)
-- [ ] Retention schedule for chat, OTP, device push tokens
+- [ ] Processor agreements: Paystack, S3 (adobe/s3mock locally), email provider, OpenAI (if enabled)
+- [ ] Retention schedule for chat, device push tokens
 - [ ] Breach notification playbook (link from `docs/RUNBOOK.md`)
 
 ## Evidence pack (pre-launch)

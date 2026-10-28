@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   Button,
   EmptyState,
@@ -12,6 +12,7 @@ import {
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
+import { brandPublic } from "../../../lib/brand";
 import { followSeller, unfollowSeller } from "../../../lib/discovery";
 import type { MeResponse } from "../../../lib/types";
 import {
@@ -28,6 +29,9 @@ export default function PublicProfilePage() {
   const params = useParams<{ id: string }>();
   const userId = params?.id;
   const router = useRouter();
+  const from = useSearchParams().get("from");
+  const backHref =
+    from && /^\/listings\/[\w-]+$/.test(from) ? from : null;
 
   const [meId, setMeId] = useState<string | null>(null);
   const [profile, setProfile] = useState<PublicProfile | null>(null);
@@ -82,7 +86,7 @@ export default function PublicProfilePage() {
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to follow sellers", tone: "warn" });
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     if (meId === profile.id) return;
@@ -178,24 +182,41 @@ export default function PublicProfilePage() {
         className="pointer-events-none absolute inset-x-0 top-0 h-[36vh]"
         style={{
           background:
-            "radial-gradient(ellipse 75% 55% at 40% 0%, rgba(14,159,110,0.14), transparent 68%), radial-gradient(ellipse 50% 40% at 90% 10%, rgba(201,162,39,0.12), transparent 60%)",
+            "radial-gradient(ellipse 75% 55% at 40% 0%, rgba(217,106,50,0.14), transparent 68%), radial-gradient(ellipse 50% 40% at 90% 10%, rgba(201,162,39,0.12), transparent 60%)",
         }}
       />
 
       <div className="relative z-10 mx-auto max-w-3xl px-4 pb-24 pt-6 sm:px-8">
         <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-xl font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          >
-            ReWorth
-          </Link>
-          <Link
-            href="/"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            Browse
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/"
+              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={brandPublic.logo}
+                alt="ReWorth"
+                className="h-8 w-auto"
+              />
+            </Link>
+            {backHref ? (
+              <Link
+                href={backHref}
+                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
+              >
+                ← Back
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => router.back()}
+                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
+              >
+                ← Back
+              </button>
+            )}
+          </div>
         </header>
 
         <section className="rw-fade-up" aria-labelledby="profile-name">
@@ -204,24 +225,30 @@ export default function PublicProfilePage() {
               className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--rw-accent-muted)] text-2xl font-semibold text-[var(--rw-accent)]"
               aria-hidden
             >
-              {profile.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={profile.avatarUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                (profile.displayName || "M").slice(0, 1).toUpperCase()
-              )}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={profile.avatarUrl || brandPublic.profileAvatar}
+                alt=""
+                className="h-full w-full object-cover"
+              />
             </div>
             <div className="min-w-0 flex-1">
-              <h1
-                id="profile-name"
-                className="text-3xl font-semibold tracking-tight sm:text-4xl"
-              >
-                {profile.displayName}
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1
+                  id="profile-name"
+                  className="text-3xl font-semibold tracking-tight sm:text-4xl"
+                >
+                  {profile.displayName}
+                </h1>
+                {profile.identityVerified ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={brandPublic.verified}
+                    alt="Verified"
+                    className="h-6 w-6"
+                  />
+                ) : null}
+              </div>
               <p className="mt-2 text-base text-[var(--rw-ink-muted)]">
                 {formatStars(profile.avgRating, profile.reviewCount)}
               </p>
@@ -248,8 +275,14 @@ export default function PublicProfilePage() {
 
           <ul className="mt-6 space-y-2 text-sm sm:text-base">
             {profile.identityVerified ? (
-              <li className="font-medium text-[var(--rw-accent)]">
-                Identity Verified ✓
+              <li className="flex items-center gap-2 font-medium text-[var(--rw-accent)]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={brandPublic.identityChecked}
+                  alt=""
+                  className="h-5 w-5"
+                />
+                Identity Verified
               </li>
             ) : null}
             <li>
@@ -259,6 +292,26 @@ export default function PublicProfilePage() {
             <li>Member since {profile.memberSince}</li>
             {responseLine ? <li>{responseLine}</li> : null}
           </ul>
+
+          <div className="mt-6 flex flex-wrap gap-2" aria-label="Trust signals">
+            {(
+              [
+                ["Buyer protection", brandPublic.buyerProtection],
+                ["Secure payment", brandPublic.securePayment],
+                ["Safe meetup", brandPublic.safeMeetup],
+                ["Verified sellers", brandPublic.verifiedSeller],
+              ] as const
+            ).map(([label, src]) => (
+              <span
+                key={label}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-2.5 py-1 text-xs font-medium text-[var(--rw-ink-muted)]"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt="" className="h-4 w-4" />
+                {label}
+              </span>
+            ))}
+          </div>
         </section>
 
         <section className="mt-12" aria-labelledby="active-listings">
@@ -270,10 +323,13 @@ export default function PublicProfilePage() {
               No live listings right now.
             </p>
           ) : (
-            <ul className="mt-4 grid gap-4 sm:grid-cols-2">
+            <ul className="mt-4 flex flex-wrap gap-3">
               {profile.activeListings.map((listing) => (
-                <li key={listing.id}>
-                  <DiscoveryListingCard listing={listing} />
+                <li key={listing.id} className="w-[7.5rem] shrink-0">
+                  <DiscoveryListingCard
+                    listing={listing}
+                    href={`/listings/${listing.id}?from=/users/${userId}`}
+                  />
                 </li>
               ))}
             </ul>
@@ -314,7 +370,7 @@ export default function PublicProfilePage() {
                     ) : null}
                     {review.reply ? (
                       <div className="mt-3 border-l-2 border-[var(--rw-accent)] pl-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-[var(--rw-ink-muted)]">
+                        <p className="text-xs font-semibold text-[var(--rw-ink-muted)]">
                           Reply from {profile.displayName}
                         </p>
                         <p className="mt-1 text-sm">{review.reply}</p>

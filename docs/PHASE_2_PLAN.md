@@ -8,8 +8,8 @@
 - Seed 16 top-level categories from PRD §26
 
 ## Media
-- Presign PUT to MinIO; BullMQ image pipeline (validate → EXIF strip → resize 640/1080/1600 → WebP/AVIF → dHash)
-- MalwareScanProvider mock; StorageProvider MinIO adapter + mock
+- Presign PUT to adobe/s3mock; BullMQ image pipeline (validate → EXIF strip → resize 640/1080/1600 → WebP/AVIF → dHash)
+- MalwareScanProvider mock; StorageProvider S3 adapter + mock
 
 ## Listings
 - State machine via events; AI assist (ListingAssistProvider + rule mock); price intel v1; geocoding mock
@@ -23,4 +23,4 @@
 
 ## Risks
 - Sharp/AVIF may need platform libs — fall back to WebP-only in mock pipeline if Sharp unavailable in CI
-- MinIO optional in unit tests (mock storage)
+- adobe/s3mock optional in unit tests (mock storage)

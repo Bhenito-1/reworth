@@ -1,4 +1,12 @@
-import { IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class PresignMediaDto {
   @IsOptional()
@@ -27,4 +35,17 @@ export class CompleteMediaDto {
   @IsInt()
   @Min(0)
   sortOrder!: number;
+
+  /**
+   * Optional raw image bytes (base64). Used when browser PUT to MinIO fails
+   * (CORS / mock storage) so Analyze still has vision-readable pixels.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(14_000_000)
+  inlineBase64?: string;
+
+  @IsOptional()
+  @IsString()
+  contentType?: string;
 }

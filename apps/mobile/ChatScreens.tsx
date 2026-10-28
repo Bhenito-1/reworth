@@ -1,25 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { screenBounds, ScrollView } from "./components/BoundScroll";
 import { ApiError } from "./lib/api";
-import { getAccessToken } from "./lib/auth";
+import { clearTokens, ensureAccessToken, getAccessToken } from "./lib/auth";
 import {
   acceptOffer,
   blockUser,
+  unblockUser,
   clientMsgId,
   conversationThumbUrl,
   counterOffer,
   createOffer,
+  deleteConversation,
   listConversations,
   listMessages,
   listOffers,
@@ -27,26 +30,54 @@ import {
   muteConversation,
   nairaToKobo,
   offerStatusLabel,
+  parseMeetupPin,
+  postMeetupPin,
   postMessage,
   rejectOffer,
+  safeChatPreview,
   reportUser,
   unmuteConversation,
   withdrawOffer,
   type ChatMessage,
   type ConversationListItem,
+  type MeetupPinPayload,
   type OfferDto,
 } from "./lib/chat";
+import {
+  joinConversation,
+  mergeMessages,
+  subscribeChat,
+  type InboxUpdate,
+} from "./lib/chat-socket";
+import {
+  acceptSwapProposal,
+  cancelSwapProposal,
+  parseSwapProposalCard,
+  rejectSwapProposal,
+} from "./lib/swap";
 import { formatNgnFromKobo } from "./lib/types";
+import { EmptyState } from "./components/EmptyState";
+import { MeetupPinSheet } from "./components/MeetupPinSheet";
+import { LocateMapSheet } from "./components/LocateMapSheet";
+import { brandAssets } from "./lib/brandAssets";
+import { useColors } from "./theme/ThemeProvider";
+import { colors } from "./theme/tokens";
 
 type Props = {
   meId: string;
   openConversationId?: string | null;
   onConversationOpened?: () => void;
+  onActiveChange?: (conversationId: string | null) => void;
   onCheckout?: (params: {
     listingId: string;
     offerId?: string;
     orderIntentId?: string;
+    payOrderId?: string;
   }) => void;
+  onOpenOrder?: (orderId: string) => void;
+  onBrowse?: () => void;
+  /** Called when session cannot be recovered — parent should return to onboarding */
+  onSessionExpired?: () => void;
 };
 
 type ThreadItem =
@@ -57,22 +88,51 @@ export function ChatsPanel({
   meId,
   openConversationId,
   onConversationOpened,
+  onActiveChange,
   onCheckout,
+  onOpenOrder,
+  onBrowse,
+  onSessionExpired,
 }: Props) {
+  const theme = useColors();
   const [items, setItems] = useState<ConversationListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [activeId, setActiveId] = useState<string | null>(
+    openConversationId ?? null,
+  );
+  const skipEmptyReport = useRef(activeId == null);
+  const [pendingDelete, setPendingDelete] = useState<ConversationListItem | null>(
+    null,
+  );
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const token = await getAccessToken();
-    if (!token) return;
     setLoading(true);
     setError(null);
+    setSessionExpired(false);
     try {
+      const token = await ensureAccessToken();
+      if (!token) {
+        setSessionExpired(true);
+        setError("Session expired — sign in again");
+        setItems([]);
+        return;
+      }
       setItems(await listConversations(token));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not load chats");
+      const unauthorized =
+        err instanceof ApiError && err.status === 401;
+      if (unauthorized) {
+        setSessionExpired(true);
+        setError("Session expired — sign in again");
+        await clearTokens();
+      } else {
+        setError(err instanceof ApiError ? err.message : "Could not load chats");
+      }
+      setItems([]);
     } finally {
       setLoading(false);
     }
@@ -83,18 +143,59 @@ export function ChatsPanel({
   }, [load]);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      void (async () => {
-        const token = await getAccessToken();
-        if (!token) return;
-        try {
-          setItems(await listConversations(token));
-        } catch {
-          /* ignore poll errors */
-        }
-      })();
-    }, 8000);
-    return () => clearInterval(id);
+    let stop = () => undefined;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+    let live = false;
+    void (async () => {
+      const token = await getAccessToken();
+      if (!token || cancelled) return;
+      stop = subscribeChat(token, {
+        onConnect: () => {
+          live = true;
+        },
+        onDisconnect: () => {
+          live = false;
+        },
+        onInbox: (update: InboxUpdate) => {
+          setItems((prev) => {
+            const index = prev.findIndex((row) => row.id === update.conversationId);
+            if (index < 0) {
+              void listConversations(token)
+                .then(setItems)
+                .catch(() => undefined);
+              return prev;
+            }
+            const row = prev[index];
+            const incoming = update.senderId === row.counterpart.id;
+            const next = [...prev];
+            next[index] = {
+              ...row,
+              lastMessageAt: update.lastMessageAt,
+              lastMessagePreview: update.preview,
+              unreadCount: incoming ? row.unreadCount + 1 : row.unreadCount,
+            };
+            next.sort(
+              (a, b) =>
+                new Date(b.lastMessageAt ?? 0).getTime() -
+                new Date(a.lastMessageAt ?? 0).getTime(),
+            );
+            return next;
+          });
+        },
+      });
+      timer = setInterval(() => {
+        if (live || AppState.currentState !== "active") return;
+        void listConversations(token)
+          .then(setItems)
+          .catch(() => undefined);
+      }, 30000);
+    })();
+    return () => {
+      cancelled = true;
+      stop();
+      if (timer) clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -104,12 +205,41 @@ export function ChatsPanel({
     }
   }, [openConversationId, onConversationOpened]);
 
+  useEffect(() => {
+    if (skipEmptyReport.current && activeId == null) return;
+    skipEmptyReport.current = false;
+    onActiveChange?.(activeId);
+  }, [activeId, onActiveChange]);
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const token = await ensureAccessToken();
+      if (!token) {
+        setSessionExpired(true);
+        return;
+      }
+      await deleteConversation(token, pendingDelete.id);
+      setItems((prev) => prev.filter((row) => row.id !== pendingDelete.id));
+      setPendingDelete(null);
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError ? err.message : "Could not delete this chat",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   if (activeId) {
     return (
       <ChatThread
         conversationId={activeId}
         meId={meId}
         onCheckout={onCheckout}
+        onOpenOrder={onOpenOrder}
         onBack={() => {
           setActiveId(null);
           void load();
@@ -119,76 +249,128 @@ export function ChatsPanel({
   }
 
   return (
-    <View style={styles.flex}>
-      <Text style={styles.brand} accessibilityRole="header">
+    <View style={[styles.flex, { backgroundColor: theme.canvas }]}>
+      <Text
+        style={[styles.brand, { color: theme.ink }]}
+        accessibilityRole="header"
+        testID="chats-title"
+      >
         Chats
       </Text>
-      <Text style={styles.copy}>Offers and messages with local buyers.</Text>
+      <Text style={[styles.copy, { color: theme.muted }]}>
+        Offers and messages with local buyers.
+      </Text>
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator color="#0E9F6E" accessibilityLabel="Loading" />
+          <ActivityIndicator color={theme.orange} accessibilityLabel="Loading" />
         </View>
+      ) : sessionExpired ? (
+        <EmptyState
+          title="Sign in again"
+          body="Your session expired. Sign back in to see chats and offers."
+          ctaLabel="Sign in"
+          onCta={() => {
+            void clearTokens().then(() => onSessionExpired?.());
+          }}
+          illustration="messages"
+        />
       ) : error ? (
         <View style={styles.center}>
-          <Text style={styles.error}>{error}</Text>
+          <Text style={[styles.error, { color: theme.error }]}>{error}</Text>
           <Pressable onPress={() => void load()} style={styles.retry}>
-            <Text style={styles.retryText}>Retry</Text>
+            <Text style={[styles.retryText, { color: theme.orange }]}>Retry</Text>
           </Pressable>
         </View>
       ) : items.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyTitle}>No conversations yet</Text>
-          <Text style={styles.muted}>
-            Open a listing and tap Chat or Make offer.
-          </Text>
-        </View>
+        <EmptyState
+          title="No messages"
+          body="Open a listing and tap Chat or Make offer."
+          ctaLabel="Browse listings"
+          onCta={() => onBrowse?.()}
+          illustration="messages"
+        />
       ) : (
         <FlatList
           data={items}
           keyExtractor={(c) => c.id}
+          style={screenBounds}
           contentContainerStyle={styles.listPad}
           renderItem={({ item: c }) => {
             const thumb = conversationThumbUrl(c.listingThumb);
             return (
               <Pressable
-                style={styles.row}
+                style={[
+                  styles.row,
+                  {
+                    borderColor: theme.border,
+                    backgroundColor: theme.surface,
+                  },
+                ]}
                 onPress={() => setActiveId(c.id)}
+                onLongPress={() => {
+                  setDeleteError(null);
+                  setPendingDelete(c);
+                }}
+                delayLongPress={500}
                 accessibilityRole="button"
                 accessibilityLabel={c.listingTitle}
+                accessibilityHint="Long press to delete this chat for you"
               >
-                <View style={styles.thumb}>
+                <View style={[styles.thumb, { backgroundColor: theme.border }]}>
                   {thumb ? (
-                    <Image source={{ uri: thumb }} style={styles.thumbImg} />
+                    <Image
+                      source={{ uri: thumb }}
+                      style={styles.thumbImg}
+                      resizeMode="cover"
+                    />
                   ) : (
-                    <Text style={styles.thumbLetter}>
+                    <Text style={[styles.thumbLetter, { color: theme.muted }]}>
                       {(c.listingTitle || "?").slice(0, 1).toUpperCase()}
                     </Text>
                   )}
                 </View>
                 <View style={styles.rowBody}>
                   <View style={styles.rowTop}>
-                    <Text style={styles.rowTitle} numberOfLines={1}>
+                    <Text
+                      style={[styles.rowTitle, { color: theme.ink }]}
+                      numberOfLines={1}
+                    >
                       {c.listingTitle || "Listing"}
                     </Text>
                     {c.unreadCount > 0 ? (
-                      <View style={styles.badge}>
+                      <View
+                        style={[styles.badge, { backgroundColor: theme.orange }]}
+                      >
                         <Text style={styles.badgeText}>
                           {c.unreadCount > 99 ? "99+" : c.unreadCount}
                         </Text>
                       </View>
                     ) : c.muted ? (
-                      <Text style={styles.mutedChip}>Muted</Text>
+                      <Text style={[styles.mutedChip, { color: theme.muted }]}>
+                        Muted
+                      </Text>
                     ) : null}
                   </View>
-                  <Text style={styles.rowPreview} numberOfLines={1}>
+                  <Text
+                    style={[styles.rowPreview, { color: theme.muted }]}
+                    numberOfLines={1}
+                  >
                     {c.counterpart.displayName}
                     {c.lastMessagePreview
-                      ? ` · ${c.lastMessagePreview}`
+                      ? ` · ${safeChatPreview(c.lastMessagePreview)}`
                       : " · No messages yet"}
                   </Text>
                   {c.activeOffer ? (
-                    <Text style={styles.offerChip}>
+                    <Text
+                      style={[
+                        styles.offerChip,
+                        {
+                          backgroundColor: theme.orangeWash,
+                          color: theme.orange,
+                        },
+                      ]}
+                    >
                       {formatNgnFromKobo(c.activeOffer.amountKobo)} ·{" "}
                       {offerStatusLabel(String(c.activeOffer.status))}
                     </Text>
@@ -199,6 +381,46 @@ export function ChatsPanel({
           }}
         />
       )}
+
+      <Modal visible={pendingDelete != null} transparent animationType="slide">
+        <View style={styles.sheetBackdrop}>
+          <View style={[styles.sheet, { backgroundColor: theme.canvas }]}>
+            <Text style={[styles.sheetTitle, { color: theme.ink }]}>
+              Delete chat
+            </Text>
+            <Text style={[styles.copy, { color: theme.muted, marginTop: 8 }]}>
+              Delete this chat with{" "}
+              {pendingDelete?.counterpart.displayName ?? "this member"} on your
+              side? They still have their messages.
+            </Text>
+            {deleteError ? (
+              <Text style={[styles.error, { color: theme.error }]} accessibilityRole="alert">
+                {deleteError}
+              </Text>
+            ) : null}
+            <Pressable
+              style={[styles.primaryBtn, { marginTop: 16 }, deleting && styles.disabled]}
+              disabled={deleting}
+              onPress={() => void confirmDelete()}
+              accessibilityRole="button"
+              accessibilityLabel="Delete chat"
+            >
+              <Text style={styles.primaryBtnText}>
+                {deleting ? "Deleting…" : "Delete chat"}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                if (!deleting) setPendingDelete(null);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+            >
+              <Text style={[styles.linkCenter, { color: theme.orange }]}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -208,6 +430,7 @@ function ChatThread({
   meId,
   onBack,
   onCheckout,
+  onOpenOrder,
 }: {
   conversationId: string;
   meId: string;
@@ -216,8 +439,11 @@ function ChatThread({
     listingId: string;
     offerId?: string;
     orderIntentId?: string;
+    payOrderId?: string;
   }) => void;
+  onOpenOrder?: (orderId: string) => void;
 }) {
+  const theme = useColors();
   const [meta, setMeta] = useState<ConversationListItem | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [offers, setOffers] = useState<OfferDto[]>([]);
@@ -234,10 +460,14 @@ function ChatThread({
   const [reportReason, setReportReason] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [swapBusyId, setSwapBusyId] = useState<string | null>(null);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [viewPin, setViewPin] = useState<MeetupPinPayload | null>(null);
   const marked = useRef(false);
+  const messagesRef = useRef<ChatMessage[]>([]);
 
   const refresh = useCallback(async () => {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token) return;
     const [convos, msgs] = await Promise.all([
       listConversations(token),
@@ -245,7 +475,7 @@ function ChatThread({
     ]);
     const found = convos.find((c) => c.id === conversationId) ?? null;
     setMeta(found);
-    setMessages(msgs);
+    setMessages((prev) => mergeMessages(prev, msgs));
     if (found?.listingId) {
       try {
         const ofs = await listOffers(token, found.listingId);
@@ -294,29 +524,102 @@ function ChatThread({
   }, [refresh]);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, 3000);
-    return () => clearInterval(id);
-  }, [refresh]);
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    const liveRef = { current: false };
+    let stop = () => undefined;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+    void (async () => {
+      const token = await getAccessToken();
+      if (!token || cancelled) return;
+      const gapFill = () => {
+        const last = [...messagesRef.current]
+          .reverse()
+          .find((item) => !item.id.startsWith("temp-"));
+        if (!last) return;
+        void listMessages(token, conversationId, { after: last.id, limit: 100 })
+          .then((rows) => setMessages((prev) => mergeMessages(prev, rows)))
+          .catch(() => undefined);
+      };
+      stop = subscribeChat(token, {
+        onConnect: () => {
+          void joinConversation(conversationId).then((ok) => {
+            liveRef.current = ok;
+            if (ok) gapFill();
+          });
+        },
+        onDisconnect: () => {
+          liveRef.current = false;
+        },
+        onMessage: (message) => {
+          if (message.conversationId !== conversationId) return;
+          setMessages((prev) => mergeMessages(prev, [message]));
+          if (message.senderId !== meId) {
+            void markConversationRead(token, conversationId, [message.id]).catch(
+              () => undefined,
+            );
+          }
+        },
+        onRead: (update) => {
+          if (update.conversationId !== conversationId) return;
+          setMessages((prev) =>
+            prev.map((item) =>
+              item.senderId !== update.readerId && !item.readAt
+                ? { ...item, readAt: update.readAt }
+                : item,
+            ),
+          );
+        },
+        onOffer: (offer) => {
+          if (offer.conversationId !== conversationId) return;
+          setOffers((prev) => {
+            const index = prev.findIndex((item) => item.id === offer.id);
+            if (index < 0) return [...prev, offer];
+            const next = [...prev];
+            next[index] = offer;
+            return next;
+          });
+        },
+      });
+      timer = setInterval(() => {
+        if (liveRef.current || AppState.currentState !== "active") return;
+        gapFill();
+      }, 30000);
+    })();
+    return () => {
+      cancelled = true;
+      stop();
+      if (timer) clearInterval(timer);
+    };
+  }, [conversationId]);
 
   const thread = useMemo(() => {
+    const cutoff = meta?.deletedAt ? new Date(meta.deletedAt).getTime() : 0;
+    const visibleMessages = cutoff
+      ? messages.filter((message) => new Date(message.createdAt).getTime() > cutoff)
+      : messages;
+    const visibleOffers = cutoff
+      ? offers.filter((offer) => new Date(offer.createdAt).getTime() > cutoff)
+      : offers;
     const inMsg = new Set(
-      messages.filter((m) => m.offerId).map((m) => m.offerId as string),
+      visibleMessages.filter((m) => m.offerId).map((m) => m.offerId as string),
     );
-    const items: ThreadItem[] = messages.map((m) => ({
+    const items: ThreadItem[] = visibleMessages.map((m) => ({
       kind: "message",
       key: `m-${m.id}`,
       at: m.createdAt,
       message: m,
     }));
-    for (const o of offers) {
+    for (const o of visibleOffers) {
       if (inMsg.has(o.id)) continue;
       items.push({ kind: "offer", key: `o-${o.id}`, at: o.createdAt, offer: o });
     }
     items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     return items;
-  }, [messages, offers]);
+  }, [messages, offers, meta?.deletedAt]);
 
   const offersById = useMemo(() => {
     const map = new Map<string, OfferDto>();
@@ -324,8 +627,33 @@ function ChatThread({
     return map;
   }, [offers]);
 
+  async function shareMeetupPin(pin: {
+    lat: number;
+    lng: number;
+    label: string;
+  }) {
+    const token = await ensureAccessToken();
+    if (!token) return;
+    setSending(true);
+    try {
+      const saved = await postMeetupPin(token, conversationId, {
+        lat: pin.lat,
+        lng: pin.lng,
+        label: pin.label,
+        clientMsgId: clientMsgId(),
+      });
+      setMessages((prev) => [...prev, saved]);
+      setPinOpen(false);
+      setToast("Meetup pin shared");
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Could not share pin");
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function sendText() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     const text = draft.trim();
     if (!token || !text) return;
     setSending(true);
@@ -369,7 +697,7 @@ function ChatThread({
   }
 
   async function submitOffer() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !meta) return;
     const value = Number(offerNaira.replace(/,/g, ""));
     if (!Number.isFinite(value) || value < 1) {
@@ -398,7 +726,7 @@ function ChatThread({
     action: "accept" | "reject" | "withdraw",
     offer: OfferDto,
   ) {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token) return;
     setBusy(true);
     try {
@@ -444,7 +772,7 @@ function ChatThread({
   }
 
   async function submitCounter() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !counterFor) return;
     const value = Number(counterNaira.replace(/,/g, ""));
     if (!Number.isFinite(value) || value < 1) {
@@ -469,14 +797,15 @@ function ChatThread({
   }
 
   async function doBlock() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !meta) return;
     setBusy(true);
     try {
       await blockUser(token, meta.counterpart.id);
       setSafetyOpen(false);
+      setMeta({ ...meta, blockedByMe: true });
+      setSafetyOpen(false);
       setToast("User blocked");
-      onBack();
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : "Block failed");
     } finally {
@@ -484,8 +813,24 @@ function ChatThread({
     }
   }
 
+  async function doUnblock() {
+    const token = await ensureAccessToken();
+    if (!token || !meta) return;
+    setBusy(true);
+    try {
+      await unblockUser(token, meta.counterpart.id);
+      setMeta({ ...meta, blockedByMe: false });
+      setSafetyOpen(false);
+      setToast("User unblocked");
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Unblock failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function doReport() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !meta) return;
     if (!reportReason.trim()) {
       setToast("Add a reason");
@@ -508,7 +853,7 @@ function ChatThread({
   }
 
   async function doMuteToggle() {
-    const token = await getAccessToken();
+    const token = await ensureAccessToken();
     if (!token || !meta) return;
     setBusy(true);
     try {
@@ -527,6 +872,195 @@ function ChatThread({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function runSwapAction(
+    action: "accept" | "reject" | "cancel",
+    proposalId: string,
+  ) {
+    const token = await ensureAccessToken();
+    if (!token) return;
+    setSwapBusyId(proposalId);
+    try {
+      if (action === "accept") {
+        const res = (await acceptSwapProposal(token, proposalId)) as {
+          orders?: { id: string; payerId: string }[];
+        };
+        const mine = res.orders?.find((order) => order.payerId === meId);
+        setToast(
+          "Swap accepted. Open the order to pay the delivery fee and the ₦500 swap fee.",
+        );
+        await refresh();
+        if (mine) onOpenOrder?.(mine.id);
+        return;
+      }
+      if (action === "cancel") {
+        await cancelSwapProposal(token, proposalId);
+        setToast("Swap cancelled");
+      } else {
+        await rejectSwapProposal(token, proposalId);
+        setToast("Swap rejected");
+      }
+      await refresh();
+    } catch (err) {
+      setToast(err instanceof ApiError ? err.message : "Swap action failed");
+    } finally {
+      setSwapBusyId(null);
+    }
+  }
+
+  function formatDeliveryDay(iso: string): string {
+    const [year, month, day] = iso.slice(0, 10).split("-").map(Number);
+    if (!year || !month || !day) return iso;
+    return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-NG", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  }
+
+  function SwapSide({
+    label,
+    item,
+  }: {
+    label: string;
+    item: { title: string; imageUrl?: string | null };
+  }) {
+    return (
+      <View style={styles.swapSide}>
+        {item.imageUrl ? (
+          <Image
+            source={{ uri: item.imageUrl }}
+            style={styles.swapSidePhoto}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={[styles.swapSidePhoto, styles.swapSideFallback]} />
+        )}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.swapSideLabel}>{label}</Text>
+          <Text style={styles.swapSideTitle} numberOfLines={2}>
+            {item.title}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  function renderSwapCard(m: ChatMessage) {
+    const parsed = parseSwapProposalCard(m.body);
+    if (!parsed) {
+      return (
+        <View style={styles.swapCard}>
+          <Text style={styles.swapTitle}>Swap proposal</Text>
+        </View>
+      );
+    }
+    const isListingSeller = Boolean(meta && meId === meta.sellerId);
+    const accepted = parsed.kind === "swap-accepted";
+    const rejected = parsed.kind === "swap-rejected";
+    const cancelled = parsed.kind === "swap-cancelled";
+    const closed = accepted || rejected || cancelled;
+    const settled =
+      !closed &&
+      messages.some((message) => {
+        if (message.id === m.id || message.type !== "SWAP_PROPOSAL_CARD") {
+          return false;
+        }
+        const later = parseSwapProposalCard(message.body);
+        return (
+          later?.swapProposalId === parsed.swapProposalId &&
+          (later.kind === "swap-accepted" ||
+            later.kind === "swap-rejected" ||
+            later.kind === "swap-cancelled")
+        );
+      });
+    if (settled) return null;
+    const mineOrder = parsed.orders.find((order) => order.payerId === meId);
+    return (
+      <View style={styles.swapCard}>
+        {accepted ? <Text style={styles.swapEyebrow}>Swap order</Text> : null}
+        <Text style={styles.swapTitle}>
+          {accepted
+            ? "Swap accepted"
+            : rejected
+              ? "Swap rejected"
+              : cancelled
+                ? "Swap cancelled"
+                : parsed.title || "Swap proposal"}
+        </Text>
+        {!accepted && parsed.description ? (
+          <Text style={styles.swapBody}>{parsed.description}</Text>
+        ) : null}
+        {parsed.imageUrls.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.swapPhotoRow}
+          >
+            {parsed.imageUrls.map((url) => (
+              <Image
+                key={url}
+                source={{ uri: url }}
+                style={styles.swapPhoto}
+                resizeMode="cover"
+                accessibilityLabel="Swap photo"
+              />
+            ))}
+          </ScrollView>
+        ) : null}
+        {accepted && mineOrder?.receive && mineOrder.send ? (
+          <View style={styles.swapExchange}>
+            <SwapSide label="You send" item={mineOrder.send} />
+            <SwapSide label="You receive" item={mineOrder.receive} />
+          </View>
+        ) : null}
+        {parsed.deliveryOn ? (
+          <Text style={styles.swapMeta}>
+            Delivery day · {formatDeliveryDay(parsed.deliveryOn)}
+          </Text>
+        ) : null}
+        <Text style={styles.swapBody}>
+          {accepted
+            ? "This is now an order for both of you. Each person pays the delivery fee and a ₦500 swap fee. Cancel it from the order, before either of you pays."
+            : rejected
+              ? "This proposal was rejected."
+              : cancelled
+                ? "This proposal was cancelled. The listing is back on the marketplace."
+                : "If they accept, both of you get an order. Each person pays the delivery fee and a ₦500 swap fee."}
+        </Text>
+        {!closed && isListingSeller ? (
+          <View style={styles.offerActions}>
+            <MiniBtn
+              label="Accept"
+              primary
+              disabled={swapBusyId === parsed.swapProposalId}
+              onPress={() => void runSwapAction("accept", parsed.swapProposalId)}
+            />
+            <MiniBtn
+              label="Reject"
+              disabled={swapBusyId === parsed.swapProposalId}
+              onPress={() => void runSwapAction("reject", parsed.swapProposalId)}
+            />
+            <MiniBtn
+              label="Cancel swap"
+              disabled={swapBusyId === parsed.swapProposalId}
+              onPress={() => void runSwapAction("cancel", parsed.swapProposalId)}
+            />
+          </View>
+        ) : !closed ? (
+          <View style={styles.offerActions}>
+            <Text style={styles.muted}>Waiting for them to accept</Text>
+            <MiniBtn
+              label="Cancel swap"
+              disabled={swapBusyId === parsed.swapProposalId}
+              onPress={() => void runSwapAction("cancel", parsed.swapProposalId)}
+            />
+          </View>
+        ) : null}
+      </View>
+    );
   }
 
   function renderOfferCard(offer: OfferDto) {
@@ -569,22 +1103,12 @@ function ChatThread({
               </>
             ) : null}
             {isBuyer ? (
-              <>
-                <MiniBtn
-                  label="Counter"
-                  disabled={busy}
-                  onPress={() => {
-                    setCounterFor(offer);
-                    setCounterNaira(String(Math.round(offer.amountKobo / 100)));
-                  }}
-                />
-                <MiniBtn
-                  label="Withdraw"
-                  danger
-                  disabled={busy}
-                  onPress={() => void runOfferAction("withdraw", offer)}
-                />
-              </>
+              <MiniBtn
+                label="Withdraw"
+                danger
+                disabled={busy}
+                onPress={() => void runOfferAction("withdraw", offer)}
+              />
             ) : null}
           </View>
         ) : null}
@@ -610,7 +1134,7 @@ function ChatThread({
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator color="#0E9F6E" />
+          <ActivityIndicator color={theme.orange} />
       </View>
     );
   }
@@ -629,18 +1153,26 @@ function ChatThread({
   return (
     <View style={styles.flex}>
       <View style={styles.threadHeader}>
-        <Pressable onPress={onBack} accessibilityRole="button">
+        <Pressable
+          onPress={onBack}
+          accessibilityRole="button"
+          style={styles.threadSide}
+        >
           <Text style={styles.link}>Back</Text>
         </Pressable>
-        <View style={styles.threadTitles}>
+        <View style={styles.threadTitles} pointerEvents="none">
           <Text style={styles.threadTitle} numberOfLines={1}>
             {meta?.listingTitle ?? "Conversation"}
           </Text>
-          <Text style={styles.muted} numberOfLines={1}>
+          <Text style={styles.threadSubtitle} numberOfLines={1}>
             {meta?.counterpart.displayName ?? "Member"}
           </Text>
         </View>
-        <Pressable onPress={() => setSafetyOpen(true)} accessibilityRole="button">
+        <Pressable
+          onPress={() => setSafetyOpen(true)}
+          accessibilityRole="button"
+          style={[styles.threadSide, styles.threadSideEnd]}
+        >
           <Text style={styles.link}>Safety</Text>
         </Pressable>
       </View>
@@ -676,20 +1208,52 @@ function ChatThread({
                 ) : null}
                 {m.type === "OFFER_CARD" && linked ? (
                   <View style={styles.offerWrap}>{renderOfferCard(linked)}</View>
+                ) : m.type === "SWAP_PROPOSAL_CARD" ? (
+                  <View style={styles.offerWrap}>{renderSwapCard(m)}</View>
+                ) : m.type === "SYSTEM" && parseMeetupPin(m.body) ? (
+                  <Pressable
+                    style={[
+                      styles.pinCard,
+                      {
+                        backgroundColor: theme.surfaceWarm,
+                        borderColor: theme.orange,
+                      },
+                    ]}
+                    onPress={() => setViewPin(parseMeetupPin(m.body))}
+                    accessibilityRole="button"
+                    accessibilityLabel="Open meetup pin on map"
+                  >
+                    <Text style={[styles.offerLabel, { color: theme.orange }]}>
+                      Meetup pin
+                    </Text>
+                    <Text style={[styles.offerAmount, { color: theme.ink }]}>
+                      {parseMeetupPin(m.body)?.label}
+                    </Text>
+                    <Text style={[styles.muted, { color: theme.muted }]}>
+                      Private to this chat · Tap to open map
+                    </Text>
+                  </Pressable>
                 ) : m.type === "SYSTEM" ? (
                   <Text style={[styles.muted, styles.centerText]}>{m.body}</Text>
                 ) : (
                   <View
                     style={[
                       styles.bubble,
-                      mine ? styles.bubbleMine : styles.bubbleTheirs,
+                      mine
+                        ? {
+                            alignSelf: "flex-end",
+                            backgroundColor: theme.orangeWash,
+                          }
+                        : {
+                            alignSelf: "flex-start",
+                            backgroundColor: theme.beige,
+                            borderWidth: StyleSheet.hairlineWidth,
+                            borderColor: theme.border,
+                          },
                     ]}
                   >
                     <Text
-                      style={[
-                        styles.bubbleText,
-                        mine && styles.bubbleTextMine,
-                      ]}
+                      style={[styles.bubbleText, { color: theme.ink }]}
                     >
                       {m.body}
                     </Text>
@@ -706,30 +1270,110 @@ function ChatThread({
         ) : null}
       </ScrollView>
 
-      <View style={styles.composer}>
-        <TextInput
-          style={styles.composerInput}
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Message…"
-          accessibilityLabel="Message"
-          maxLength={4000}
-        />
-        <Pressable
-          style={[styles.sendBtn, (!draft.trim() || sending) && styles.disabled]}
-          disabled={!draft.trim() || sending}
-          onPress={() => void sendText()}
-        >
-          <Text style={styles.sendText}>{sending ? "…" : "Send"}</Text>
+      {meta?.blockedByMe ? (
+        <View style={styles.composer}>
+          <Pressable
+            style={[
+              styles.sendBtn,
+              styles.unblockBtn,
+              { backgroundColor: theme.orange },
+              busy && styles.disabled,
+            ]}
+            disabled={busy}
+            onPress={() => void doUnblock()}
+            accessibilityRole="button"
+            accessibilityLabel="Unblock"
+          >
+            <Text style={styles.sendText}>Unblock</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.composer}>
+          <TextInput
+            style={[
+              styles.composerInput,
+              {
+                borderColor: theme.border,
+                backgroundColor: theme.surface,
+                color: theme.ink,
+              },
+            ]}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Message…"
+            placeholderTextColor={theme.muted}
+            accessibilityLabel="Message"
+            maxLength={4000}
+          />
         </Pressable>
       </View>
-      <Pressable
-        style={styles.offerBtn}
-        onPress={() => setOfferOpen(true)}
-        disabled={!meta}
-      >
-        <Text style={styles.offerBtnText}>Make offer</Text>
-      </Pressable>
+      <View style={styles.actionRow}>
+        <Pressable
+          style={[
+            styles.offerBtn,
+            styles.actionHalf,
+            {
+              borderColor: theme.border,
+              backgroundColor: theme.surface,
+            },
+          ]}
+          onPress={() => setPinOpen(true)}
+          disabled={!meta || sending}
+          accessibilityRole="button"
+          accessibilityLabel="Share meetup pin"
+          testID="chat-meetup-pin"
+        >
+          <Text style={[styles.offerBtnText, { color: theme.ink }]}>
+            Meetup pin
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[
+            styles.offerBtn,
+            styles.actionHalf,
+            {
+              borderColor: theme.border,
+              backgroundColor: theme.surface,
+            },
+          ]}
+          onPress={() => setOfferOpen(true)}
+          disabled={!meta}
+          accessibilityRole="button"
+          accessibilityLabel="Make offer"
+        >
+          <Image
+            source={brandAssets.actionOffer}
+            style={styles.offerBtnIcon}
+            resizeMode="contain"
+          />
+          <Text style={[styles.offerBtnText, { color: theme.ink }]}>
+            Make offer
+          </Text>
+        </Pressable>
+      </View>
+
+      <MeetupPinSheet
+        visible={pinOpen}
+        onClose={() => setPinOpen(false)}
+        onShare={(pin) => void shareMeetupPin(pin)}
+      />
+      <LocateMapSheet
+        visible={Boolean(viewPin)}
+        payload={
+          viewPin
+            ? {
+                userLat: viewPin.lat,
+                userLng: viewPin.lng,
+                communityLat: viewPin.lat,
+                communityLng: viewPin.lng,
+                communityLabel: viewPin.label,
+                cityLabel: "Meetup",
+                distanceKm: 0,
+              }
+            : null
+        }
+        onClose={() => setViewPin(null)}
+      />
 
       <Modal visible={offerOpen} animationType="slide" transparent>
         <View style={styles.sheetBackdrop}>
@@ -786,8 +1430,13 @@ function ChatThread({
         </View>
       </Modal>
 
-      <Modal visible={safetyOpen} animationType="slide" transparent>
-        <View style={styles.sheetBackdrop}>
+      {safetyOpen ? (
+        <View style={styles.safetyLayer}>
+          <Pressable
+            style={styles.safetyDismiss}
+            onPress={() => setSafetyOpen(false)}
+            accessibilityLabel="Close safety"
+          />
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>Block or report</Text>
             <Text style={styles.label}>Report reason</Text>
@@ -808,25 +1457,41 @@ function ChatThread({
               style={[styles.secondaryBtn, busy && styles.disabled]}
               disabled={busy}
               onPress={() => void doMuteToggle()}
-              accessibilityLabel={meta?.muted ? "Unmute conversation" : "Mute conversation"}
+              accessibilityLabel={
+                meta?.muted ? "Unmute conversation" : "Mute conversation"
+              }
             >
               <Text style={styles.secondaryBtnText}>
                 {meta?.muted ? "Unmute conversation" : "Mute conversation"}
               </Text>
             </Pressable>
             <Pressable
-              style={[styles.dangerBtn, busy && styles.disabled]}
+              style={[
+                meta?.blockedByMe ? styles.secondaryBtn : styles.dangerBtn,
+                busy && styles.disabled,
+              ]}
               disabled={busy}
-              onPress={() => void doBlock()}
+              onPress={() => void (meta?.blockedByMe ? doUnblock() : doBlock())}
+              accessibilityLabel={
+                meta?.blockedByMe ? "Unblock user" : "Block user"
+              }
             >
-              <Text style={styles.dangerBtnText}>Block user</Text>
+              <Text
+                style={
+                  meta?.blockedByMe
+                    ? styles.secondaryBtnText
+                    : styles.dangerBtnText
+                }
+              >
+                {meta?.blockedByMe ? "Unblock user" : "Block user"}
+              </Text>
             </Pressable>
             <Pressable onPress={() => setSafetyOpen(false)}>
               <Text style={styles.linkCenter}>Cancel</Text>
             </Pressable>
           </View>
         </View>
-      </Modal>
+      ) : null}
     </View>
   );
 }
@@ -844,20 +1509,32 @@ function MiniBtn({
   danger?: boolean;
   disabled?: boolean;
 }) {
+  const theme = useColors();
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
       style={[
         styles.miniBtn,
-        primary && styles.miniPrimary,
-        danger && styles.miniDanger,
+        {
+          borderColor: theme.border,
+          backgroundColor: theme.canvas,
+        },
+        primary && {
+          backgroundColor: theme.orange,
+          borderColor: theme.orange,
+        },
+        danger && {
+          backgroundColor: theme.error,
+          borderColor: theme.error,
+        },
         disabled && styles.disabled,
       ]}
     >
       <Text
         style={[
           styles.miniText,
+          { color: theme.ink },
           (primary || danger) && styles.miniTextOn,
         ]}
       >
@@ -872,10 +1549,10 @@ const styles = StyleSheet.create({
   brand: {
     fontSize: 32,
     fontWeight: "700",
-    color: "#111315",
+    color: colors.ink,
     letterSpacing: -0.4,
   },
-  copy: { marginTop: 8, fontSize: 15, color: "#5C636A", marginBottom: 12 },
+  copy: { marginTop: 8, fontSize: 15, color: colors.muted, marginBottom: 12 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8 },
   listPad: { paddingBottom: 24 },
   row: {
@@ -885,24 +1562,24 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#FFFFFF",
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
   thumb: {
     width: 56,
     height: 56,
     borderRadius: 12,
-    backgroundColor: "#E5E2DC",
+    backgroundColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
   },
   thumbImg: { width: "100%", height: "100%" },
-  thumbLetter: { fontWeight: "700", color: "#5C636A" },
+  thumbLetter: { fontWeight: "700", color: colors.muted },
   rowBody: { flex: 1, minWidth: 0 },
   rowTop: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-  rowTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: "#111315" },
-  rowPreview: { marginTop: 4, fontSize: 13, color: "#5C636A" },
+  rowTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: colors.ink },
+  rowPreview: { marginTop: 4, fontSize: 13, color: colors.muted },
   offerChip: {
     marginTop: 6,
     alignSelf: "flex-start",
@@ -910,8 +1587,8 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: "#D1FAE5",
-    color: "#0E9F6E",
+    backgroundColor: colors.orangeWash,
+    color: colors.orange,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -919,38 +1596,67 @@ const styles = StyleSheet.create({
     minWidth: 20,
     paddingHorizontal: 6,
     borderRadius: 999,
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     alignItems: "center",
   },
-  badgeText: { color: "#FFF", fontSize: 11, fontWeight: "700" },
+  badgeText: { color: colors.onAccent, fontSize: 11, fontWeight: "700" },
   mutedChip: {
     fontSize: 11,
     fontWeight: "600",
-    color: "#5C636A",
+    color: colors.muted,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  emptyTitle: { fontSize: 17, fontWeight: "700", color: "#111315" },
-  muted: { fontSize: 14, color: "#5C636A" },
-  error: { color: "#DC2626", fontSize: 15 },
+  emptyTitle: { fontSize: 17, fontWeight: "700", color: colors.ink },
+  muted: { fontSize: 14, color: colors.muted },
+  error: { color: colors.error, fontSize: 15 },
   retry: { marginTop: 8, padding: 8 },
-  retryText: { color: "#0E9F6E", fontWeight: "700" },
+  retryText: { color: colors.orange, fontWeight: "700" },
   threadHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    justifyContent: "space-between",
+    minHeight: 48,
+    paddingHorizontal: 20,
     marginBottom: 8,
   },
-  threadTitles: { flex: 1, minWidth: 0 },
-  threadTitle: { fontSize: 16, fontWeight: "700", color: "#111315" },
-  link: { color: "#0E9F6E", fontWeight: "700", fontSize: 14 },
+  threadSide: {
+    width: 64,
+    minHeight: 44,
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  threadSideEnd: { alignItems: "flex-end" },
+  threadTitles: {
+    position: "absolute",
+    left: 96,
+    right: 96,
+    alignItems: "center",
+  },
+  threadTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: colors.ink,
+    textAlign: "center",
+  },
+  threadSubtitle: {
+    fontSize: 14,
+    color: colors.muted,
+    textAlign: "center",
+  },
+  link: { color: colors.orange, fontWeight: "700", fontSize: 14 },
   linkCenter: {
     marginTop: 14,
     textAlign: "center",
-    color: "#0E9F6E",
+    color: colors.orange,
     fontWeight: "600",
   },
-  threadPad: { paddingBottom: 16, gap: 10 },
+  threadPad: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 20,
+    gap: 10,
+  },
   centerText: { textAlign: "center" },
   msgBlock: { gap: 6 },
   bubble: {
@@ -959,90 +1665,163 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
-  bubbleMine: { alignSelf: "flex-end", backgroundColor: "#0E9F6E" },
+  bubbleMine: { alignSelf: "flex-end", backgroundColor: colors.orangeWash },
   bubbleTheirs: {
     alignSelf: "flex-start",
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
+    backgroundColor: colors.beige,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
-  bubbleText: { fontSize: 15, color: "#111315", lineHeight: 20 },
-  bubbleTextMine: { color: "#FFFFFF" },
+  bubbleText: { fontSize: 15, color: colors.ink, lineHeight: 20 },
+  bubbleTextMine: { color: colors.ink },
   warn: {
     borderRadius: 10,
-    backgroundColor: "#FEF3C7",
+    backgroundColor: colors.goldWash,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.warning,
     padding: 10,
   },
-  warnText: { color: "#92400E", fontSize: 13, fontWeight: "600" },
+  warnText: { color: colors.muted, fontSize: 13, fontWeight: "600" },
   offerWrap: { alignItems: "center" },
   offerCard: {
     width: "100%",
     maxWidth: 320,
     borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E5E2DC",
-    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     padding: 14,
   },
   offerLabel: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#5C636A",
-    textTransform: "uppercase",
+    color: colors.muted,
   },
   offerAmount: {
     marginTop: 4,
     fontSize: 22,
     fontWeight: "700",
-    color: "#111315",
+    color: colors.ink,
   },
-  offerStatus: { marginTop: 4, fontSize: 13, color: "#0E9F6E", fontWeight: "600" },
+  offerStatus: {
+    marginTop: 4,
+    fontSize: 13,
+    color: colors.orange,
+    fontWeight: "600",
+  },
   offerActions: { marginTop: 10, flexDirection: "row", flexWrap: "wrap", gap: 8 },
   miniBtn: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: "#FAF9F7",
+    backgroundColor: colors.canvas,
   },
-  miniPrimary: { backgroundColor: "#0E9F6E", borderColor: "#0E9F6E" },
-  miniDanger: { backgroundColor: "#DC2626", borderColor: "#DC2626" },
-  miniText: { fontSize: 13, fontWeight: "700", color: "#111315" },
-  miniTextOn: { color: "#FFFFFF" },
+  miniPrimary: { backgroundColor: colors.orange, borderColor: colors.orange },
+  miniDanger: { backgroundColor: colors.error, borderColor: colors.error },
+  miniText: { fontSize: 13, fontWeight: "700", color: colors.ink },
+  miniTextOn: { color: colors.onAccent },
+  actionRow: { flexDirection: "row", gap: 8 },
+  actionHalf: { flex: 1 },
+  pinCard: {
+    alignSelf: "stretch",
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
   composer: { flexDirection: "row", gap: 8, alignItems: "center" },
   composerInput: {
     flex: 1,
+    minWidth: 0,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
     fontSize: 16,
-    color: "#111315",
+    color: colors.ink,
   },
   sendBtn: {
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  sendText: { color: "#FFF", fontWeight: "700" },
+  sendText: { color: colors.onAccent, fontWeight: "700", fontSize: 15 },
   offerBtn: {
-    marginTop: 8,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     paddingVertical: 12,
+    paddingHorizontal: 12,
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
   },
-  offerBtnText: { fontWeight: "700", color: "#111315" },
+  swapCard: {
+    width: "100%",
+    maxWidth: 340,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: 16,
+    gap: 8,
+  },
+  swapEyebrow: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+    color: colors.muted,
+  },
+  swapTitle: {
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: "700",
+    color: colors.ink,
+  },
+  swapBody: {
+    fontSize: 15,
+    lineHeight: 21,
+    color: colors.muted,
+  },
+  swapMeta: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: colors.ink,
+  },
+  swapPhotoRow: { gap: 8, paddingTop: 4 },
+  swapPhoto: { width: 96, height: 96, borderRadius: 12 },
+  swapExchange: { gap: 8, marginTop: 4 },
+  swapSide: { flexDirection: "row", alignItems: "center", gap: 10 },
+  swapSidePhoto: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: colors.beige,
+  },
+  swapSideFallback: { backgroundColor: colors.beige },
+  swapSideLabel: { fontSize: 12, lineHeight: 16, color: colors.muted },
+  swapSideTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: colors.ink,
+  },
+  offerBtnIcon: { width: 22, height: 22 },
+  offerBtnText: { fontWeight: "700", color: colors.ink },
   toast: {
     marginTop: 8,
     textAlign: "center",
-    color: "#0E9F6E",
+    color: colors.orange,
     fontWeight: "600",
   },
   sheetBackdrop: {
@@ -1051,55 +1830,63 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   sheet: {
-    backgroundColor: "#FAF9F7",
+    backgroundColor: colors.canvas,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: 32,
   },
-  sheetTitle: { fontSize: 20, fontWeight: "700", color: "#111315" },
+  sheetTitle: { fontSize: 20, fontWeight: "700", color: colors.ink },
   label: {
     marginTop: 16,
     marginBottom: 8,
     fontSize: 14,
     fontWeight: "600",
-    color: "#111315",
+    color: colors.ink,
   },
+  unblockBtn: { flexGrow: 1, alignItems: "center" },
+  safetyLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  safetyDismiss: { flex: 1 },
   input: {
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
-    color: "#111315",
-    backgroundColor: "#FFFFFF",
+    color: colors.ink,
+    backgroundColor: colors.surface,
   },
   primaryBtn: {
     marginTop: 20,
-    backgroundColor: "#0E9F6E",
+    backgroundColor: colors.orange,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
   },
-  primaryBtnText: { color: "#FFF", fontWeight: "700", fontSize: 16 },
+  primaryBtnText: { color: colors.onAccent, fontWeight: "700", fontSize: 16 },
   secondaryBtn: {
     marginTop: 12,
     borderWidth: 1,
-    borderColor: "#E5E2DC",
+    borderColor: colors.border,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: colors.surface,
   },
-  secondaryBtnText: { fontWeight: "700", color: "#111315" },
+  secondaryBtnText: { fontWeight: "700", color: colors.ink },
   dangerBtn: {
     marginTop: 10,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
-    backgroundColor: "#DC2626",
+    backgroundColor: colors.error,
   },
-  dangerBtnText: { fontWeight: "700", color: "#FFFFFF" },
+  dangerBtnText: { fontWeight: "700", color: colors.onAccent },
   disabled: { opacity: 0.55 },
 });

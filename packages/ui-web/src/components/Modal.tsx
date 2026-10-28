@@ -37,6 +37,10 @@ export function Modal({
     } else if (!open && dialog.open) {
       dialog.close();
     }
+
+    return () => {
+      if (dialog.open) dialog.close();
+    };
   }, [open]);
 
   useEffect(() => {

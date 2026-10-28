@@ -1,13 +1,16 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { ConsoleSmsMock } from '../providers/console-sms.mock';
-import { SMS_PROVIDER } from '../providers/sms.provider';
-import { ReferralsModule } from '../referrals/referrals.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
+import { EMAIL_PROVIDER } from '../providers/email.provider';
+import { ResendEmailProvider } from '../providers/resend-email.provider';
+import {
+  MailhogEmailProvider,
+  MockEmailProvider,
+} from '../providers/mock-email.provider';
 
 @Module({
   imports: [
@@ -18,25 +21,47 @@ import { JwtStrategy } from './jwt.strategy';
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_ACCESS_SECRET') ?? 'dev-access-secret',
         signOptions: {
-          expiresIn: config.get<string>('JWT_ACCESS_TTL') ?? '15m',
+          // Consumer mobile default: 24h (refresh still rotates at 30d).
+          expiresIn: config.get<string>('JWT_ACCESS_TTL') ?? '24h',
         },
       }),
     }),
-    forwardRef(() => ReferralsModule),
   ],
   controllers: [AuthController],
   providers: [
     AuthService,
     JwtStrategy,
     {
-      provide: SMS_PROVIDER,
+      provide: EMAIL_PROVIDER,
       useFactory: (config: ConfigService) => {
-        const provider = config.get<string>('SMS_PROVIDER') ?? 'mock';
-        if (provider === 'mock' || provider === 'console') {
-          return new ConsoleSmsMock();
+        const provider = (
+          config.get<string>('EMAIL_PROVIDER') ?? 'mock'
+        ).toLowerCase();
+
+        const from =
+          config.get<string>('EMAIL_FROM') ?? 'noreply@reworth.local';
+
+        if (provider === 'resend') {
+          return new ResendEmailProvider(
+            config.get<string>('RESEND_API_KEY') ?? '',
+            from,
+            {
+              replyTo:
+                config.get<string>('EMAIL_REPLY_TO') ??
+                undefined,
+            },
+          );
         }
-        // Phase 1: Termii/Twilio adapters deferred — fall back to console mock
-        return new ConsoleSmsMock();
+
+        if (provider === 'mailhog') {
+          return new MailhogEmailProvider(
+            config.get<string>('SMTP_HOST') ?? 'localhost',
+            Number(config.get('SMTP_PORT') ?? 1025),
+            from,
+          );
+        }
+
+        return new MockEmailProvider();
       },
       inject: [ConfigService],
     },

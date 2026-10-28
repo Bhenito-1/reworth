@@ -18,6 +18,16 @@ export type MovingSaleDetail = MovingSaleSummary & {
   items: PublicListing[];
 };
 
+export type MovingSaleHomeItem = {
+  id: string;
+  title: string;
+  itemCount: number;
+  combinedPriceKobo: number;
+  deadline: string;
+  community: string;
+  coverListingId?: string;
+};
+
 export async function getMovingSale(
   id: string,
   token?: string | null,
@@ -29,6 +39,23 @@ export async function browseMovingSales(
   token?: string | null,
 ): Promise<{ items: MovingSaleSummary[] }> {
   return apiFetch("/moving-sales?limit=20", { token });
+}
+
+export async function createMovingSale(
+  token: string,
+  body: {
+    title: string;
+    blurb?: string;
+    deadline: string;
+    community?: string;
+    listingIds?: string[];
+  },
+): Promise<MovingSaleDetail> {
+  return apiFetch("/moving-sales", {
+    method: "POST",
+    token,
+    body,
+  });
 }
 
 export async function followMovingSale(token: string, id: string) {

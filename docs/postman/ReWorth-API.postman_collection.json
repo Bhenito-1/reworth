@@ -1,0 +1,427 @@
+{
+  "info": {
+    "name": "ReWorth API (/api/v1)",
+    "description": "Staging / local golden-path collection. Mirror of scripts/api-selftest.mjs + docs/API.md.\n\nFlow: Health → Browse → OTP (copy debugCode) → Verify (saves accessToken) → Authed calls → Admin login.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "{{baseUrl}}" },
+    { "key": "accessToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "debugCode", "value": "" },
+    { "key": "listingId", "value": "" },
+    { "key": "draftId", "value": "" },
+    { "key": "phone", "value": "+2348010000001" },
+    { "key": "categoryId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Health",
+      "item": [
+        {
+          "name": "GET healthz",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/healthz"
+          }
+        },
+        {
+          "name": "GET readyz",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/readyz"
+          }
+        },
+        {
+          "name": "GET metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/metrics"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Browse (public)",
+      "item": [
+        {
+          "name": "GET regions",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/regions"
+          }
+        },
+        {
+          "name": "GET categories",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const items = Array.isArray(j) ? j : (j.items || j);",
+                  "  if (items && items[0] && items[0].id) {",
+                  "    pm.collectionVariables.set('categoryId', items[0].id);",
+                  "  }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/categories"
+          }
+        },
+        {
+          "name": "GET home",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/home"
+          }
+        },
+        {
+          "name": "GET listings",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const items = Array.isArray(j) ? j : (j.items || j.hits || []);",
+                  "  if (items[0] && items[0].id) {",
+                  "    pm.collectionVariables.set('listingId', items[0].id);",
+                  "  }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/listings?limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": ["listings"],
+              "query": [{ "key": "limit", "value": "5" }]
+            }
+          }
+        },
+        {
+          "name": "GET listing PDP",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": "{{baseUrl}}/listings/{{listingId}}"
+          }
+        },
+        {
+          "name": "GET search",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/search?q=chair&limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": ["search"],
+              "query": [
+                { "key": "q", "value": "chair" },
+                { "key": "limit", "value": "5" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST search/nl",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"sofa under 100k Lekki\"\n}"
+            },
+            "url": "{{baseUrl}}/search/nl"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Auth (OTP)",
+      "item": [
+        {
+          "name": "POST auth/otp/request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  if (j.debugCode) {",
+                  "    pm.collectionVariables.set('debugCode', j.debugCode);",
+                  "    pm.environment.set('debugCode', j.debugCode);",
+                  "  }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{phone}}\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/otp/request",
+            "description": "Mock SMS returns debugCode. Live Termii will not — use the SMS/WhatsApp code instead."
+          }
+        },
+        {
+          "name": "POST auth/otp/verify",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  if (j.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', j.accessToken);",
+                  "    pm.environment.set('accessToken', j.accessToken);",
+                  "  }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{phone}}\",\n  \"code\": \"{{debugCode}}\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/otp/verify"
+          }
+        },
+        {
+          "name": "POST auth/login (demo password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  if (j.accessToken) {",
+                  "    pm.collectionVariables.set('accessToken', j.accessToken);",
+                  "    pm.environment.set('accessToken', j.accessToken);",
+                  "  }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"ori@demo.reworth.ng\",\n  \"password\": \"DemoOri!2026\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/login",
+            "description": "Optional password path for seeded demo users (Ori/Ayo)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Authed (Bearer accessToken)",
+      "item": [
+        {
+          "name": "GET me",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/me"
+          }
+        },
+        {
+          "name": "GET conversations",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/conversations"
+          }
+        },
+        {
+          "name": "GET orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/orders"
+          }
+        },
+        {
+          "name": "GET notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/notifications"
+          }
+        },
+        {
+          "name": "GET me/favourites",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/me/favourites"
+          }
+        },
+        {
+          "name": "POST listings (DRAFT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  if (j.id) {",
+                  "    pm.collectionVariables.set('draftId', j.id);",
+                  "    pm.environment.set('draftId', j.id);",
+                  "  }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Postman draft listing\",\n  \"description\": \"Created from ReWorth Postman collection\",\n  \"priceKobo\": 2500000,\n  \"condition\": \"GOOD\",\n  \"categoryId\": \"{{categoryId}}\",\n  \"community\": \"LEKKI\",\n  \"sellingMode\": \"SELL\"\n}"
+            },
+            "url": "{{baseUrl}}/listings"
+          }
+        },
+        {
+          "name": "GET listings/:id/price-intelligence",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": "{{baseUrl}}/listings/{{draftId}}/price-intelligence"
+          }
+        },
+        {
+          "name": "POST assistant/sessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": "{{baseUrl}}/assistant/sessions"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Admin",
+      "item": [
+        {
+          "name": "POST admin/auth/login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "try {",
+                  "  const j = pm.response.json();",
+                  "  const token = j.accessToken || j.token;",
+                  "  if (token) {",
+                  "    pm.collectionVariables.set('adminToken', token);",
+                  "    pm.environment.set('adminToken', token);",
+                  "  }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"risk@demo.reworth.ng\",\n  \"password\": \"DemoRisk!2026\"\n}"
+            },
+            "url": "{{baseUrl}}/admin/auth/login"
+          }
+        },
+        {
+          "name": "GET admin/dashboard/kpis",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": "{{baseUrl}}/admin/dashboard/kpis"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -29,6 +29,15 @@ export const DEFAULT_RULE_WEIGHTS: Record<Exclude<RiskRuleCode, 'THRESHOLDS'>, n
 
 export const DEFAULT_THRESHOLDS = { medium: 40, high: 70 } as const;
 
+/** Each approved listing lowers a seller's stored score by this much. */
+export const RISK_RELIEF_ON_APPROVAL = 20;
+
+/** Stored score after an admin approves a listing. Never goes below 0. */
+export function riskScoreAfterApproval(current: number): number {
+  if (!Number.isFinite(current) || current <= 0) return 0;
+  return Math.max(0, current - RISK_RELIEF_ON_APPROVAL);
+}
+
 export type FiredRule = {
   code: Exclude<RiskRuleCode, 'THRESHOLDS'>;
   weight: number;

@@ -129,20 +129,41 @@ export class RecommendationService {
       });
     }
 
-    return this.popularityFallback({ city, listingId: ctx.listingId, limit });
+    return this.popularityFallback({
+      city,
+      listingId: ctx.listingId,
+      limit,
+      surface,
+    });
   }
 
   private async popularityFallback(input: {
     city: string;
     listingId?: string;
     limit: number;
+    surface?: RecSurface;
   }): Promise<PublicListingDto[]> {
     if (!this.prisma) return [];
+
+    let categoryId: string | undefined;
+    if (input.surface === 'similar') {
+      if (!input.listingId) return [];
+      const seed = await this.prisma.listing.findUnique({
+        where: { id: input.listingId },
+        select: { categoryId: true },
+      });
+      if (!seed?.categoryId) return [];
+      categoryId = seed.categoryId;
+    }
 
     const rows = await this.prisma.listing.findMany({
       where: {
         status: 'LIVE',
+        quantityAvailable: { gt: 0 },
+        NOT: { riskFlags: { has: 'swap-response' } },
+        seller: { status: 'ACTIVE' },
         city: input.city,
+        ...(categoryId ? { categoryId } : {}),
         ...(input.listingId ? { id: { not: input.listingId } } : {}),
       },
       include: {

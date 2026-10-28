@@ -69,7 +69,7 @@ export default function WorthPage() {
     }
     const token = getAccessToken();
     if (!token) {
-      router.push("/onboarding");
+      router.push("/");
       return;
     }
     setBusy(true);
@@ -102,16 +102,6 @@ export default function WorthPage() {
       />
 
       <div className="relative z-10 mx-auto max-w-lg px-4 pb-20 pt-6 sm:px-6">
-        <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Home
-          </Link>
-          <span className="text-xl font-semibold tracking-tight">ReWorth</span>
-        </header>
-
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
           What&apos;s it worth
         </h1>

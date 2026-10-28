@@ -1,4 +1,4 @@
-import { createHash, randomInt, randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import * as argon2 from 'argon2';
 
 const ARGON2_OPTS: argon2.Options = {
@@ -23,15 +23,9 @@ export async function verifyPassword(
   }
 }
 
-/** OTP / refresh token hash: sha256(pepper + value). */
+/** Refresh token / identifier hash: sha256(pepper + value). */
 export function hashWithPepper(value: string, pepper: string): string {
   return createHash('sha256').update(`${pepper}:${value}`).digest('hex');
-}
-
-export function generateOtpCode(length = 6): string {
-  const max = 10 ** length;
-  const n = randomInt(0, max);
-  return n.toString().padStart(length, '0');
 }
 
 export function newFamilyId(): string {

@@ -1,4 +1,7 @@
+import path from "path";
 import type { NextConfig } from "next";
+
+
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -14,8 +17,9 @@ const securityHeaders = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https:",
-      "connect-src 'self' http://localhost:3001 https:",
+      // https: covers production object storage. Local media is http on :9000 (s3mock) or :3001 (API disk).
+      "img-src 'self' data: blob: https: http://localhost:9000 http://127.0.0.1:9000 http://localhost:3001 http://127.0.0.1:3001",
+      "connect-src 'self' http://localhost:3001 ws://localhost:3001 ws://127.0.0.1:3001 https: wss:",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "object-src 'none'",
@@ -24,10 +28,27 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: ["@reworth/ui-web", "@reworth/shared"],
   reactStrictMode: true,
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      {
+        source: "/.well-known/apple-app-site-association",
+        headers: [
+          { key: "Content-Type", value: "application/json" },
+          { key: "Cache-Control", value: "public, max-age=3600" },
+        ],
+      },
+      {
+        source: "/.well-known/assetlinks.json",
+        headers: [
+          { key: "Content-Type", value: "application/json" },
+          { key: "Cache-Control", value: "public, max-age=3600" },
+        ],
+      },
+    ];
   },
   /**
    * Public storefront lives at `/u/[handle]` (API: GET /storefronts/:handle).

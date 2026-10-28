@@ -38,6 +38,12 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reworth
 
+      - name: Contrast audit (design tokens)
+        run: node scripts/contrast-audit.mjs
+
+      - name: Hex audit (design-system paths)
+        run: node scripts/hex-audit.mjs
+
       - name: Dependency audit (prod)
         working-directory: apps/api
         run: pnpm audit --prod --audit-level=critical

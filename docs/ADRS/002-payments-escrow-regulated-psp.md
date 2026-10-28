@@ -32,6 +32,14 @@ Buyer protection (PRD §18) needs a hold → deliver → confirm → release flo
 - Orders / Payments / Disputes Nest modules; escrow state machine; auto-release + seller-response expiry schedulers
 - Env: `PAYMENTS_PROVIDER`, `BUYER_PROTECTION_FEE_*`, `ORDER_AUTO_RELEASE_DAYS`, `BUYER_PROTECTION_COVERAGE_DAYS`
 
+### Escrow order lifecycle (2026-09-30)
+
+Happy path statuses:
+
+`CREATED` / `PAYMENT_PENDING` → `FUNDED` (payment in escrow) → `SHIPPED` or `HANDED_OVER` → `DELIVERED` (courier) → buyer `RECEIVED` → escrow **release** → `COMPLETED`
+
+Seller is not paid until buyer confirms receipt (or auto-release after dispatch/handover / dispute resolution). Auto-release no longer pays out from `FUNDED` alone. Instant Buy buyer-confirm calls the same `confirmReceipt` → escrow release path. Admin **Orders** shows lifecycle stages, escrow label, payments, payouts, and delivery events. Shared helpers: `@reworth/shared` `buildOrderLifecycle` / `buildEscrowSnapshot`.
+
 ## References
 
 - PRD §§17–18, §44, §50

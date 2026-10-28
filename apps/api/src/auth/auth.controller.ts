@@ -5,9 +5,8 @@ import {
   LoginDto,
   LogoutDto,
   OAuthCallbackDto,
-  OtpRequestDto,
-  OtpVerifyDto,
   RefreshDto,
+  RegisterDto,
 } from './dto/auth.dto';
 
 @Controller('auth')
@@ -15,14 +14,9 @@ import {
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
-  @Post('otp/request')
-  requestOtp(@Body() dto: OtpRequestDto, @Req() req: { ip?: string }) {
-    return this.auth.requestOtp(dto, req.ip);
-  }
-
-  @Post('otp/verify')
-  verifyOtp(@Body() dto: OtpVerifyDto, @Req() req: { ip?: string }) {
-    return this.auth.verifyOtp(dto, req.ip);
+  @Post('register')
+  register(@Body() dto: RegisterDto, @Req() req: { ip?: string }) {
+    return this.auth.register(dto, req.ip);
   }
 
   @Post('login')

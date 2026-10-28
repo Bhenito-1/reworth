@@ -19,10 +19,9 @@ Ship a **Turborepo + pnpm modular monolith**:
 | Mobile | React Native + Expo (one codebase → iOS + Android) |
 | DB | PostgreSQL 16 + Prisma |
 | Cache / jobs | Redis + BullMQ |
-| Media | S3-compatible object storage (MinIO locally) |
+| Media | S3-compatible object storage (adobe/s3mock locally, AWS S3 in prod) |
 | Search | OpenSearch, with **Postgres full-text fallback** for lightweight/dev |
-| Auth | JWT (short access + rotating refresh), phone OTP, Google/Apple OAuth |
-| SMS | Termii or Twilio behind adapter + console mock |
+| Auth | JWT (short access + rotating refresh), email/password, Google/Apple OAuth |
 | Payments | Paystack adapter + mock PSP |
 | AI | Multimodal LLM adapter (OpenAI GPT-4o default) + rule-based mock |
 | Locale | NGN, en-NG, Africa/Lagos (WAT) |

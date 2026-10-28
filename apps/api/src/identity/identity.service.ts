@@ -68,13 +68,21 @@ export class IdentityService {
       );
     }
 
+    const nin = dto.nin?.trim();
+    if (nin && !looksLikeRawGovId(nin)) {
+      throw new BadRequestException('Enter your 11-digit NIN.');
+    }
+
     const result = await this.identity.verify({
       method: dto.method,
       mockOutcome: dto.mockOutcome,
       mockReference: dto.mockReference,
     });
 
-    const identifierHash = hashIdentifier(result.referenceForHash, this.pepper);
+    const identifierHash = hashIdentifier(
+      nin ?? result.referenceForHash,
+      this.pepper,
+    );
 
     // Safety: never persist raw dto.mockReference if it somehow equals a gov ID shape
     if (

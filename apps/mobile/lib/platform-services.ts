@@ -58,6 +58,78 @@ export async function createConsignment(
   });
 }
 
+export async function listConsignmentOnPlatform(
+  token: string,
+  id: string,
+): Promise<Consignment> {
+  return apiFetch(`/consignments/${id}/list`, { method: "POST", token });
+}
+
+export async function returnConsignment(
+  token: string,
+  id: string,
+): Promise<Consignment> {
+  return apiFetch(`/consignments/${id}/return`, { method: "POST", token });
+}
+
+export async function markConsignmentSold(
+  token: string,
+  id: string,
+  soldPriceKobo: number,
+): Promise<Consignment> {
+  return apiFetch(`/consignments/${id}/sold`, {
+    method: "POST",
+    token,
+    body: { soldPriceKobo },
+  });
+}
+
+export function consignmentStatusLabel(status: string): string {
+  switch (status) {
+    case "INTAKE":
+      return "Intake";
+    case "LISTED":
+      return "Listed";
+    case "SOLD":
+      return "Sold";
+    case "RETURNED":
+      return "Returned";
+    case "EXPIRED":
+      return "Expired";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
+  }
+}
+
+export function pickupStatusLabel(status: string): string {
+  switch (status) {
+    case "BOOKED":
+    case "SCHEDULED":
+      return "Booked";
+    case "PICKED_UP":
+      return "Picked up";
+    case "IN_TRANSIT":
+      return "In transit";
+    case "DELIVERED":
+    case "COMPLETED":
+      return "Completed";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return status
+        .trim()
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .replace(/^\w/, (letter) => letter.toUpperCase());
+  }
+}
+
 export type ManagedPickup = {
   id: string;
   status: string;

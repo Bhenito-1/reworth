@@ -1,8 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   AdminRole,
@@ -10,12 +14,20 @@ import {
   CommunityPrivacy,
   CommunityType,
   ListingStatus,
+  NotificationChannel,
   Prisma,
   SupportTicketStatus,
   UserStatus,
   VerificationStatus,
 } from '@prisma/client';
+import {
+  buildEscrowSnapshot,
+  buildOrderLifecycle,
+  orderStatusLabel,
+} from '@reworth/shared';
 import { AuthService } from '../auth/auth.service';
+import { SUSPENSION_APPEAL_EMAIL } from '../auth/suspended-account';
+import { HomeCache } from '../home/home.cache';
 import { AuditService } from '../audit/audit.service';
 import { ModerationService } from '../moderation/moderation.service';
 import { NotificationCategory } from '../notifications/notification-categories';
@@ -24,9 +36,27 @@ import {
   PAYMENT_PROVIDER,
   type PaymentProvider,
 } from '../providers/payment.provider';
+import { ListingStateMachine } from '../listings/listing-state.machine';
+import {
+  levelFromScore,
+  riskScoreAfterApproval,
+} from '../risk/risk-rules.table';
 import { PrismaService } from '../prisma/prisma.service';
-import { Inject } from '@nestjs/common';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
+import { FRAUD } from './admin-roles';
+import { AdminAlertsService } from './admin-alerts.service';
+
+const SUSPENSION_HOLD = 'SUSPENSION_HOLD';
+const PAID_OPEN_STATUSES = [
+  'FUNDED',
+  'IN_AUTHENTICATION',
+  'SHIPPED',
+  'HANDED_OVER',
+  'DELIVERED',
+  'RECEIVED',
+  'DISPUTE_HOLD',
+  'REFUND_REQUESTED',
+] as const;
 import type {
   AdminAppealResolveDto,
   AdminExtendExpiryDto,
@@ -46,6 +76,8 @@ import type {
 
 @Injectable()
 export class AdminPortalService {
+  private readonly logger = new Logger(AdminPortalService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auth: AuthService,
@@ -53,6 +85,8 @@ export class AdminPortalService {
     private readonly notifications: NotificationsService,
     private readonly moderation: ModerationService,
     @Inject(PAYMENT_PROVIDER) private readonly psp: PaymentProvider,
+    @Optional() private readonly alerts?: AdminAlertsService,
+    @Optional() private readonly homeCache?: HomeCache,
   ) {}
 
   // ── Users ──────────────────────────────────────────────────────────
@@ -130,20 +164,125 @@ export class AdminPortalService {
     reason: string | undefined,
     ip?: string,
   ) {
+    const trimmed = reason?.trim() ?? '';
+    if (trimmed.length < 3) {
+      throw new BadRequestException('A reason is required');
+    }
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
+    if (user.status === UserStatus.SUSPENDED) {
+      throw new ConflictException('User is already suspended');
+    }
+    if (user.status === UserStatus.DELETED) {
+      throw new BadRequestException('User cannot be suspended');
+    }
     const before = { status: user.status };
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { status: UserStatus.SUSPENDED },
+
+    const [unpaid, paidCount] = await Promise.all([
+      this.prisma.order.findMany({
+        where: {
+          OR: [{ buyerId: userId }, { sellerId: userId }],
+          status: { in: ['CREATED', 'PAYMENT_PENDING'] },
+          payments: { none: { status: 'SUCCESS' } },
+        },
+        select: {
+          id: true,
+          listingId: true,
+          quantity: true,
+          inventoryCommitted: true,
+          buyerId: true,
+          sellerId: true,
+        },
+      }),
+      this.prisma.order.count({
+        where: {
+          AND: [
+            { OR: [{ buyerId: userId }, { sellerId: userId }] },
+            {
+              OR: [
+                { status: { in: [...PAID_OPEN_STATUSES] } },
+                {
+                  status: { in: ['CREATED', 'PAYMENT_PENDING'] },
+                  payments: { some: { status: 'SUCCESS' } },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ]);
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.releaseUnpaidStock(tx, unpaid);
+      if (unpaid.length > 0) {
+        await tx.order.updateMany({
+          where: { id: { in: unpaid.map((order) => order.id) } },
+          data: { status: 'CANCELLED' },
+        });
+        await tx.orderEvent.createMany({
+          data: unpaid.map((order) => ({
+            orderId: order.id,
+            type: 'CANCELLED' as const,
+            actorUserId: actor.id,
+            payload: { reason: 'unpaid_account_hold' },
+          })),
+        });
+      }
+      const liveListings = await tx.listing.findMany({
+        where: {
+          sellerId: userId,
+          status: { in: [ListingStatus.LIVE, ListingStatus.RESERVED] },
+        },
+        select: { id: true, riskFlags: true },
+      });
+      for (const listing of liveListings) {
+        const riskFlags = listing.riskFlags.includes(SUSPENSION_HOLD)
+          ? listing.riskFlags
+          : [...listing.riskFlags, SUSPENSION_HOLD];
+        await tx.listing.update({
+          where: { id: listing.id },
+          data: { status: ListingStatus.REMOVED, riskFlags },
+        });
+      }
+      await tx.cartItem.deleteMany({
+        where: { listing: { sellerId: userId } },
+      });
+      await tx.user.update({
+        where: { id: userId },
+        data: { status: UserStatus.SUSPENDED },
+      });
     });
+
+    await this.homeCache?.clear();
     await this.auth.revokeAllRefreshTokens(userId);
-    await this.notifications.notify({
-      userId,
-      category: NotificationCategory.VERIFICATION_UPDATE,
-      title: 'Account suspended',
-      body: reason ?? 'Your ReWorth account has been suspended.',
-    });
+    try {
+      await this.notifications.notify({
+        userId,
+        category: NotificationCategory.VERIFICATION_UPDATE,
+        title: 'Account suspended',
+        body: [
+          'Your ReWorth account has been suspended. You will not be able to sign in.',
+          `Reason for suspension: ${trimmed}`,
+          `To ask for this suspension to be lifted, email the ReWorth team at ${SUSPENSION_APPEAL_EMAIL}.`,
+        ].join('\n\n'),
+        channels: [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+        forceDelivery: true,
+      });
+    } catch (err) {
+      this.logger.warn(`Suspension email failed for ${userId}: ${(err as Error).message}`);
+    }
+    await this.notifyUnpaidCounterparties(userId, unpaid);
+    if (paidCount > 0) {
+      await this.alerts?.notify({
+        roles: FRAUD,
+        kind: 'RISK',
+        title: 'Suspended account has paid orders',
+        body: `${paidCount} paid order(s) still need an admin to handle them in person.`,
+        href: '/orders',
+        entityType: 'User',
+        entityId: userId,
+      });
+    }
     await this.audit.log({
       actorUserId: actor.id,
       actorRole: actor.roles[0] ?? null,
@@ -151,28 +290,118 @@ export class AdminPortalService {
       entityType: 'User',
       entityId: userId,
       beforeJson: before,
-      afterJson: { status: UserStatus.SUSPENDED, reason: reason ?? null },
+      afterJson: {
+        status: UserStatus.SUSPENDED,
+        reason: trimmed,
+        unpaidCancelled: unpaid.length,
+        paidOpen: paidCount,
+      },
       ip: ip ?? null,
     });
     return { ok: true, userId, status: UserStatus.SUSPENDED };
   }
 
-  async unsuspendUser(actor: AuthUser, userId: string, ip?: string) {
+  async unsuspendUser(
+    actor: AuthUser,
+    userId: string,
+    reason?: string,
+    ip?: string,
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { status: UserStatus.ACTIVE },
-    });
+    if (user.status === UserStatus.SUSPENDED) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw(
+          Prisma.sql`
+            UPDATE "listings"
+            SET "status" = CASE
+                  WHEN "quantityAvailable" > 0 THEN 'LIVE'::"ListingStatus"
+                  WHEN "quantityReserved" > 0 THEN 'RESERVED'::"ListingStatus"
+                  WHEN "quantitySold" > 0 THEN 'SOLD'::"ListingStatus"
+                  ELSE 'LIVE'::"ListingStatus"
+                END,
+                "riskFlags" = array_remove("riskFlags", ${SUSPENSION_HOLD}),
+                "updatedAt" = CURRENT_TIMESTAMP
+            WHERE "sellerId" = ${userId}::uuid
+              AND ${SUSPENSION_HOLD} = ANY("riskFlags")
+          `,
+        );
+        await tx.user.update({
+          where: { id: userId },
+          data: { status: UserStatus.ACTIVE },
+        });
+      });
+      await this.homeCache?.clear();
+    }
     await this.audit.log({
       actorUserId: actor.id,
       actorRole: actor.roles[0] ?? null,
       action: 'USER_UNSUSPENDED',
       entityType: 'User',
       entityId: userId,
+      afterJson: reason?.trim() ? { reason: reason.trim() } : undefined,
       ip: ip ?? null,
     });
     return { ok: true, userId, status: UserStatus.ACTIVE };
+  }
+
+  private async releaseUnpaidStock(
+    tx: Prisma.TransactionClient,
+    unpaid: {
+      listingId: string;
+      quantity: number;
+      inventoryCommitted: boolean;
+    }[],
+  ) {
+    const byListing = new Map<string, number>();
+    for (const order of unpaid) {
+      if (order.inventoryCommitted) continue;
+      const qty = order.quantity ?? 1;
+      byListing.set(order.listingId, (byListing.get(order.listingId) ?? 0) + qty);
+    }
+    if (byListing.size === 0) return;
+    const listings = await tx.listing.findMany({
+      where: { id: { in: [...byListing.keys()] } },
+      select: { id: true, quantityTotal: true, quantityReserved: true },
+    });
+    for (const listing of listings) {
+      if (typeof listing.quantityTotal !== 'number') continue;
+      const wanted = byListing.get(listing.id) ?? 0;
+      const qty = Math.min(wanted, listing.quantityReserved ?? 0);
+      if (qty <= 0) continue;
+      await tx.listing.updateMany({
+        where: { id: listing.id, quantityReserved: { gte: qty } },
+        data: {
+          quantityReserved: { decrement: qty },
+          quantityAvailable: { increment: qty },
+        },
+      });
+    }
+  }
+
+  private async notifyUnpaidCounterparties(
+    userId: string,
+    unpaid: { buyerId: string; sellerId: string }[],
+  ) {
+    const counts = new Map<string, number>();
+    for (const order of unpaid) {
+      const other = order.buyerId === userId ? order.sellerId : order.buyerId;
+      if (other === userId) continue;
+      counts.set(other, (counts.get(other) ?? 0) + 1);
+    }
+    await Promise.all(
+      [...counts.entries()].map(([otherId, count]) =>
+        this.notifications.notify({
+          userId: otherId,
+          category: NotificationCategory.ORDER_CANCELLED,
+          title: 'Order cancelled',
+          body:
+            count === 1
+              ? 'An order was cancelled before payment.'
+              : `${count} orders were cancelled before payment.`,
+        }),
+      ),
+    );
   }
 
   async resetVerification(actor: AuthUser, userId: string, ip?: string) {
@@ -238,31 +467,131 @@ export class AdminPortalService {
       include: {
         seller: { include: { profile: true } },
         category: true,
+        listingModerations: {
+          orderBy: { assessedAt: 'desc' },
+          take: 1,
+        },
       },
     });
     return {
-      items: items.map((l) => ({
-        id: l.id,
-        title: l.title,
-        status: l.status,
-        priceKobo: l.priceKobo,
-        community: l.community,
-        riskFlags: l.riskFlags,
-        sellerId: l.sellerId,
-        sellerName: l.seller.profile?.displayName ?? null,
-        category: l.category?.name ?? null,
-        createdAt: l.createdAt,
-        expiresAt: l.expiresAt,
-      })),
+      items: items.map((l) => {
+        const mod = l.listingModerations[0] ?? null;
+        return {
+          id: l.id,
+          title: l.title,
+          status: l.status,
+          priceKobo: l.priceKobo,
+          community: l.community,
+          riskFlags: l.riskFlags,
+          sellerId: l.sellerId,
+          sellerName: l.seller.profile?.displayName ?? null,
+          category: l.category?.name ?? null,
+          createdAt: l.createdAt,
+          expiresAt: l.expiresAt,
+          moderationDecision: mod?.decision ?? null,
+          imageScore: mod?.imageScore ?? null,
+          riskScore: mod?.riskScore ?? null,
+        };
+      }),
     };
   }
 
-  async approveListing(actor: AuthUser, id: string, ip?: string) {
+  async getListingDetail(id: string) {
+    const listing = await this.prisma.listing.findUnique({
+      where: { id },
+      include: {
+        seller: {
+          include: {
+            profile: true,
+            verifications: true,
+          },
+        },
+        category: true,
+        subcategory: true,
+        images: { orderBy: { sortOrder: 'asc' } },
+        listingModerations: { orderBy: { assessedAt: 'desc' }, take: 10 },
+        moderationDecisions: { orderBy: { createdAt: 'desc' }, take: 20 },
+        riskAssessments: { orderBy: { createdAt: 'desc' }, take: 10 },
+        reports: { orderBy: { createdAt: 'desc' }, take: 10 },
+        estateCommunity: true,
+      },
+    });
+    if (!listing) throw new NotFoundException('Listing not found');
+
+    const latestModeration = listing.listingModerations[0] ?? null;
+
+    return {
+      listing: {
+        id: listing.id,
+        title: listing.title,
+        description: listing.description,
+        status: listing.status,
+        priceKobo: listing.priceKobo,
+        condition: listing.condition,
+        brand: listing.brand,
+        model: listing.model,
+        sellingMode: listing.sellingMode,
+        community: listing.community,
+        city: listing.city,
+        riskFlags: listing.riskFlags,
+        fulfilmentPickup: listing.fulfilmentPickup,
+        fulfilmentMeet: listing.fulfilmentMeet,
+        fulfilmentDelivery: listing.fulfilmentDelivery,
+        publishedAt: listing.publishedAt,
+        expiresAt: listing.expiresAt,
+        createdAt: listing.createdAt,
+        category: listing.category,
+        subcategory: listing.subcategory,
+        estateCommunity: listing.estateCommunity,
+        seller: {
+          id: listing.seller.id,
+          email: listing.seller.email,
+          phone: listing.seller.phone,
+          displayName: listing.seller.profile?.displayName ?? null,
+          riskScore: listing.seller.riskScore,
+          verifications: listing.seller.verifications.map((v) => ({
+            level: v.level,
+            status: v.status,
+          })),
+        },
+        images: listing.images.map((img) => ({
+          id: img.id,
+          sortOrder: img.sortOrder,
+          status: img.status,
+          originalKey: img.originalKey,
+          mime: img.mime,
+          sizeBytes: img.sizeBytes,
+          width: img.width,
+          height: img.height,
+          variants: img.variants,
+        })),
+      },
+      latestModeration,
+      moderationHistory: listing.listingModerations,
+      moderationDecisions: listing.moderationDecisions,
+      riskAssessments: listing.riskAssessments,
+      reports: listing.reports,
+    };
+  }
+
+  async approveListing(
+    actor: AuthUser,
+    id: string,
+    dto: { note?: string },
+    ip?: string,
+  ) {
     const listing = await this.prisma.listing.findUnique({ where: { id } });
     if (!listing) throw new NotFoundException('Listing not found');
-    if (listing.status !== ListingStatus.UNDER_REVIEW) {
-      throw new BadRequestException('Listing must be UNDER_REVIEW');
+    if (
+      listing.status !== ListingStatus.UNDER_REVIEW &&
+      listing.status !== ListingStatus.REMOVED
+    ) {
+      throw new BadRequestException(
+        'Only a listing under review or removed from the marketplace can be approved',
+      );
     }
+    ListingStateMachine.assertTransition(listing.status, ListingStatus.LIVE);
+    const restored = listing.status === ListingStatus.REMOVED;
     const updated = await this.prisma.listing.update({
       where: { id },
       data: {
@@ -270,13 +599,27 @@ export class AdminPortalService {
         publishedAt: listing.publishedAt ?? new Date(),
       },
     });
+    const note = dto.note?.trim();
+    await this.moderation.recordAdminDecision({
+      listingId: id,
+      decision: 'PASS',
+      actorUserId: actor.id,
+      reason: note || 'Admin approved',
+    });
     await this.notifications.notify({
       userId: listing.sellerId,
-      category: NotificationCategory.ITEM_SOLD,
-      title: 'Listing approved',
-      body: `"${listing.title}" is now live on ReWorth.`,
-      deepLink: `/listings/${id}`,
+      category: NotificationCategory.VERIFICATION_UPDATE,
+      title: restored ? 'Listing restored' : 'Listing approved',
+      body: restored
+        ? note
+          ? `"${listing.title}" is back on ReWorth. ${note}`
+          : `"${listing.title}" is back on the marketplace.`
+        : note
+          ? `"${listing.title}" is now live. ${note}`
+          : `"${listing.title}" is now live on ReWorth.`,
+      deepLink: '/selling',
     });
+    const sellerRisk = await this.relieveSellerRisk(listing.sellerId);
     await this.audit.log({
       actorUserId: actor.id,
       actorRole: actor.roles[0] ?? null,
@@ -284,10 +627,30 @@ export class AdminPortalService {
       entityType: 'Listing',
       entityId: id,
       beforeJson: { status: listing.status },
-      afterJson: { status: updated.status },
+      afterJson: { status: updated.status, sellerRisk },
       ip: ip ?? null,
     });
     return { ok: true, id, status: updated.status };
+  }
+
+  /** An approved listing means this seller can be trusted a step further. */
+  private async relieveSellerRisk(sellerId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: sellerId },
+      select: { riskScore: true },
+    });
+    if (!user) return null;
+    const riskScore = riskScoreAfterApproval(user.riskScore);
+    const riskLevel = levelFromScore(riskScore);
+    await this.prisma.user.update({
+      where: { id: sellerId },
+      data: {
+        riskScore,
+        riskLevel,
+        ...(riskLevel === 'LOW' ? { enhancedVerificationRequired: false } : {}),
+      },
+    });
+    return { before: user.riskScore, after: riskScore, riskLevel };
   }
 
   async rejectListing(
@@ -298,16 +661,31 @@ export class AdminPortalService {
   ) {
     const listing = await this.prisma.listing.findUnique({ where: { id } });
     if (!listing) throw new NotFoundException('Listing not found');
+    if (
+      listing.status !== ListingStatus.UNDER_REVIEW &&
+      listing.status !== ListingStatus.REMOVED
+    ) {
+      throw new BadRequestException(
+        'Only a listing under review or removed from the marketplace can be rejected',
+      );
+    }
+    ListingStateMachine.assertTransition(listing.status, ListingStatus.REJECTED);
     const updated = await this.prisma.listing.update({
       where: { id },
       data: { status: ListingStatus.REJECTED },
+    });
+    await this.moderation.recordAdminDecision({
+      listingId: id,
+      decision: 'REJECTED',
+      actorUserId: actor.id,
+      reason: dto.reason,
     });
     await this.notifications.notify({
       userId: listing.sellerId,
       category: NotificationCategory.VERIFICATION_UPDATE,
       title: 'Listing rejected',
       body: dto.reason,
-      deepLink: `/listings/${id}`,
+      deepLink: `/selling/${id}`,
     });
     await this.audit.log({
       actorUserId: actor.id,
@@ -322,18 +700,73 @@ export class AdminPortalService {
   }
 
   async removeListing(actor: AuthUser, id: string, ip?: string) {
+    return this.holdListing(actor, id, ip);
+  }
+
+  async flagListing(
+    actor: AuthUser,
+    id: string,
+    dto: { reason: string },
+    ip?: string,
+  ) {
+    const reason = dto.reason.trim();
+    return this.holdListing(actor, id, ip, { reason, flagged: true });
+  }
+
+  private async holdListing(
+    actor: AuthUser,
+    id: string,
+    ip?: string,
+    opts?: { reason?: string; flagged?: boolean },
+  ) {
     const listing = await this.prisma.listing.findUnique({ where: { id } });
     if (!listing) throw new NotFoundException('Listing not found');
+    const removable: ListingStatus[] = [
+      ListingStatus.LIVE,
+      ListingStatus.RESERVED,
+      ListingStatus.UNDER_REVIEW,
+      ListingStatus.EXPIRED,
+    ];
+    if (!removable.includes(listing.status)) {
+      throw new BadRequestException(
+        'Only a listing on the marketplace can be held for review',
+      );
+    }
+    ListingStateMachine.assertTransition(listing.status, ListingStatus.REMOVED);
+    const flags = opts?.flagged
+      ? Array.from(new Set([...listing.riskFlags, 'ADMIN_FLAG']))
+      : listing.riskFlags;
     await this.prisma.listing.update({
       where: { id },
-      data: { status: ListingStatus.REMOVED },
+      data: { status: ListingStatus.REMOVED, riskFlags: flags },
+    });
+    if (opts?.flagged && opts.reason) {
+      await this.moderation.recordAdminDecision({
+        listingId: id,
+        decision: 'UNDER_REVIEW',
+        actorUserId: actor.id,
+        reason: opts.reason,
+      });
+    }
+    await this.notifications.notify({
+      userId: listing.sellerId,
+      category: NotificationCategory.VERIFICATION_UPDATE,
+      title: opts?.flagged ? 'Listing flagged for review' : 'Listing removed for review',
+      body: opts?.flagged
+        ? `"${listing.title}" was taken off the marketplace. ${opts.reason}`
+        : `"${listing.title}" was taken off the marketplace while it is reviewed.`,
+      deepLink: '/selling',
     });
     await this.audit.log({
       actorUserId: actor.id,
       actorRole: actor.roles[0] ?? null,
-      action: 'LISTING_REMOVED',
+      action: opts?.flagged ? 'LISTING_FLAGGED' : 'LISTING_REMOVED',
       entityType: 'Listing',
       entityId: id,
+      afterJson: {
+        status: ListingStatus.REMOVED,
+        ...(opts?.reason ? { reason: opts.reason } : {}),
+      },
       ip: ip ?? null,
     });
     return { ok: true, id, status: ListingStatus.REMOVED };
@@ -407,21 +840,40 @@ export class AdminPortalService {
         listing: { select: { title: true, community: true } },
         buyer: { include: { profile: true } },
         seller: { include: { profile: true } },
-        payments: true,
+        payments: { orderBy: { createdAt: 'desc' }, take: 1 },
+        payouts: { orderBy: { createdAt: 'desc' }, take: 1 },
+        deliveryShipment: { select: { status: true } },
       },
     });
     return {
-      items: items.map((o) => ({
-        id: o.id,
-        status: o.status,
-        totalKobo: o.totalKobo,
-        listingTitle: o.listing.title,
-        community: o.listing.community,
-        buyerName: o.buyer.profile?.displayName ?? null,
-        sellerName: o.seller.profile?.displayName ?? null,
-        paymentStatus: o.payments[0]?.status ?? null,
-        createdAt: o.createdAt,
-      })),
+      items: items.map((o) => {
+        const paymentStatus = o.payments[0]?.status ?? null;
+        const payoutStatus = o.payouts[0] ? 'RELEASED' : null;
+        const deliveryStatus = o.deliveryShipment?.status ?? null;
+        return {
+          id: o.id,
+          status: o.status,
+          statusLabel: orderStatusLabel(o.status),
+          totalKobo: o.totalKobo,
+          listingTitle: o.listing.title,
+          community: o.listing.community,
+          buyerName: o.buyer.profile?.displayName ?? null,
+          sellerName: o.seller.profile?.displayName ?? null,
+          paymentStatus,
+          escrowLabel: buildEscrowSnapshot({
+            orderStatus: o.status,
+            paymentStatus,
+            payoutStatus,
+          }).label,
+          deliveryStatus,
+          lifecycle: buildOrderLifecycle({
+            status: o.status,
+            fulfilmentMethod: o.fulfilmentMethod,
+            deliveryStatus,
+          }),
+          createdAt: o.createdAt,
+        };
+      }),
     };
   }
 
@@ -429,16 +881,82 @@ export class AdminPortalService {
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
-        listing: true,
-        payments: true,
-        refunds: true,
-        payouts: true,
+        listing: {
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            priceKobo: true,
+            community: true,
+            city: true,
+          },
+        },
+        buyer: {
+          include: { profile: { select: { displayName: true } } },
+        },
+        seller: {
+          include: { profile: { select: { displayName: true } } },
+        },
+        payments: { orderBy: { createdAt: 'desc' } },
+        refunds: { orderBy: { createdAt: 'desc' } },
+        payouts: { orderBy: { createdAt: 'desc' } },
         events: { orderBy: { createdAt: 'asc' } },
-        disputes: true,
+        disputes: { orderBy: { createdAt: 'desc' } },
+        deliveryShipment: {
+          include: { events: { orderBy: { createdAt: 'asc' } } },
+        },
       },
     });
     if (!order) throw new NotFoundException('Order not found');
-    return order;
+
+    const paymentStatus = order.payments[0]?.status ?? null;
+    const payoutStatus = order.payouts[0] ? 'RELEASED' : null;
+    const deliveryStatus = order.deliveryShipment?.status ?? null;
+
+    return {
+      order: {
+        id: order.id,
+        status: order.status,
+        statusLabel: orderStatusLabel(order.status),
+        fulfilmentMethod: order.fulfilmentMethod,
+        amountKobo: order.amountKobo,
+        protectionFeeKobo: order.protectionFeeKobo,
+        deliveryFeeKobo: order.deliveryFeeKobo,
+        totalKobo: order.totalKobo,
+        buyerProtection: order.buyerProtection,
+        fundedAt: order.fundedAt,
+        autoReleaseAt: order.autoReleaseAt,
+        coverageEndsAt: order.coverageEndsAt,
+        completedAt: order.completedAt,
+        createdAt: order.createdAt,
+        transactionType: order.transactionType,
+        listing: order.listing,
+        buyer: {
+          id: order.buyerId,
+          displayName: order.buyer.profile?.displayName ?? null,
+        },
+        seller: {
+          id: order.sellerId,
+          displayName: order.seller.profile?.displayName ?? null,
+        },
+      },
+      lifecycle: buildOrderLifecycle({
+        status: order.status,
+        fulfilmentMethod: order.fulfilmentMethod,
+        deliveryStatus,
+      }),
+      escrow: buildEscrowSnapshot({
+        orderStatus: order.status,
+        paymentStatus,
+        payoutStatus,
+      }),
+      payments: order.payments,
+      payouts: order.payouts,
+      refunds: order.refunds,
+      events: order.events,
+      disputes: order.disputes,
+      deliveryShipment: order.deliveryShipment,
+    };
   }
 
   async refundOrder(
@@ -630,7 +1148,11 @@ export class AdminPortalService {
     if (!report) throw new NotFoundException('Report not found');
     await this.prisma.report.update({
       where: { id },
-      data: { status: 'DISMISSED' },
+      data: {
+        status: 'DISMISSED',
+        resolvedById: actor.id,
+        resolvedAt: new Date(),
+      },
     });
     await this.audit.log({
       actorUserId: actor.id,
@@ -656,6 +1178,7 @@ export class AdminPortalService {
       await this.prisma.userWarning.create({
         data: {
           userId: report.reportedUserId,
+          reportId: report.id,
           message: dto.message ?? report.reason,
           createdById: actor.id,
         },
@@ -669,17 +1192,26 @@ export class AdminPortalService {
     } else if (dto.action === 'REMOVE_LISTING' && report.listingId) {
       await this.removeListing(actor, report.listingId, ip);
     } else if (dto.action === 'SUSPEND_USER' && report.reportedUserId) {
-      await this.suspendUser(
-        actor,
-        report.reportedUserId,
-        dto.message ?? report.reason,
-        ip,
-      );
+      try {
+        await this.suspendUser(
+          actor,
+          report.reportedUserId,
+          dto.message ?? report.reason,
+          ip,
+        );
+      } catch (err) {
+        if (!(err instanceof ConflictException)) throw err;
+      }
     }
 
     await this.prisma.report.update({
       where: { id },
-      data: { status: 'RESOLVED' },
+      data: {
+        status: 'RESOLVED',
+        action: dto.action,
+        resolvedById: actor.id,
+        resolvedAt: new Date(),
+      },
     });
     await this.audit.log({
       actorUserId: actor.id,
@@ -694,15 +1226,40 @@ export class AdminPortalService {
   }
 
   async listRiskEvents() {
+    const items = await this.prisma.riskEvent.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        user: { include: { profile: true } },
+        listing: { select: { id: true, title: true } },
+      },
+    });
+    const listingIds = [
+      ...new Set(
+        items
+          .map((e) => e.listingId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const assessments = listingIds.length
+      ? await this.prisma.riskAssessment.findMany({
+          where: { listingId: { in: listingIds } },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [];
+    const latestByListing = new Map<string, (typeof assessments)[0]>();
+    for (const a of assessments) {
+      if (a.listingId && !latestByListing.has(a.listingId)) {
+        latestByListing.set(a.listingId, a);
+      }
+    }
     return {
-      items: await this.prisma.riskEvent.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-        include: {
-          user: { include: { profile: true } },
-          listing: { select: { id: true, title: true } },
-        },
-      }),
+      items: items.map((e) => ({
+        ...e,
+        assessment: e.listingId
+          ? latestByListing.get(e.listingId) ?? null
+          : null,
+      })),
     };
   }
 

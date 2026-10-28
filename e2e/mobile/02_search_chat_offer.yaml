@@ -1,6 +1,6 @@
 # ReWorth Maestro — 02 Search → chat → offer (stub)
 # Demo buyer: Ayo ayo@demo.reworth.ng / DemoAyo!2026
-appId: ng.reworth.mobile
+appId: com.reworth.app
 ---
 - launchApp
 - assertVisible: "ReWorth"

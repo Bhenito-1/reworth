@@ -75,6 +75,28 @@ describe('IdentityService L3', () => {
     expect(JSON.stringify(auditPayload)).not.toContain(rawNin);
     expect(auditPayload.afterJson.hasIdentifierHash).toBe(true);
   });
+
+  it('hashes a submitted NIN and never stores the raw number', async () => {
+    prisma.verification.create.mockImplementation(async ({ data }) => ({
+      id: 'v2',
+      ...data,
+    }));
+
+    const result = await service.verifyIdentity('u1', {
+      method: IdentityMethod.NIN,
+      nin: rawNin,
+    });
+
+    expect(result.level).toBe('L3_IDENTITY');
+    expect(result.status).toBe(VerificationStatus.VERIFIED);
+    expect(result.identityVerifiedBadge).toBe(true);
+
+    const created = prisma.verification.create.mock.calls[0][0].data;
+    expect(created.identifierHash).toBe(hashIdentifier(rawNin, pepper));
+    expect(JSON.stringify(created)).not.toContain(rawNin);
+    expect(JSON.stringify(audit.log.mock.calls[0][0])).not.toContain(rawNin);
+    expect(JSON.stringify(result)).not.toContain(rawNin);
+  });
 });
 
 describe('MockIdentityProvider', () => {

@@ -1,0 +1,55 @@
+# ReWorth Maestro — ≤60s demo smoke (device/sim)
+# Goal: Home → PDP sticky actions → Chats under one minute.
+# Preconditions: seed running, API up, Expo/dev client with appId com.reworth.app, preferably signed-in.
+# Record (PO): see e2e/mobile/README.md § Recording
+appId: com.reworth.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "ReWorth"
+    timeout: 20000
+- tapOn:
+    id: "tab-home"
+    optional: true
+- assertVisible:
+    id: "listing-card-0"
+    optional: true
+- tapOn:
+    id: "listing-card-0"
+    optional: true
+# Fallback if card id missing / empty rail
+- tapOn:
+    text: ".*₦.*"
+    index: 0
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "pdp-offer"
+    timeout: 10000
+    optional: true
+- assertVisible:
+    id: "pdp-chat"
+    optional: true
+- assertVisible:
+    id: "pdp-share"
+    optional: true
+- assertVisible:
+    id: "pdp-buy"
+    optional: true
+- tapOn:
+    id: "pdp-offer"
+    optional: true
+- tapOn:
+    text: "Close|Cancel|Back"
+    optional: true
+- tapOn:
+    id: "pdp-close"
+    optional: true
+- tapOn:
+    id: "tab-chats"
+- assertVisible:
+    id: "chats-title"
+    optional: true
+- assertVisible:
+    text: "Chats|No messages|Messages|Sign in again"
+    optional: true

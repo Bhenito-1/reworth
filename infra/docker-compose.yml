@@ -31,21 +31,30 @@ services:
       timeout: 3s
       retries: 10
 
-  minio:
-    image: minio/minio:latest
-    container_name: reworth-minio
+  # S3 API for listing images (adobe/s3mock).
+  # S3StorageAdapter / STORAGE_DRIVER=s3 talks to this endpoint.
+  s3mock:
+    image: adobe/s3mock:3.12.0
+    container_name: reworth-s3mock
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: reworth
-      MINIO_ROOT_PASSWORD: reworthsecret
+      # Pre-create bucket so first upload works before API bootstrap
+      COM_ADOBE_TESTING_S3MOCK_DOMAIN_INITIAL_BUCKETS: reworth-media
+      # Keep objects in /s3mockroot when the process exits (Docker Desktop stop/start).
+      COM_ADOBE_TESTING_S3MOCK_DOMAIN_RETAIN_FILES_ON_EXIT: "true"
+      # Path-style URLs: /{bucket}/{key}
+      COM_ADOBE_TESTING_S3MOCK_HTTP_ENDPOINT: ""
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      # Host 9000 → container 9090 (s3mock default HTTP port)
+      - "9000:9090"
     volumes:
-      - minio_data:/data
+      - s3mock_data:/s3mockroot
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://localhost:9090/ || exit 1",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -85,5 +94,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  minio_data:
   opensearch_data:
+  s3mock_data:

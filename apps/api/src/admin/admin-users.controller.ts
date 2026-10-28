@@ -162,21 +162,4 @@ export class AdminUsersController {
 
     return { ok: true, userId: id, role: dto.role };
   }
-
-  @Get('finance/summary')
-  @Roles(AdminRole.FINANCE, AdminRole.SUPER_ADMIN)
-  async financeSummary(
-    @CurrentUser() actor: AuthUser,
-    @Req() req: { ip?: string },
-  ) {
-    await this.audit.log({
-      actorUserId: actor.id,
-      actorRole: actor.roles[0] ?? null,
-      action: 'FINANCE_SUMMARY_VIEWED',
-      entityType: 'Finance',
-      entityId: 'summary',
-      ip: req.ip ?? null,
-    });
-    return { ok: true };
-  }
 }

@@ -1,0 +1,33 @@
+{
+  "city": "ondo",
+  "displayName": "Ondo",
+  "timezone": "Africa/Lagos",
+  "communities": [
+    "AKURE",
+    "ONDO_TOWN",
+    "ORE",
+    "OWO",
+    "OKITIPUPA",
+    "OTHER_ONDO"
+  ],
+  "geocoding": {
+    "AKURE": { "lat": 7.2526, "lng": 5.1931, "label": "Akure" },
+    "ONDO_TOWN": { "lat": 7.1, "lng": 4.83, "label": "Ondo Town" },
+    "ORE": { "lat": 6.747, "lng": 4.876, "label": "Ore" },
+    "OWO": { "lat": 7.1962, "lng": 5.5868, "label": "Owo" },
+    "OKITIPUPA": { "lat": 6.5055, "lng": 4.779, "label": "Okitipupa" },
+    "OTHER_ONDO": { "lat": 7.1, "lng": 5.05, "label": "Ondo" }
+  },
+  "logistics": {
+    "baseFeeKobo": 110000,
+    "perKmKobo": 11000
+  },
+  "priceBands": {
+    "budget": { "minKobo": 0, "maxKobo": 3500000 },
+    "mid": { "minKobo": 3500000, "maxKobo": 30000000 },
+    "premium": { "minKobo": 30000000, "maxKobo": null }
+  },
+  "sms": { "enabled": true, "provider": "termii" },
+  "psp": { "enabled": true, "provider": "paystack" },
+  "status": "pilot"
+}

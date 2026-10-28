@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -15,7 +15,8 @@ import {
   VerificationLevel,
   VerificationStatus,
 } from '@prisma/client';
-import { ListingStateMachine } from '../listings/listing-state.machine';
+import { RegionConfigService } from '../region/region-config.service';
+import { quoteGiftDelivery } from './swap-fees';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -60,7 +61,50 @@ export class GiveawayClaimsService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly regions?: RegionConfigService,
   ) {}
+
+  /** Delivery from the gift to the buyer's preferred area. */
+  async previewDelivery(listingId: string, userId: string) {
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: listingId },
+    });
+    if (!listing) throw new NotFoundException('Listing not found');
+    if (listing.sellingMode !== 'GIVE_AWAY') {
+      throw new BadRequestException('Listing is not a give-away');
+    }
+    return this.quoteForBuyer(listing, userId);
+  }
+
+  private async quoteForBuyer(
+    listing: {
+      geoLat?: number | null;
+      geoLng?: number | null;
+      city?: string | null;
+      community?: string | null;
+    },
+    userId: string,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { profile: { select: { preferredCommunity: true } } },
+    });
+    const area =
+      user?.profile?.preferredCommunity?.trim() ||
+      listing.community?.trim() ||
+      '';
+    const geo = area
+      ? this.regions?.getCommunityGeo(listing.city || 'lagos', area)
+      : null;
+    const quote = quoteGiftDelivery(
+      listing,
+      geo ? { lat: geo.geoLat, lng: geo.geoLng } : undefined,
+    );
+    return {
+      ...quote,
+      area: geo?.label || area || 'your area',
+    };
+  }
 
   private expiryHours(): number {
     return Number(this.config.get('GIVEAWAY_CLAIM_EXPIRY_HOURS') ?? 72);
@@ -87,7 +131,15 @@ export class GiveawayClaimsService {
     listingId: string,
     claimantId: string,
     dto: CreateGiveawayClaimDto,
-  ): Promise<GiveawayClaimDto> {
+  ): Promise<{
+    claim: GiveawayClaimDto;
+    order: {
+      id: string;
+      deliveryFeeKobo: number;
+      swapFeeKobo: number;
+      totalKobo: number;
+    };
+  }> {
     await this.assertL2OrHigher(claimantId);
 
     const listing = await this.prisma.listing.findUnique({
@@ -100,7 +152,10 @@ export class GiveawayClaimsService {
     if (listing.sellingMode !== 'GIVE_AWAY') {
       throw new BadRequestException('Listing is not a give-away');
     }
-    if (listing.status !== 'LIVE') {
+    if ((listing.quantityAvailable ?? 0) < 1) {
+      throw new ConflictException('This gift has already been claimed');
+    }
+    if (listing.status !== 'LIVE' && listing.status !== 'RESERVED') {
       throw new ConflictException('Listing is not available');
     }
     if (listing.priceKobo !== 0) {
@@ -113,8 +168,27 @@ export class GiveawayClaimsService {
       },
     });
     if (existing) {
+      if (existing.status === 'APPROVED' || existing.status === 'COMPLETED') {
+        throw new ConflictException('You already received this gift');
+      }
       if (existing.status === 'CLAIMED') {
-        throw new ConflictException('You already claimed this listing');
+        const open = await this.prisma.order.findFirst({
+          where: {
+            giveawayClaimId: existing.id,
+            status: { in: ['PAYMENT_PENDING', 'CREATED'] },
+          },
+        });
+        if (open) {
+          return {
+            claim: toGiveawayClaimDto(existing),
+            order: {
+              id: open.id,
+              deliveryFeeKobo: open.deliveryFeeKobo,
+              swapFeeKobo: open.swapFeeKobo,
+              totalKobo: open.totalKobo,
+            },
+          };
+        }
       }
       throw new ConflictException(
         `Existing claim is ${existing.status}; cannot re-claim`,
@@ -125,6 +199,7 @@ export class GiveawayClaimsService {
       Date.now() + this.expiryHours() * 60 * 60 * 1000,
     );
 
+    const quote = await this.quoteForBuyer(listing, claimantId);
     const claim = await this.prisma.giveawayClaim.create({
       data: {
         listingId,
@@ -132,6 +207,59 @@ export class GiveawayClaimsService {
         status: 'CLAIMED',
         note: dto.note,
         expiresAt,
+      },
+    });
+    const order = await this.prisma.order.create({
+      data: {
+        listingId,
+        buyerId: claimantId,
+        sellerId: listing.sellerId,
+        amountKobo: 0,
+        quantity: 1,
+        protectionFeeKobo: 0,
+        deliveryFeeKobo: quote.deliveryFeeKobo,
+        swapFeeKobo: 0,
+        totalKobo: quote.deliveryFeeKobo,
+        fulfilmentMethod: FulfilmentMethod.DELIVERY,
+        status: 'PAYMENT_PENDING',
+        confirmationStatus: 'CONFIRMED',
+        buyerProtection: false,
+        transactionType: TransactionType.GIVEAWAY,
+        giveawayClaimId: claim.id,
+        swapListingAId: listing.id,
+        legAStatus: 'PENDING',
+        legBStatus: null,
+      },
+    });
+    await this.prisma.orderEvent.create({
+      data: {
+        orderId: order.id,
+        type: 'CREATED',
+        actorUserId: claimantId,
+        payload: {
+          transactionType: TransactionType.GIVEAWAY,
+          giveawayClaimId: claim.id,
+          deliveryFeeKobo: quote.deliveryFeeKobo,
+        },
+      },
+    });
+    const shipment = await this.prisma.deliveryShipment.create({
+      data: {
+        orderId: order.id,
+        provider: 'mock-delivery',
+        quoteKobo: quote.deliveryFeeKobo,
+        distanceKm: quote.distanceKm,
+        status: 'QUOTED',
+      },
+    });
+    await this.prisma.deliveryEvent.create({
+      data: {
+        shipmentId: shipment.id,
+        status: 'QUOTED',
+        payload: {
+          feeKobo: quote.deliveryFeeKobo,
+          distanceKm: quote.distanceKm,
+        },
       },
     });
 
@@ -158,7 +286,10 @@ export class GiveawayClaimsService {
         conversationId: conversation.id,
         senderId: claimantId,
         type: MessageType.GIVEAWAY_CLAIM,
-        body: JSON.stringify({ giveawayClaimId: claim.id }),
+        body: JSON.stringify({
+          giveawayClaimId: claim.id,
+          orderId: order.id,
+        }),
       },
     });
     await this.prisma.conversation.update({
@@ -169,13 +300,21 @@ export class GiveawayClaimsService {
     await this.notifications?.notify({
       userId: listing.sellerId,
       category: NotificationCategory.NEW_OFFER,
-      title: 'New give-away claim',
-      body: 'Someone claimed your give-away listing.',
-      deepLink: `reworth://listings/${listingId}/claims`,
-      meta: { giveawayClaimId: claim.id, listingId },
+      title: 'Gift delivery started',
+      body: 'Someone is paying the delivery fee for your give-away. The first payment gets one unit.',
+      deepLink: `reworth://orders/${order.id}`,
+      meta: { giveawayClaimId: claim.id, listingId, orderId: order.id },
     });
 
-    return toGiveawayClaimDto(claim);
+    return {
+      claim: toGiveawayClaimDto(claim),
+      order: {
+        id: order.id,
+        deliveryFeeKobo: quote.deliveryFeeKobo,
+        swapFeeKobo: 0,
+        totalKobo: quote.deliveryFeeKobo,
+      },
+    };
   }
 
   async listForListing(
@@ -204,147 +343,12 @@ export class GiveawayClaimsService {
   }
 
   async approve(
-    claimId: string,
-    sellerId: string,
+    _claimId: string,
+    _sellerId: string,
   ): Promise<{ claim: GiveawayClaimDto; order: { id: string } }> {
-    const result = await this.prisma.$transaction(async (tx) => {
-      const claim = await tx.giveawayClaim.findUnique({
-        where: { id: claimId },
-      });
-      if (!claim) throw new NotFoundException('Give-away claim not found');
-      if (claim.status !== 'CLAIMED') {
-        throw new ConflictException(`Claim is ${claim.status}`);
-      }
-
-      const listing = await tx.listing.findUnique({
-        where: { id: claim.listingId },
-      });
-      if (!listing) throw new NotFoundException('Listing not found');
-      if (listing.sellerId !== sellerId) {
-        throw new ForbiddenException('Only the seller can approve');
-      }
-      if (listing.status !== 'LIVE') {
-        throw new ConflictException(
-          `Listing is not available (status=${listing.status})`,
-        );
-      }
-      ListingStateMachine.assertTransition(listing.status, 'RESERVED');
-
-      const claimed = await tx.giveawayClaim.updateMany({
-        where: { id: claimId, status: 'CLAIMED' },
-        data: { status: 'APPROVED', reviewedAt: new Date() },
-      });
-      if (claimed.count === 0) {
-        throw new ConflictException('Claim already resolved');
-      }
-
-      // Race-safe: only one winner if listing still LIVE
-      const reserved = await tx.listing.updateMany({
-        where: { id: listing.id, status: 'LIVE' },
-        data: { status: 'RESERVED' },
-      });
-      if (reserved.count === 0) {
-        throw new ConflictException('Listing already reserved');
-      }
-
-      await tx.listingEvent.create({
-        data: {
-          listingId: listing.id,
-          type: 'STATUS_CHANGED',
-          actorUserId: sellerId,
-          payload: {
-            from: 'LIVE',
-            to: 'RESERVED',
-            reason: 'giveaway_approved',
-            giveawayClaimId: claimId,
-          },
-        },
-      });
-
-      const otherClaims = await tx.giveawayClaim.findMany({
-        where: {
-          listingId: listing.id,
-          status: 'CLAIMED',
-          id: { not: claimId },
-        },
-      });
-      await tx.giveawayClaim.updateMany({
-        where: {
-          listingId: listing.id,
-          status: 'CLAIMED',
-          id: { not: claimId },
-        },
-        data: { status: 'REJECTED', reviewedAt: new Date() },
-      });
-
-      const order = await tx.order.create({
-        data: {
-          listingId: listing.id,
-          buyerId: claim.claimantId,
-          sellerId: listing.sellerId,
-          amountKobo: 0,
-          protectionFeeKobo: 0,
-          deliveryFeeKobo: 0,
-          totalKobo: 0,
-          fulfilmentMethod: FulfilmentMethod.PICKUP,
-          status: 'CREATED',
-          buyerProtection: false,
-          transactionType: TransactionType.GIVEAWAY,
-          giveawayClaimId: claim.id,
-          swapListingAId: listing.id,
-          legAStatus: 'PENDING',
-          legBStatus: null,
-        },
-      });
-
-      await tx.orderEvent.create({
-        data: {
-          orderId: order.id,
-          type: 'CREATED',
-          actorUserId: sellerId,
-          payload: {
-            transactionType: TransactionType.GIVEAWAY,
-            giveawayClaimId: claimId,
-          },
-        },
-      });
-
-      const updated = await tx.giveawayClaim.findUniqueOrThrow({
-        where: { id: claimId },
-      });
-
-      return { claim: updated, order, rejectedIds: otherClaims.map((c) => c.id) };
-    });
-
-    await this.notifications?.notify({
-      userId: result.claim.claimantId,
-      category: NotificationCategory.OFFER_ACCEPTED,
-      title: 'Give-away approved',
-      body: 'The seller picked you for this give-away.',
-      deepLink: `reworth://orders/${result.order.id}`,
-      meta: { orderId: result.order.id, giveawayClaimId: claimId },
-    });
-
-    for (const rejectedId of result.rejectedIds) {
-      const rejected = await this.prisma.giveawayClaim.findUnique({
-        where: { id: rejectedId },
-      });
-      if (rejected) {
-        await this.notifications?.notify({
-          userId: rejected.claimantId,
-          category: NotificationCategory.OFFER_REJECTED,
-          title: 'Give-away claim declined',
-          body: 'Another claimant was selected for this give-away.',
-          deepLink: `reworth://listings/${rejected.listingId}`,
-          meta: { giveawayClaimId: rejectedId },
-        });
-      }
-    }
-
-    return {
-      claim: toGiveawayClaimDto(result.claim),
-      order: { id: result.order.id },
-    };
+    throw new ConflictException(
+      'Gifts are first come, first served. A verified buyer gets one unit by paying the delivery fee.',
+    );
   }
 
   async reject(claimId: string, sellerId: string): Promise<GiveawayClaimDto> {

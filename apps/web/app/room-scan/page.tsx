@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
+import { CONDITION_LABELS } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
 import {
   createRoomScan,
@@ -51,7 +52,7 @@ export default function RoomScanPage() {
 
   useEffect(() => {
     if (!getAccessToken()) {
-      router.replace("/onboarding");
+      router.replace("/");
     }
   }, [router]);
 
@@ -236,16 +237,6 @@ export default function RoomScanPage() {
       />
 
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-20 pt-6 sm:px-6">
-        <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Home
-          </Link>
-          <span className="text-xl font-semibold tracking-tight">ReWorth</span>
-        </header>
-
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
           Room scan
         </h1>
@@ -361,7 +352,14 @@ export default function RoomScanPage() {
                       <span>
                         <span className="block font-medium">{item.label}</span>
                         <span className="text-xs text-[var(--rw-ink-muted)]">
-                          {[item.brandHint, item.categoryHint, item.condition]
+                          {[
+                            item.brandHint,
+                            item.categoryHint,
+                            item.condition
+                              ? (CONDITION_LABELS[item.condition] ??
+                                item.condition)
+                              : null,
+                          ]
                             .filter(Boolean)
                             .join(" · ")}
                         </span>

@@ -8,6 +8,9 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { AdminAlertsService } from '../admin/admin-alerts.service';
+import { DISPUTES } from '../admin/admin-roles';
+import { AuditService } from '../audit/audit.service';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrderStateMachine } from '../orders/order-state.machine';
@@ -33,9 +36,11 @@ export class DisputesService {
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
     private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
     @Inject(PAYMENT_PROVIDER) private readonly psp: PaymentProvider,
     @Optional()
     private readonly inspections?: VehicleInspectionsService,
+    @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
   async open(
@@ -121,6 +126,16 @@ export class DisputesService {
       });
 
       return d;
+    });
+
+    await this.alerts?.notify({
+      roles: DISPUTES,
+      kind: 'DISPUTE',
+      title: 'Dispute opened',
+      body: `A buyer opened a dispute (${dto.reason}).`,
+      href: '/disputes',
+      entityType: 'Dispute',
+      entityId: dispute.id,
     });
 
     this.notifications.log('dispute.opened', {
@@ -355,6 +370,10 @@ export class DisputesService {
       });
     }
 
+    const before = {
+      status: dispute.status,
+      resolution: dispute.resolution,
+    };
     const updated = await this.prisma.dispute.update({
       where: { id: disputeId },
       data: {
@@ -362,6 +381,21 @@ export class DisputesService {
         resolution,
         resolutionNote: dto.note ?? null,
         resolvedAt: new Date(),
+      },
+    });
+
+    await this.audit.log({
+      actorUserId: adminUserId,
+      action: 'DISPUTE_RESOLVED',
+      entityType: 'Dispute',
+      entityId: disputeId,
+      beforeJson: before,
+      afterJson: {
+        status: 'RESOLVED',
+        resolution,
+        resolutionNote: dto.note ?? null,
+        amountKobo: dto.amountKobo ?? null,
+        orderId: order.id,
       },
     });
 

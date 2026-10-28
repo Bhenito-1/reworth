@@ -9,6 +9,7 @@ import {
   firesReportedUser,
   firesSuspiciousPayment,
   levelFromScore,
+  riskScoreAfterApproval,
   sumFiredWeights,
   type FiredRule,
 } from './risk-rules.table';
@@ -120,6 +121,14 @@ describe('risk-rules.table', () => {
       expect(levelFromScore(70, DEFAULT_THRESHOLDS)).toBe('HIGH');
     });
 
+    it('an approval lowers a score of 50 below the review line', () => {
+      const next = riskScoreAfterApproval(50);
+      expect(next).toBe(30);
+      expect(levelFromScore(next)).toBe('LOW');
+      expect(riskScoreAfterApproval(0)).toBe(0);
+      expect(riskScoreAfterApproval(15)).toBe(0);
+    });
+
     it('synthetic bad actor (rapid+low price+duplicate) → HIGH', () => {
       const fired: FiredRule[] = [
         { code: 'DUPLICATE_IMAGE', weight: 30, detail: {} },
@@ -130,5 +139,110 @@ describe('risk-rules.table', () => {
       expect(score).toBe(75);
       expect(levelFromScore(score)).toBe('HIGH');
     });
+  });
+});
+
+describe('RiskEngineService.evaluateOnPublish', () => {
+  it('HIGH score → forceUnderReview, enhancedVerification, events + assessment', async () => {
+    const riskAssessmentCreate = jest.fn().mockResolvedValue({ id: 'ra1' });
+    const riskEventCreate = jest.fn().mockResolvedValue({ id: 're1' });
+    const userUpdate = jest.fn().mockResolvedValue({});
+    const listingUpdate = jest.fn().mockResolvedValue({});
+    const supportCreate = jest.fn().mockResolvedValue({ id: 't1' });
+    const notify = jest.fn().mockResolvedValue({ created: [], skipped: [] });
+
+    const prisma = {
+      listing: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'l1',
+          sellerId: 's1',
+          priceKobo: 50_000_00,
+          community: 'Lekki',
+          images: [{ id: 'i1', originalKey: 'a.jpg' }],
+          category: { slug: 'electronics' },
+          subcategory: null,
+          seller: {
+            profile: { preferredCommunity: 'Lekki' },
+            devices: [],
+          },
+        }),
+        update: listingUpdate,
+        count: jest.fn().mockResolvedValue(6),
+      },
+      riskRule: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      riskAssessment: { create: riskAssessmentCreate },
+      riskEvent: {
+        create: riskEventCreate,
+        count: jest.fn().mockResolvedValue(0),
+      },
+      user: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 's1',
+          riskLevel: 'LOW',
+          riskScore: 0,
+        }),
+        update: userUpdate,
+      },
+      report: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+      order: { count: jest.fn().mockResolvedValue(0) },
+      device: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      supportTicket: { create: supportCreate },
+    };
+
+    const fraud = {
+      evaluateListing: jest.fn().mockResolvedValue({
+        flags: ['DUPLICATE_IMAGE'],
+        riskEvents: [{ kind: 'DUPLICATE_IMAGE', detail: { hash: 'x' } }],
+      }),
+      estimateLowKobo: jest.fn().mockReturnValue(280_000_00),
+    };
+
+    const { RiskEngineService } = await import('./risk-engine.service');
+    const service = new RiskEngineService(
+      prisma as never,
+      fraud as never,
+      { notify } as never,
+    );
+
+    const result = await service.evaluateOnPublish('l1', 's1');
+
+    expect(result.level).toBe('HIGH');
+    expect(result.forceUnderReview).toBe(true);
+    expect(result.score).toBeGreaterThanOrEqual(70);
+    expect(result.rulesFired.map((r) => r.code)).toEqual(
+      expect.arrayContaining([
+        'DUPLICATE_IMAGE',
+        'LOW_PRICE',
+        'RAPID_LISTING',
+      ]),
+    );
+    expect(riskAssessmentCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          level: 'HIGH',
+          listingId: 'l1',
+          userId: 's1',
+        }),
+      }),
+    );
+    expect(riskEventCreate).toHaveBeenCalled();
+    expect(userUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          riskLevel: 'HIGH',
+          enhancedVerificationRequired: true,
+        }),
+      }),
+    );
+    expect(listingUpdate).toHaveBeenCalled();
+    expect(notify).toHaveBeenCalled();
   });
 });

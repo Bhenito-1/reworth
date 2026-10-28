@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
@@ -35,14 +36,38 @@ export class AdminTotpVerifyDto {
 }
 
 export class AdminSuspendDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
+}
+
+export class AdminUnsuspendDto {
   @IsOptional()
   @IsString()
+  @MinLength(3)
+  @MaxLength(500)
   reason?: string;
+}
+
+export class AdminApproveListingDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+export class AdminFlagListingDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
 }
 
 export class AdminRejectListingDto {
   @IsString()
   @MinLength(3)
+  @MaxLength(500)
   reason!: string;
 }
 

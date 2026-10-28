@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
-import { ApiError } from "../../../lib/api";
+import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 import {
   NOTIFICATION_CATEGORIES,
@@ -17,6 +17,7 @@ import {
   type NotificationChannel,
   type NotificationPreference,
 } from "../../../lib/notifications";
+import type { MeResponse } from "../../../lib/types";
 
 type PrefKey = `${string}:${NotificationChannel}`;
 
@@ -30,6 +31,9 @@ export default function NotificationSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<PrefKey | null>(null);
+  const [quietStart, setQuietStart] = useState("22");
+  const [quietEnd, setQuietEnd] = useState("7");
+  const [quietBusy, setQuietBusy] = useState(false);
   const [toast, setToast] = useState<{
     message: string;
     tone?: "info" | "success" | "warn" | "error";
@@ -38,13 +42,16 @@ export default function NotificationSettingsPage() {
   const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
-      router.replace("/onboarding");
+      router.replace("/");
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const rows = await getNotificationPreferences(token);
+      const [rows, me] = await Promise.all([
+        getNotificationPreferences(token),
+        apiFetch<MeResponse>("/me", { token }),
+      ]);
       const map = new Map<PrefKey, boolean>();
       for (const cat of NOTIFICATION_CATEGORIES) {
         for (const ch of NOTIFICATION_CHANNELS) {
@@ -58,9 +65,15 @@ export default function NotificationSettingsPage() {
         );
       }
       setPrefs(map);
+      if (me.profile?.quietHoursStart != null) {
+        setQuietStart(String(me.profile.quietHoursStart));
+      }
+      if (me.profile?.quietHoursEnd != null) {
+        setQuietEnd(String(me.profile.quietHoursEnd));
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        router.replace("/onboarding");
+        router.replace("/");
         return;
       }
       setError(err instanceof ApiError ? err.message : "Could not load");
@@ -114,6 +127,40 @@ export default function NotificationSettingsPage() {
     }
   }
 
+  async function saveQuietHours() {
+    const token = getAccessToken();
+    if (!token) return;
+    const start = Number(quietStart);
+    const end = Number(quietEnd);
+    if (
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      start < 0 ||
+      start > 23 ||
+      end < 0 ||
+      end > 23
+    ) {
+      setToast({ message: "Quiet hours must be 0–23", tone: "warn" });
+      return;
+    }
+    setQuietBusy(true);
+    try {
+      await apiFetch("/me", {
+        method: "PATCH",
+        token,
+        body: { quietHoursStart: start, quietHoursEnd: end },
+      });
+      setToast({ message: "Quiet hours saved", tone: "success" });
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Save failed",
+        tone: "error",
+      });
+    } finally {
+      setQuietBusy(false);
+    }
+  }
+
   return (
     <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div
@@ -160,6 +207,50 @@ export default function NotificationSettingsPage() {
           </div>
         ) : (
           <div className="mt-8 space-y-6">
+            <section
+              className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
+              aria-labelledby="quiet-hours-heading"
+            >
+              <h2 id="quiet-hours-heading" className="text-base font-semibold">
+                Quiet hours
+              </h2>
+              <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
+                Non-critical push and email stay silent between these hours
+                (0–23, WAT). Critical escrow alerts still get through.
+              </p>
+              <div className="mt-3 flex flex-wrap items-end gap-3">
+                <label className="text-sm">
+                  Start
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    className="mt-1 block w-20 rounded-[var(--rw-radius-md)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-1.5 text-sm"
+                    value={quietStart}
+                    onChange={(e) => setQuietStart(e.target.value)}
+                  />
+                </label>
+                <label className="text-sm">
+                  End
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    className="mt-1 block w-20 rounded-[var(--rw-radius-md)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-1.5 text-sm"
+                    value={quietEnd}
+                    onChange={(e) => setQuietEnd(e.target.value)}
+                  />
+                </label>
+                <Button
+                  variant="secondary"
+                  disabled={quietBusy}
+                  onClick={() => void saveQuietHours()}
+                >
+                  {quietBusy ? "…" : "Save"}
+                </Button>
+              </div>
+            </section>
+
             {NOTIFICATION_CATEGORIES.map((category) => {
               const critical = isCriticalCategory(category);
               return (

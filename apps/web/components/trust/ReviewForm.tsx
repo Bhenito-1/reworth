@@ -103,7 +103,7 @@ export function ReviewForm({ submitting, onSubmit }: Props) {
         Leave a review
       </h2>
       <p className="text-sm text-[var(--rw-ink-muted)]">
-        Reviews publish when both of you have rated this order.
+        Rate the purchase. Only buyers can rate, and it shows on this seller&apos;s listings.
       </p>
 
       <StarPicker

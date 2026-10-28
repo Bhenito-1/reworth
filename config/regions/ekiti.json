@@ -1,0 +1,33 @@
+{
+  "city": "ekiti",
+  "displayName": "Ekiti",
+  "timezone": "Africa/Lagos",
+  "communities": [
+    "ADO_EKITI",
+    "IKERE",
+    "IKOLE",
+    "IYE",
+    "OMUO",
+    "OTHER_EKITI"
+  ],
+  "geocoding": {
+    "ADO_EKITI": { "lat": 7.6211, "lng": 5.2214, "label": "Ado-Ekiti" },
+    "IKERE": { "lat": 7.5, "lng": 5.23, "label": "Ikere-Ekiti" },
+    "IKOLE": { "lat": 7.7919, "lng": 5.5145, "label": "Ikole" },
+    "IYE": { "lat": 7.672, "lng": 5.25, "label": "Iye" },
+    "OMUO": { "lat": 7.7619, "lng": 5.7227, "label": "Omuo" },
+    "OTHER_EKITI": { "lat": 7.667, "lng": 5.25, "label": "Ekiti" }
+  },
+  "logistics": {
+    "baseFeeKobo": 110000,
+    "perKmKobo": 11000
+  },
+  "priceBands": {
+    "budget": { "minKobo": 0, "maxKobo": 3500000 },
+    "mid": { "minKobo": 3500000, "maxKobo": 30000000 },
+    "premium": { "minKobo": 30000000, "maxKobo": null }
+  },
+  "sms": { "enabled": true, "provider": "termii" },
+  "psp": { "enabled": true, "provider": "paystack" },
+  "status": "pilot"
+}

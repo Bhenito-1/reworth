@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.com.reworth.app",
+        "paths": [
+          "/listings/*",
+          "/u/*",
+          "/ask/bundles/*",
+          "/onboarding*",
+          "/moving-sales/*",
+          "/communities/*",
+          "/chats/*",
+          "/orders/*"
+        ]
+      }
+    ]
+  }
+}
