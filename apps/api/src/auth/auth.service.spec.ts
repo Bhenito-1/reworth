@@ -24,6 +24,12 @@ describe('AuthService', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
+      emailSignupOtp: {
+        upsert: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
       verification: {
         findFirst: jest.fn(),
         create: jest.fn(),
@@ -163,8 +169,53 @@ describe('AuthService', () => {
     });
   });
 
-  describe('register (email)', () => {
-    it('creates consumer account and issues session', async () => {
+  describe('register email OTP', () => {
+    it('emails a code and does not create the account yet', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.emailSignupOtp.upsert.mockResolvedValue({});
+
+      const result = await service.register({
+        email: 'new@reworth.ng',
+        password: 'password123',
+        displayName: 'Ada',
+      });
+
+      expect(result).toEqual({
+        email: 'new@reworth.ng',
+        expiresInSeconds: 600,
+      });
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      const sent = email.send.mock.calls[0][0] as { text: string; to: string };
+      expect(sent.to).toBe('new@reworth.ng');
+      expect(sent.text).toMatch(/\b\d{6}\b/);
+    });
+
+    it('rejects a wrong code and counts the attempt', async () => {
+      prisma.emailSignupOtp.findUnique.mockResolvedValue({
+        email: 'new@reworth.ng',
+        codeHash: hashWithPepper('111111', 'dev-otp-pepper'),
+        passwordHash: 'stored',
+        displayName: 'Ada',
+        attempts: 0,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+
+      await expect(
+        service.verifyEmailOtp({ email: 'new@reworth.ng', code: '222222' }),
+      ).rejects.toThrow(/invalid or expired code/i);
+      expect(prisma.emailSignupOtp.update).toHaveBeenCalled();
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it('creates the account and session when the code matches', async () => {
+      prisma.emailSignupOtp.findUnique.mockResolvedValue({
+        email: 'new@reworth.ng',
+        codeHash: hashWithPepper('111111', 'dev-otp-pepper'),
+        passwordHash: 'stored-hash',
+        displayName: 'Ada',
+        attempts: 0,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
       prisma.user.findUnique.mockResolvedValue(null);
       prisma.user.create.mockResolvedValue({
         id: 'u-reg',
@@ -175,20 +226,23 @@ describe('AuthService', () => {
       prisma.device.create.mockResolvedValue({ id: 'd1' });
       prisma.refreshToken.create.mockResolvedValue({ id: 'rt1' });
       prisma.userRole.findMany.mockResolvedValue([]);
-      (prisma as { adminTotp?: { findUnique: jest.Mock } }).adminTotp = {
-        findUnique: jest.fn().mockResolvedValue(null),
-      };
 
-      const result = await service.register({
+      const result = await service.verifyEmailOtp({
         email: 'new@reworth.ng',
-        password: 'password123',
-        displayName: 'Ada',
+        code: '111111',
         device: { name: 'Phone', platform: DevicePlatform.IOS },
       });
 
       expect(result.userId).toBe('u-reg');
       expect(result.accessToken).toBe('access.jwt');
-      expect(prisma.user.create).toHaveBeenCalled();
+      expect(prisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ passwordHash: 'stored-hash' }),
+        }),
+      );
+      expect(email.send).toHaveBeenCalledWith(
+        expect.objectContaining({ subject: 'Welcome to ReWorth' }),
+      );
     });
   });
 });

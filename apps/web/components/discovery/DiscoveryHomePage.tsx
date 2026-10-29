@@ -43,6 +43,15 @@ function sellerCatalogue(rails: HomeRail[]): HomeRail[] {
   return rails.filter((rail) => rail.id !== "my_listed_products");
 }
 
+const LAGOS_HOTSPOTS = areaChoices("lagos", FALLBACK_AREAS.lagos ?? []);
+
+function widerRadius(current: DiscoveryLocation["radiusKm"]) {
+  const order = RADIUS_OPTIONS.map((option) => option.value);
+  const index = order.indexOf(current);
+  if (index < 0 || index >= order.length - 1) return order[order.length - 1];
+  return order[index + 1];
+}
+
 export function DiscoveryHomePage() {
   const router = useRouter();
 
@@ -62,6 +71,7 @@ export function DiscoveryHomePage() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryNode | null>(
     null,
   );
+  const [swapOnly, setSwapOnly] = useState(false);
   const [rails, setRails] = useState<HomeRail[]>([]);
   const [favourites, setFavourites] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{
@@ -284,93 +294,133 @@ export function DiscoveryHomePage() {
     router.push(`/search?${params.toString()}`);
   }
 
-  return (
-    <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-[42vh]"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 50% at 70% 0%, rgba(14,159,110,0.16), transparent 55%), radial-gradient(ellipse 40% 30% at 10% 20%, rgba(201,162,39,0.1), transparent 50%), linear-gradient(180deg, #F3F0EA 0%, var(--rw-bg) 100%)",
-        }}
-      />
+  const filtering = Boolean(categoryFilter) || swapOnly;
+  const orderedRails = [...rails]
+    .filter((rail) => !filtering || rail.id !== "moving_sales")
+    .map((rail) => ({
+      ...rail,
+      items: rail.items.filter((item) => {
+        if (swapOnly && item.sellingMode !== "SWAP") return false;
+        if (categoryFilter && !listingInCategory(item, categoryFilter)) {
+          return false;
+        }
+        return true;
+      }),
+    }))
+    .filter((rail) => {
+      if (!filtering) return true;
+      if (rail.id === "moving_sales") {
+        return (rail.movingSales?.length ?? 0) > 0 || rail.items.length > 0;
+      }
+      return rail.items.length > 0;
+    })
+    .sort((a, b) => {
+      const rank = (id: string) =>
+        id === "just_listed" ? 0 : id === "price_drops" ? 1 : 2;
+      return rank(a.id) - rank(b.id);
+    });
+  const swapCount = new Set(
+    rails.flatMap((rail) =>
+      rail.items
+        .filter((item) => item.sellingMode === "SWAP")
+        .map((item) => item.id),
+    ),
+  ).size;
+  const nextRadius = widerRadius(loc.radiusKm);
+  const nextRadiusLabel =
+    RADIUS_OPTIONS.find((option) => option.value === nextRadius)?.label ??
+    "All Lagos";
+  const alertParams = new URLSearchParams();
+  if (loc.community) alertParams.set("community", loc.community);
+  if (loc.city) alertParams.set("city", loc.city);
+  if (loc.radiusKm !== "all") alertParams.set("radiusKm", String(loc.radiusKm));
+  const alertHref = alertParams.toString()
+    ? `/search?${alertParams.toString()}`
+    : "/search";
+  const proximityTitle =
+    loc.radiusKm === 2
+      ? "Looking near your immediate street?"
+      : loc.radiusKm === "all"
+        ? "Looking across Lagos?"
+        : `Looking within ${loc.radiusKm} km?`;
 
-      <header className="sticky top-14 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)]/90 backdrop-blur-md lg:top-[var(--rw-nav-offset,0px)]">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
+  return (
+    <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
+      <div className="mx-auto max-w-6xl px-4 pb-16 pt-4 sm:px-6">
+        <section className="pt-2">
+          <p className="text-[11px] font-semibold tracking-[0.16em] text-[var(--rw-ink-muted)]">
+            CIRCULAR MARKETPLACE · LAGOS CHAPTER
+          </p>
+          <h1 className="mt-3 max-w-[14ch] text-4xl font-semibold tracking-tight sm:text-5xl">
+            Find something worth keeping.
+          </h1>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--rw-ink-muted)] sm:text-base">
+            Lagos, your unused things are worth something. Swap gadgets, refresh
+            your wardrobe, or give treasures a second life without waste.
+          </p>
           <form
             onSubmit={submitSearch}
-            className="flex min-w-0 flex-1 items-center gap-2"
             role="search"
+            className="mt-6 flex flex-wrap items-center gap-2 rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 shadow-[0_8px_24px_rgba(23,42,58,0.05)] sm:flex-nowrap sm:px-4"
           >
             <label htmlFor="home-search" className="sr-only">
               Search listings
             </label>
+            <svg
+              viewBox="0 0 24 24"
+              className="hidden h-4 w-4 shrink-0 text-[var(--rw-ink-muted)] sm:block"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              aria-hidden
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.5-3.5" />
+            </svg>
             <input
               id="home-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search items…"
-              className="min-w-0 flex-1 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+              placeholder="Search items, brands, vintage tech, or office desk Ikeja"
+              className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-sm focus-visible:outline-none"
             />
-            <label className="hidden items-center gap-1 text-xs text-[var(--rw-ink-muted)] sm:flex">
+            <label className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-[var(--rw-ink-muted)]">
               <input
                 type="checkbox"
                 checked={useNl}
                 onChange={(e) => setUseNl(e.target.checked)}
                 className="accent-[var(--rw-accent)]"
               />
-              NL
+              NL search
             </label>
             <Button type="submit" variant="primary" size="sm">
-              Search
+              Explore
             </Button>
           </form>
-        </div>
-      </header>
-
-      <div className="relative z-10 mx-auto max-w-6xl px-4 pb-16 pt-8 sm:px-6">
-        <section className="rw-fade-up">
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Find something worth keeping.
-          </h1>
-          <p className="mt-2 max-w-xl text-[var(--rw-ink-muted)]">
-            Lagos, your unused things are worth something.
-          </p>
           <nav
             aria-label="AI & platform tools"
-            className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm font-medium"
+            className="mt-4 flex flex-wrap gap-2"
           >
-            <Link
-              href="/ask"
-              className="text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Ask ReWorth
-            </Link>
-            <Link
-              href="/room-scan"
-              className="text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Room scan
-            </Link>
-            <Link
-              href="/worth"
-              className="text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              What&apos;s it worth
-            </Link>
-            <Link
-              href="/consign"
-              className="text-[var(--rw-accent)] underline-offset-2 hover:underline"
-            >
-              Consign
-            </Link>
+            {[
+              { href: "/ask", label: "Ask ReWorth (AI)" },
+              { href: "/room-scan", label: "Room scan (AR camera)" },
+              { href: "/worth", label: "What's it worth?" },
+              { href: "/consign", label: "Consign / list item" },
+            ].map((tool) => (
+              <Link
+                key={tool.href}
+                href={tool.href}
+                className="rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+              >
+                {tool.label}
+              </Link>
+            ))}
           </nav>
         </section>
 
-        <section
-          aria-label="Location"
-          className="mt-6 flex flex-wrap items-start gap-2"
-        >
+        <section aria-label="Location" className="mt-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start gap-2">
           <div className="relative">
             <button
               type="button"
@@ -484,6 +534,9 @@ export function DiscoveryHomePage() {
             ) : null}
           </div>
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Radius">
+            <span className="self-center text-xs font-medium text-[var(--rw-ink-muted)]">
+              Radius
+            </span>
             {RADIUS_OPTIONS.map((opt) => (
               <Chip
                 key={String(opt.value)}
@@ -494,41 +547,168 @@ export function DiscoveryHomePage() {
               </Chip>
             ))}
           </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <span className="mr-auto text-xs font-medium text-[var(--rw-ink-muted)] sm:mr-0">
+              Hotspots
+            </span>
+            {LAGOS_HOTSPOTS.map((area) => (
+              <button
+                key={area.value}
+                type="button"
+                aria-pressed={loc.community === area.value}
+                onClick={() =>
+                  updateLoc({
+                    ...loc,
+                    city: "Lagos",
+                    community: loc.community === area.value ? "" : area.value,
+                  })
+                }
+                className={[
+                  "rounded-full px-2.5 py-1 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
+                  loc.community === area.value
+                    ? "bg-[var(--rw-ink)] text-white"
+                    : "text-[var(--rw-ink-muted)] hover:text-[var(--rw-ink)]",
+                ].join(" ")}
+              >
+                {area.label}
+              </button>
+            ))}
+          </div>
+          </div>
+        </section>
+
+        <section
+          aria-label="Proximity"
+          className="mt-5 grid gap-3 lg:grid-cols-[1.15fr_1fr]"
+        >
+          <div className="relative min-h-48 overflow-hidden rounded-3xl border border-[var(--rw-border)] bg-[#e4efe4]">
+            <svg
+              viewBox="0 0 640 280"
+              className="absolute inset-0 h-full w-full"
+              aria-hidden
+            >
+              <path
+                d="M40 200c80-90 140-40 210-70s90-80 170-60 120 40 180 10"
+                fill="none"
+                stroke="#7aa37a"
+                strokeWidth="28"
+                strokeLinecap="round"
+                opacity="0.45"
+              />
+              <path
+                d="M20 90c120 20 160 80 250 70s140-60 230-20 90 40 120 20"
+                fill="none"
+                stroke="#c5d7c2"
+                strokeWidth="36"
+                strokeLinecap="round"
+              />
+              <circle cx="210" cy="130" r="7" fill="#172a3a" />
+              <circle cx="340" cy="108" r="7" fill="#d96a32" />
+              <circle cx="430" cy="150" r="6" fill="#172a3a" />
+            </svg>
+            <p className="absolute bottom-3 left-3 rounded-full bg-[var(--rw-bg-elevated)]/95 px-3 py-1 text-xs font-semibold shadow-sm">
+              Live now: {loc.community || loc.city || "Lagos Island & Mainland"}
+            </p>
+          </div>
+          <div className="flex flex-col justify-center rounded-3xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-5 sm:p-6">
+            <p className="text-[11px] font-semibold tracking-[0.14em] text-[var(--rw-accent)]">
+              PROXIMITY
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+              {proximityTitle}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--rw-ink-muted)]">
+              {loc.community
+                ? `Showing listings around ${loc.community}. Widen the radius if this street is quiet.`
+                : "Pick a hotspot or widen the radius to see more of Lagos. Home stays city-wide until you do."}
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-4">
+              {nextRadius !== loc.radiusKm ? (
+                <button
+                  type="button"
+                  onClick={() => updateLoc({ ...loc, radiusKm: nextRadius })}
+                  className="text-sm font-semibold text-[var(--rw-accent)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                >
+                  Expand to {nextRadiusLabel}
+                </button>
+              ) : null}
+              <Link
+                href={alertHref}
+                className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
+              >
+                Set alert for my neighbourhood
+              </Link>
+            </div>
+          </div>
         </section>
 
         <section aria-label="Categories" className="mt-6">
           <div className="flex gap-2 overflow-x-auto pb-1">
+            <button
+              type="button"
+              aria-pressed={!categoryFilter && !swapOnly}
+              onClick={() => {
+                setCategoryFilter(null);
+                setSwapOnly(false);
+              }}
+              className={[
+                "shrink-0 rounded-full px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
+                !categoryFilter && !swapOnly
+                  ? "bg-[var(--rw-bg-elevated)] text-[var(--rw-ink)] shadow-sm"
+                  : "text-[var(--rw-ink-muted)]",
+              ].join(" ")}
+            >
+              All discoveries
+            </button>
             {categories.length === 0 && loading
-              ? Array.from({ length: 6 }).map((_, i) => (
+              ? Array.from({ length: 4 }).map((_, i) => (
                   <Skeleton
                     key={i}
                     className="h-9 w-24 shrink-0 rounded-full"
                     label="Loading category"
                   />
                 ))
-              : categories.map((cat) => (
-                  <Chip
-                    key={cat.id}
-                    selected={categoryFilter?.id === cat.id}
-                    onClick={() =>
-                      setCategoryFilter((current) =>
-                        current?.id === cat.id ? null : cat,
-                      )
-                    }
-                  >
-                    {cat.name}
-                  </Chip>
-                ))}
-            {categoryFilter ? (
-              <button
-                type="button"
-                aria-label="Clear category filter"
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--rw-border)] text-lg font-semibold"
-                onClick={() => setCategoryFilter(null)}
-              >
-                ×
-              </button>
-            ) : null}
+              : categories.map((cat) => {
+                  const selected = categoryFilter?.id === cat.id;
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => {
+                        setSwapOnly(false);
+                        setCategoryFilter((current) =>
+                          current?.id === cat.id ? null : cat,
+                        );
+                      }}
+                      className={[
+                        "shrink-0 rounded-full px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
+                        selected
+                          ? "bg-[var(--rw-bg-elevated)] text-[var(--rw-ink)] shadow-sm"
+                          : "text-[var(--rw-ink-muted)]",
+                      ].join(" ")}
+                    >
+                      {cat.name}
+                    </button>
+                  );
+                })}
+            <button
+              type="button"
+              aria-pressed={swapOnly}
+              onClick={() => {
+                setCategoryFilter(null);
+                setSwapOnly((current) => !current);
+              }}
+              className={[
+                "shrink-0 rounded-full px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
+                swapOnly
+                  ? "bg-[var(--rw-bg-elevated)] text-[var(--rw-ink)] shadow-sm"
+                  : "text-[var(--rw-ink-muted)]",
+              ].join(" ")}
+            >
+              Swap only{swapCount ? ` (${swapCount})` : ""}
+            </button>
           </div>
         </section>
 
@@ -545,15 +725,15 @@ export function DiscoveryHomePage() {
             />
           </div>
         ) : loading ? (
-          <div className="mt-10 space-y-10">
-            {Array.from({ length: 3 }).map((_, i) => (
+          <div className="mt-8 space-y-8">
+            {Array.from({ length: 2 }).map((_, i) => (
               <div key={i}>
                 <Skeleton className="mb-4 h-6 w-40" label="Loading rail" />
-                <div className="flex gap-3 overflow-hidden">
-                  {Array.from({ length: 4 }).map((__, j) => (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                  {Array.from({ length: 5 }).map((__, j) => (
                     <Skeleton
                       key={j}
-                      className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
+                      className="h-64 rounded-2xl"
                       label="Loading card"
                     />
                   ))}
@@ -562,19 +742,8 @@ export function DiscoveryHomePage() {
             ))}
           </div>
         ) : (
-          <div className="mt-10 space-y-12">
-            {(categoryFilter
-              ? rails
-                  .filter((rail) => rail.id !== "moving_sales")
-                  .map((rail) => ({
-                    ...rail,
-                    items: rail.items.filter((item) =>
-                      listingInCategory(item, categoryFilter),
-                    ),
-                  }))
-                  .filter((rail) => rail.items.length > 0)
-              : rails
-            ).map((rail) => {
+          <div className="mt-8 space-y-10">
+            {orderedRails.map((rail) => {
               const isMovingSales = rail.id === "moving_sales";
               const movingSales = rail.movingSales ?? [];
               const hasMoving = isMovingSales && movingSales.length > 0;
@@ -583,14 +752,44 @@ export function DiscoveryHomePage() {
                 ? !hasMoving && !hasListings
                 : !hasListings;
 
+              const priceDrop = rail.id === "price_drops";
               return (
-                <section key={rail.id} aria-labelledby={`rail-${rail.id}`}>
-                  <h2
-                    id={`rail-${rail.id}`}
-                    className="text-xl font-semibold tracking-tight"
-                  >
-                    {rail.title}
-                  </h2>
+                <section
+                  key={rail.id}
+                  aria-labelledby={`rail-${rail.id}`}
+                  className={
+                    priceDrop
+                      ? "rounded-3xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 sm:p-5"
+                      : undefined
+                  }
+                >
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      {priceDrop ? (
+                        <p className="text-[11px] font-semibold tracking-[0.14em] text-[var(--rw-accent)]">
+                          RECENT REDUCTIONS
+                        </p>
+                      ) : rail.id === "just_listed" ? (
+                        <p className="text-[11px] font-semibold tracking-[0.14em] text-[var(--rw-ink-muted)]">
+                          REAL-TIME FEED
+                        </p>
+                      ) : null}
+                      <h2
+                        id={`rail-${rail.id}`}
+                        className="text-xl font-semibold tracking-tight"
+                      >
+                        {rail.title}
+                      </h2>
+                    </div>
+                    {rail.id === "just_listed" ? (
+                      <Link
+                        href="/search?sort=newest"
+                        className="shrink-0 text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
+                      >
+                        View all shop drops
+                      </Link>
+                    ) : null}
+                  </div>
                   {empty ? (
                     <p className="mt-3 text-sm text-[var(--rw-ink-muted)]">
                       {rail.emptyMessage ?? "Nothing here yet."}
@@ -598,9 +797,9 @@ export function DiscoveryHomePage() {
                   ) : (
                     <>
                       {hasMoving ? (
-                        <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
+                        <ul className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                           {movingSales.map((ms) => (
-                            <li key={ms.id} className="w-52 shrink-0 sm:w-60">
+                            <li key={ms.id} className="min-w-0">
                               <Link
                                 href={`/moving-sales/${ms.id}`}
                                 className="block rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
@@ -627,11 +826,11 @@ export function DiscoveryHomePage() {
                         </ul>
                       ) : null}
                       {hasListings ? (
-                        <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
+                        <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                           {rail.items.map((item) => {
                             const own = meId != null && item.seller.id === meId;
                             return (
-                              <li key={item.id} className="w-[7.5rem] shrink-0">
+                              <li key={item.id} className="min-w-0">
                                 <DiscoveryListingCard
                                   listing={item}
                                   favourited={favourites.has(item.id)}
@@ -666,22 +865,21 @@ export function DiscoveryHomePage() {
                   </Link>
                 }
               />
-            ) : categoryFilter &&
-              rails
-                .filter((rail) => rail.id !== "moving_sales")
-                .every(
-                  (rail) =>
-                    rail.items.filter((item) =>
-                      listingInCategory(item, categoryFilter),
-                    ).length === 0,
-                ) ? (
+            ) : filtering && orderedRails.every((rail) => rail.items.length === 0) ? (
               <EmptyState
-                title={`No ${categoryFilter.name} items`}
-                description="Nothing in this category is on the homepage right now."
+                title={
+                  categoryFilter
+                    ? `No ${categoryFilter.name} items`
+                    : "No swap items"
+                }
+                description="Nothing in this filter is on the homepage right now."
                 action={
                   <Button
                     variant="secondary"
-                    onClick={() => setCategoryFilter(null)}
+                    onClick={() => {
+                      setCategoryFilter(null);
+                      setSwapOnly(false);
+                    }}
                   >
                     Show all items
                   </Button>
@@ -690,6 +888,72 @@ export function DiscoveryHomePage() {
             ) : null}
           </div>
         )}
+
+        <section
+          id="how"
+          aria-label="How ReWorth works here"
+          className="mt-12 grid scroll-mt-28 gap-3 md:grid-cols-3"
+        >
+          <article
+            id="impact"
+            className="scroll-mt-28 rounded-3xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-5"
+          >
+            <h2 className="font-semibold">Lagos safe swap hubs</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--rw-ink-muted)]">
+              Meet at known neighbourhoods — Lekki, Ikoyi, and VI — and keep the
+              handoff in the chat.
+            </p>
+          </article>
+          <article className="rounded-3xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-5">
+            <h2 className="font-semibold">Zero cash swaps</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--rw-ink-muted)]">
+              Trade item for item. No bank transfer and no hidden fee on a pure
+              swap.
+            </p>
+          </article>
+          <article className="rounded-3xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-5">
+            <h2 className="font-semibold">Carbon tracked</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--rw-ink-muted)]">
+              A swap keeps the thing in use instead of sending it to landfill.
+            </p>
+          </article>
+        </section>
+
+        <footer className="mt-10 rounded-3xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-5 py-6">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <p className="font-semibold">ReWorth</p>
+              <p className="mt-2 text-sm leading-6 text-[var(--rw-ink-muted)]">
+                Lagos, your unused things are worth something.
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Discover</p>
+              <ul className="mt-2 space-y-1 text-sm text-[var(--rw-ink-muted)]">
+                <li><Link href="/search" className="hover:text-[var(--rw-ink)]">Current items</Link></li>
+                <li><Link href="/communities" className="hover:text-[var(--rw-ink)]">Communities</Link></li>
+                <li><Link href="/wishlist" className="hover:text-[var(--rw-ink)]">Wishlist</Link></li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Movement</p>
+              <ul className="mt-2 space-y-1 text-sm text-[var(--rw-ink-muted)]">
+                <li><Link href="/ask" className="hover:text-[var(--rw-ink)]">Ask ReWorth</Link></li>
+                <li><Link href="/worth" className="hover:text-[var(--rw-ink)]">What&apos;s it worth</Link></li>
+                <li><Link href="/consign" className="hover:text-[var(--rw-ink)]">Consign</Link></li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Trust & support</p>
+              <ul className="mt-2 space-y-1 text-sm text-[var(--rw-ink-muted)]">
+                <li><Link href="/settings/privacy" className="hover:text-[var(--rw-ink)]">Privacy</Link></li>
+                <li><Link href="/account" className="hover:text-[var(--rw-ink)]">Account</Link></li>
+                <li><Link href="/orders" className="hover:text-[var(--rw-ink)]">Orders</Link></li>
+              </ul>
+            </div>
+          </div>
+          <p className="mt-6 text-xs text-[var(--rw-ink-muted)]">© 2026 ReWorth</p>
+        </footer>
       </div>
       {toast ? (
         <div className="fixed bottom-6 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2 lg:left-[calc(50%+var(--rw-sidebar-offset,0px))]">

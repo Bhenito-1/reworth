@@ -106,7 +106,7 @@ export default function StorefrontPage() {
           ) : (
             <ul className="mt-4 flex flex-wrap gap-3">
               {listings.map((item) => (
-                <li key={item.id} className="w-[7.5rem] shrink-0">
+                <li key={item.id} className="w-44 shrink-0">
                   <DiscoveryListingCard listing={item} />
                 </li>
               ))}

@@ -671,6 +671,19 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+/// Pending email signup. The user row is created only after the code matches.
+model EmailSignupOtp {
+  email        String   @id
+  codeHash     String
+  passwordHash String
+  displayName  String
+  attempts     Int      @default(0)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@map("email_signup_otps")
+}
+
 model AuditLog {
   id          String   @id @default(uuid()) @db.Uuid
   actorUserId String?  @db.Uuid

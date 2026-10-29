@@ -1107,7 +1107,7 @@ export default function ListingPdpPage() {
             </h2>
             <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
               {similarInCategory.map((item) => (
-                <li key={item.id} className="w-[7.5rem] shrink-0">
+                <li key={item.id} className="w-44 shrink-0">
                   <DiscoveryListingCard listing={item} />
                 </li>
               ))}

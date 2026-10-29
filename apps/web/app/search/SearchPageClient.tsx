@@ -630,7 +630,7 @@ export default function SearchPageClient() {
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
+                  className="h-52 w-44 shrink-0 rounded-[var(--rw-radius-lg)]"
                   label="Loading result"
                 />
               ))}
@@ -673,7 +673,7 @@ export default function SearchPageClient() {
                 {result.items.map((item) => {
                   const own = meId != null && item.seller.id === meId;
                   return (
-                    <li key={item.id} className="w-[7.5rem] shrink-0">
+                    <li key={item.id} className="w-44 shrink-0">
                       <DiscoveryListingCard
                         listing={item}
                         favourited={favourites.has(item.id)}
