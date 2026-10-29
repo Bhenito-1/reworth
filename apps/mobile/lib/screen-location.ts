@@ -11,7 +11,8 @@ export type ScreenView =
   | "orders"
   | "cart"
   | "updates"
-  | "account";
+  | "account"
+  | "driver";
 
 export type ScreenLocation = {
   view: ScreenView;
@@ -33,6 +34,7 @@ const VIEWS = new Set<string>([
   "cart",
   "updates",
   "account",
+  "driver",
 ]);
 
 function canUseLocation(): boolean {

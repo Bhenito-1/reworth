@@ -415,3 +415,182 @@ describe('PartnerDeliveryProvider', () => {
     ).toBe(true);
   });
 });
+
+describe('driver milestones', () => {
+  function makeDriverService(state: {
+    shipment: any;
+    idem?: Map<string, any>;
+    events?: any[];
+  }) {
+    const events = state.events ?? [];
+    const idem = state.idem ?? new Map();
+    const prisma: any = {
+      idempotencyRecord: {
+        findUnique: jest.fn(async ({ where }: any) => idem.get(where.key) ?? null),
+        upsert: jest.fn(async ({ where, create }: any) => {
+          const row = { key: where.key, ...create };
+          idem.set(where.key, row);
+          return row;
+        }),
+      },
+      deliveryShipment: {
+        findUnique: jest.fn(async () => state.shipment),
+        update: jest.fn(async ({ data }: any) => {
+          Object.assign(state.shipment, data, { updatedAt: new Date() });
+          return state.shipment;
+        }),
+      },
+      deliveryEvent: {
+        create: jest.fn(async ({ data }: any) => {
+          const row = { id: `ev-${events.length + 1}`, ...data };
+          events.push(row);
+          return row;
+        }),
+      },
+      order: {
+        findUniqueOrThrow: jest.fn(async () => ({
+          id: state.shipment.orderId,
+          buyerId: 'buyer-1',
+          sellerId: 'seller-1',
+          status: 'FUNDED',
+        })),
+        findUnique: jest.fn(async () => ({
+          id: state.shipment.orderId,
+          buyerId: 'buyer-1',
+          sellerId: 'seller-1',
+          status: 'FUNDED',
+        })),
+        update: jest.fn(async ({ data }: any) => data),
+      },
+      orderEvent: { create: jest.fn(async () => ({})) },
+      supportTicket: { create: jest.fn(async ({ data }: any) => ({ id: 't1', ...data })) },
+      $transaction: jest.fn(async (fn: any) =>
+        fn({
+          deliveryShipment: {
+            update: async ({ data }: any) => {
+              Object.assign(state.shipment, data);
+              return state.shipment;
+            },
+          },
+          deliveryEvent: {
+            create: async ({ data }: any) => {
+              const row = { id: `ev-${events.length + 1}`, ...data };
+              events.push(row);
+              return row;
+            },
+          },
+          order: {
+            update: async ({ data }: any) => data,
+          },
+          orderEvent: {
+            create: async () => ({}),
+          },
+        }),
+      ),
+    };
+    const notifications = {
+      notify: jest.fn(async () => ({ created: [], skipped: [] })),
+    } as unknown as NotificationsService;
+    const provider = new MockDeliveryProvider();
+    const svc = new DeliveryService(prisma, notifications, provider);
+    return { svc, prisma, events, idem, notifications };
+  }
+
+  it('rejects non-assigned driver', async () => {
+    const { svc } = makeDriverService({
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'ASSIGNED',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+      },
+    });
+    await expect(
+      svc.submitDriverMilestone(
+        'driver-B',
+        'order-1',
+        { status: 'PICKED_UP' },
+        'idem-1',
+      ),
+    ).rejects.toThrow(/Not assigned/i);
+  });
+
+  it('advances status and is idempotent on replay', async () => {
+    const { svc, notifications } = makeDriverService({
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'ASSIGNED',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+        etaFrom: null,
+        etaTo: null,
+      },
+    });
+    const first = await svc.submitDriverMilestone(
+      'driver-A',
+      'order-1',
+      { status: 'PICKED_UP' },
+      'idem-pick',
+    );
+    expect(first).toMatchObject({ accepted: true, status: 'PICKED_UP' });
+    expect(notifications.notify).toHaveBeenCalled();
+
+    const replay = await svc.submitDriverMilestone(
+      'driver-A',
+      'order-1',
+      { status: 'PICKED_UP' },
+      'idem-pick',
+    );
+    expect(replay).toMatchObject({ accepted: true, status: 'PICKED_UP' });
+  });
+
+  it('records stale delayed updates without regressing', async () => {
+    const { svc, events } = makeDriverService({
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'IN_TRANSIT',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+      },
+    });
+    const res = await svc.submitDriverMilestone(
+      'driver-A',
+      'order-1',
+      {
+        status: 'PICKED_UP',
+        occurredAt: new Date(Date.now() - 60_000).toISOString(),
+        note: 'offline queue',
+      },
+      'idem-late',
+    );
+    expect(res).toMatchObject({
+      accepted: false,
+      reason: 'stale_or_delayed',
+      currentStatus: 'IN_TRANSIT',
+    });
+    expect(events[0].payload.reason).toBe('stale_or_delayed');
+  });
+
+  it('requires failureReason for FAILED', async () => {
+    const { svc } = makeDriverService({
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'OUT_FOR_DELIVERY',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+      },
+    });
+    await expect(
+      svc.submitDriverMilestone(
+        'driver-A',
+        'order-1',
+        { status: 'FAILED' },
+        'idem-fail',
+      ),
+    ).rejects.toThrow(/failureReason/i);
+  });
+});

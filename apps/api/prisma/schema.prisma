@@ -449,6 +449,8 @@ model User {
   riskLevel       RiskLevel  @default(LOW)
   riskScore       Int        @default(0)
   enhancedVerificationRequired Boolean @default(false)
+  /** Platform rider — can submit delivery milestones for assigned shipments. */
+  isDeliveryDriver Boolean   @default(false)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   deletedAt       DateTime?
@@ -544,6 +546,7 @@ model User {
   estatePartners       EstatePartner[]
   circularHandoffsAsSeller CircularHandoff[] @relation("CircularHandoffSeller")
   sellerPayoutAccount  SellerPayoutAccount?
+  assignedShipments    DeliveryShipment[]    @relation("ShipmentDriver")
 
   @@map("users")
 }
@@ -1516,33 +1519,41 @@ model MeetPoint {
 }
 
 model DeliveryShipment {
-  id            String                 @id @default(uuid()) @db.Uuid
-  orderId       String                 @unique @db.Uuid
-  provider      String
-  providerRef   String?
-  quoteKobo     Int
-  distanceKm    Float?
-  status        DeliveryShipmentStatus @default(QUOTED)
-  etaFrom       DateTime?
-  etaTo         DateTime?
-  failureReason String?
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
+  id               String                 @id @default(uuid()) @db.Uuid
+  orderId          String                 @unique @db.Uuid
+  provider         String
+  providerRef      String?
+  quoteKobo        Int
+  distanceKm       Float?
+  status           DeliveryShipmentStatus @default(QUOTED)
+  etaFrom          DateTime?
+  etaTo            DateTime?
+  failureReason    String?
+  assignedDriverId String?                @db.Uuid
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
 
-  order  Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  events DeliveryEvent[]
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  assignedDriver User?           @relation("ShipmentDriver", fields: [assignedDriverId], references: [id], onDelete: SetNull)
+  events         DeliveryEvent[]
 
   @@index([providerRef])
   @@index([status])
+  @@index([assignedDriverId])
   @@map("delivery_shipments")
 }
 
 model DeliveryEvent {
-  id         String                 @id @default(uuid()) @db.Uuid
-  shipmentId String                 @db.Uuid
-  status     DeliveryShipmentStatus
-  payload    Json?
-  createdAt  DateTime               @default(now())
+  id             String                 @id @default(uuid()) @db.Uuid
+  shipmentId     String                 @db.Uuid
+  status         DeliveryShipmentStatus
+  payload        Json?
+  /** DRIVER | WEBHOOK | SYSTEM — who submitted the milestone. */
+  source         String?
+  /** Client-reported event time (delayed / offline uploads). */
+  occurredAt     DateTime?
+  idempotencyKey String?                @unique
+  createdAt      DateTime               @default(now())
 
   shipment DeliveryShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
 

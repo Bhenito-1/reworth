@@ -117,6 +117,9 @@ DELIVERY_WEBHOOK_SECRET=…              # HMAC-SHA256 → header x-reworth-deli
 | Webhook with valid signature → status advance | ☐ |
 | Bad signature → 401 | ☐ |
 | Rollback: `DELIVERY_PROVIDER=mock` | ☐ |
+| Driver: `isDeliveryDriver=true` + assign → `POST /driver/shipments/:orderId/milestones` with `Idempotency-Key` | ☐ |
+| Driver stale/duplicate: replay key returns same body; late lower status → `accepted:false` | ☐ |
+| `pnpm --filter @reworth/api demo:delivery` → DELIVERED via driver path | ☐ |
 
 ## 5. Suggested cutover order
 

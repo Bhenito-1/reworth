@@ -83,6 +83,7 @@ Companion column notes web’s intended role when mobile is primary.
 | Area map (you + community pin) | **partial** | **missing** | ADR-011 Phase B: `LocateMapSheet` after locate |
 | Meetup pin (chat) | **full** | **full** | ADR-011 Phase C: `POST …/meetup-pin`; mobile map picker + web GPS/coords modal; live track deferred |
 | Delivery journey (checkout → partner rail) | **full** | **full** | D1–D5 UX + `PartnerDeliveryProvider` dry-run/live (`docs/SPRINT_DELIVERY_JOURNEY.md`); live courier keys via `docs/STAGING_RAILS.md` §4 |
+| Driver milestones (assigned runs) | **full** | **full** | D6 — mobile Driver runs + web `/driver`; `POST /driver/shipments/:orderId/milestones` + Idempotency-Key |
 
 ---
 

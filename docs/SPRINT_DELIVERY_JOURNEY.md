@@ -18,6 +18,7 @@ Ship the **customer story** on top of existing logistics plumbing: clear checkou
 | **D3** | Tracking sheet | Mobile → web | Corridor map + help (follow-up sprint if timeboxed) |
 | **D4** | Exceptions | Both | No-show / dispute entry copy (follow-up) |
 | **D5** | Partner rail | API | `PartnerDeliveryProvider` + webhook HMAC + staging rails §4 |
+| **D6** | Driver milestones | Mobile → web + API | Driver auth, assigned-only updates, idempotent / stale / FAILED handling |
 
 ## This sprint (in scope)
 
@@ -29,13 +30,15 @@ Ship the **customer story** on top of existing logistics plumbing: clear checkou
 - [x] **D3** mobile `DeliveryTrackingSheet` (corridor map + help)  
 - [x] **D3** web `DeliveryTrackingPanel` + dispute deep link  
 - [x] **D4** exception banner (failed / unreachable / seller delay / item check) + expanded dispute entry  
-- [x] **D5** `PartnerDeliveryProvider` (dry-run/live) + webhook signature + `STAGING_RAILS` §4
+- [x] **D5** `PartnerDeliveryProvider` (dry-run/live) + webhook signature + `STAGING_RAILS` §4  
+- [x] **D6** Driver milestones (`POST /driver/shipments/:orderId/milestones`, mobile Driver runs, web `/driver`)
 
 ## Out of scope / deferred
 
 - Signing a specific courier vendor (GIG/Kwik/Fez) — adapter is vendor-agnostic HTTP  
 - Live rider GPS (ADR-011 deferred)  
 - Multi-cart split shipments  
+- Dedicated rider native app (MVP uses flagged consumer account + Driver runs)  
 
 ## PO acceptance (sprint)
 

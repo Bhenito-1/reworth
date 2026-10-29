@@ -15,12 +15,19 @@ import {
   CurrentUser,
   type AuthUser,
 } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { AdminOnlyGuard } from '../common/guards/admin-only.guard';
+import { OPS } from '../admin/admin-roles';
 import { PartnerDeliveryProvider } from '../providers/partner-delivery.provider';
+import { DeliveryDriverGuard } from './driver.guard';
 import { DeliveryService } from './delivery.service';
 import {
+  AssignDriverDto,
   DeliveryQuoteQueryDto,
   DeliveryWebhookDto,
+  DriverMilestoneDto,
   MeetPointFulfilmentDto,
   MeetPointsQueryDto,
 } from './dto/delivery.dto';
@@ -66,6 +73,39 @@ export class OrderDeliveryController {
   @Get(':id/shipment')
   shipment(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.delivery.getShipment(id, user.id);
+  }
+
+  @Post(':id/assign-driver')
+  @UseGuards(RolesGuard, AdminOnlyGuard)
+  @Roles(...OPS)
+  assignDriver(@Param('id') id: string, @Body() dto: AssignDriverDto) {
+    return this.delivery.assignDriver(id, dto.driverUserId);
+  }
+}
+
+@Controller('driver')
+@UseGuards(JwtAuthGuard, DeliveryDriverGuard)
+export class DriverDeliveryController {
+  constructor(private readonly delivery: DeliveryService) {}
+
+  @Get('assignments')
+  list(@CurrentUser() user: AuthUser) {
+    return this.delivery.listDriverAssignments(user.id);
+  }
+
+  @Post('shipments/:orderId/milestones')
+  milestone(
+    @CurrentUser() user: AuthUser,
+    @Param('orderId') orderId: string,
+    @Body() dto: DriverMilestoneDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+  ) {
+    return this.delivery.submitDriverMilestone(
+      user.id,
+      orderId,
+      dto,
+      idempotencyKey ?? '',
+    );
   }
 }
 

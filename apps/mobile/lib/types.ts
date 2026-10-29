@@ -110,6 +110,7 @@ export type MeResponse = {
   id: string;
   phone: string | null;
   email: string | null;
+  isDeliveryDriver?: boolean;
   profile: {
     displayName: string;
     preferredCommunity: string;

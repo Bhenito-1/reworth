@@ -23,6 +23,7 @@ import {
   OrderDetailModal,
   OrdersPanel,
 } from "./OrdersScreens";
+import { DriverRunsPanel } from "./components/DriverRunsPanel";
 import { SellFlow } from "./SellFlow";
 import {
   DiscoveryHome,
@@ -115,7 +116,8 @@ type ProfileSubtab =
   | "saved"
   | "orders"
   | "cart"
-  | "updates";
+  | "updates"
+  | "driver";
 
 const SIDE_NAV: {
   id: string;
@@ -722,6 +724,8 @@ export default function App() {
                 refreshKey={ordersRefresh}
                 onOpenOrder={(id) => setOrderId(id)}
               />
+            ) : profileSubtab === "driver" ? (
+              <DriverRunsPanel onOpenOrder={(id) => setOrderId(id)} />
             ) : profileSubtab === "cart" ? (
               cartSearch ? (
                 <SearchPanel
@@ -767,6 +771,17 @@ export default function App() {
                     ? ` · ${me.profile.preferredCommunity}`
                     : ""}
                 </Text>
+                {me?.isDeliveryDriver ? (
+                  <Pressable
+                    style={styles.primaryBtn}
+                    onPress={() => setProfileSubtab("driver")}
+                    accessibilityRole="button"
+                    accessibilityLabel="Open driver runs"
+                    testID="open-driver-runs"
+                  >
+                    <Text style={styles.primaryBtnText}>Driver runs</Text>
+                  </Pressable>
+                ) : null}
 
                 <Text style={styles.label}>Display name</Text>
                 <TextInput

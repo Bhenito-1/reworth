@@ -123,7 +123,7 @@
 ## Active epic — Delivery journey (2026-10-23)
 
 - Design: `docs/DELIVERY_JOURNEY_DESIGN.md` · Sprint: `docs/SPRINT_DELIVERY_JOURNEY.md`
-- **Sprint complete (D1–D5 code):** checkout · timeline · map/help · exceptions · partner adapter (dry-run default; live keys on staging)
+- **Sprint complete (D1–D6 code):** checkout · timeline · map/help · exceptions · partner adapter · driver milestones (auth + idempotent / stale / FAILED)
 
 ## Resume
 
