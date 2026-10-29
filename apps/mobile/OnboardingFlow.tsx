@@ -26,7 +26,7 @@ import { getRegion, listRegions, type RegionCity } from "./lib/region";
 import { type MeResponse } from "./lib/types";
 import { colors, radius, space, tap, type as typeScale } from "./theme/tokens";
 
-type Step = "welcome" | "email" | "profile";
+type Step = "welcome" | "email" | "otp" | "profile";
 
 type Props = {
   /** `register` = new-user onboarding; `login` = returning users only. */
@@ -47,6 +47,7 @@ export function OnboardingFlow({
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [otp, setOtp] = useState("");
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
@@ -137,16 +138,42 @@ export function OnboardingFlow({
         return;
       }
 
-      const res = await apiFetch<{
-        accessToken: string;
-        refreshToken: string;
-        userId: string;
-      }>("/auth/register", {
+      await apiFetch("/auth/register", {
         method: "POST",
         body: {
           email: em,
           password,
           displayName: displayName.trim() || em.split("@")[0],
+          device: { name: "ReWorth Mobile", platform: "IOS" },
+        },
+      });
+      setOtp("");
+      setStep("otp");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Auth failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitOtp() {
+    setError(null);
+    const code = otp.trim();
+    if (!/^\d{6}$/.test(code)) {
+      setError("Enter the 6-digit code from your email");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await apiFetch<{
+        accessToken: string;
+        refreshToken: string;
+        userId: string;
+      }>("/auth/email-otp/verify", {
+        method: "POST",
+        body: {
+          email: email.trim().toLowerCase(),
+          code,
           device: { name: "ReWorth Mobile", platform: "IOS" },
         },
       });
@@ -160,7 +187,7 @@ export function OnboardingFlow({
       if (pref) setCommunity(pref);
       setStep("profile");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Auth failed");
+      setError(err instanceof ApiError ? err.message : "Could not verify code");
     } finally {
       setLoading(false);
     }
@@ -367,6 +394,52 @@ export function OnboardingFlow({
             onPress={() => {
               if (intent === "login" && onBack) onBack();
               else setStep("welcome");
+            }}
+          >
+            <Text style={styles.link}>Back</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {step === "otp" ? (
+        <View>
+          <Text style={styles.title}>Check your email</Text>
+          <Text style={styles.copy}>
+            Enter the 6-digit code we sent to {email.trim().toLowerCase()}.
+          </Text>
+          <Text style={styles.label}>Sign-up code</Text>
+          <TextInput
+            style={styles.input}
+            value={otp}
+            onChangeText={setOtp}
+            keyboardType="number-pad"
+            autoComplete="one-time-code"
+            maxLength={6}
+            accessibilityLabel="Sign-up code"
+            editable={!loading}
+          />
+          {error ? (
+            <Text style={styles.error} accessibilityRole="alert">
+              {error}
+            </Text>
+          ) : null}
+          <Pressable
+            style={[styles.primaryBtn, loading && styles.btnDisabled]}
+            onPress={() => void submitOtp()}
+            disabled={loading}
+            accessibilityRole="button"
+          >
+            <Text style={styles.primaryBtnText}>
+              {loading ? "…" : "Verify email"}
+            </Text>
+          </Pressable>
+          <Pressable onPress={() => void submitEmail()} disabled={loading}>
+            <Text style={styles.link}>Resend code</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              setStep("email");
+              setError(null);
             }}
           >
             <Text style={styles.link}>Back</Text>

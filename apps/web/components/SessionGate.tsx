@@ -23,8 +23,6 @@ export function SessionGate({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [allowed, setAllowed] = useState(false);
   const [authed, setAuthed] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-
   useEffect(() => {
     let cancelled = false;
     const sync = async () => {
@@ -67,7 +65,6 @@ export function SessionGate({ children }: { children: ReactNode }) {
     const onAuth = () => {
       const signedIn = isAuthed();
       setAuthed(signedIn);
-      if (!signedIn) setSidebarOpen(false);
       void sync();
     };
     void sync();
@@ -135,29 +132,12 @@ export function SessionGate({ children }: { children: ReactNode }) {
         className={
           hideNav
             ? undefined
-            : sidebarOpen
-              ? "pt-14 lg:pt-0 lg:pl-60"
-              : "pt-14"
-        }
-        style={
-          hideNav
-            ? undefined
-            : {
-                ["--rw-nav-offset" as string]: sidebarOpen ? "0px" : "3.5rem",
-                ["--rw-sidebar-offset" as string]: sidebarOpen
-                  ? "7.5rem"
-                  : "0px",
-              }
+            : "pt-14 [--rw-nav-offset:3.5rem] [--rw-sidebar-offset:0px] lg:pt-24 lg:[--rw-nav-offset:6rem]"
         }
       >
         {children}
       </div>
-      {hideNav ? null : (
-        <AppNav
-          desktopOpen={sidebarOpen}
-          onDesktopOpenChange={setSidebarOpen}
-        />
-      )}
+      {hideNav ? null : <AppNav />}
     </>
   );
 }

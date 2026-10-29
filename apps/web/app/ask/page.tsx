@@ -72,7 +72,7 @@ function ToolResultsView({
               aria-label="Search results"
             >
               {listings.slice(0, 6).map((listing) => (
-                <li key={listing.id} className="w-[7.5rem] shrink-0">
+                <li key={listing.id} className="w-44 shrink-0">
                   <DiscoveryListingCard listing={listing} />
                 </li>
               ))}
@@ -98,7 +98,7 @@ function ToolResultsView({
               </p>
               <ul className="mt-3 flex flex-wrap gap-3">
                 {(bundle.listings ?? []).map((listing) => (
-                  <li key={listing.id} className="w-[7.5rem] shrink-0">
+                  <li key={listing.id} className="w-44 shrink-0">
                     <DiscoveryListingCard listing={listing} />
                   </li>
                 ))}

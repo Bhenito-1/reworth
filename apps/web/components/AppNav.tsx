@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../lib/api";
 import { clearTokens, getRefreshToken } from "../lib/auth";
 import {
@@ -63,6 +63,25 @@ const ITEMS: Item[] = [
     icon: "account",
   },
 ];
+
+/** Desktop bar. Home is the ReWorth wordmark. Chats is an icon at the end. */
+const BAR_LINKS: { href: string; label: string; match: (pathname: string) => boolean }[] = [
+  { href: "/search", label: "Explore", match: (p) => p.startsWith("/search") },
+  { href: "/selling", label: "My listings", match: (p) => p.startsWith("/selling") },
+  { href: "/orders", label: "Orders", match: (p) => p.startsWith("/orders") },
+  { href: "/#how", label: "How it works", match: () => false },
+  {
+    href: "/communities",
+    label: "Community",
+    match: (p) => p.startsWith("/communities"),
+  },
+  { href: "/#impact", label: "Sustainability", match: () => false },
+];
+
+/** Sell, wishlist, and cart live under Account on desktop. */
+const ACCOUNT_MENU: Item[] = ["/sell", "/wishlist", "/cart", "/account"].map(
+  (href) => ITEMS.find((entry) => entry.href === href)!,
+);
 
 /** Shopping cart: basket, handle, and wheels. */
 export function CartIcon({ className = "h-5 w-5" }: { className?: string }) {
@@ -189,6 +208,93 @@ function Icon({ name }: { name: Item["icon"] }) {
   return <AccountIcon className={common} />;
 }
 
+function AccountMenu({
+  pathname,
+  onLogout,
+}: {
+  pathname: string;
+  onLogout: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Account"
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex items-center gap-1 rounded-full py-1 pl-1 pr-2 text-[var(--rw-ink)] hover:bg-[var(--rw-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+      >
+        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--rw-beige)] text-[var(--rw-ink)]">
+          <AccountIcon className="h-4 w-4" />
+        </span>
+        <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden>
+          <path d="M5.5 7.5 10 12l4.5-4.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-52 overflow-hidden rounded-2xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] py-1 shadow-[0_16px_40px_rgba(23,42,58,0.12)]"
+        >
+          {ACCOUNT_MENU.map((item) => {
+            const active = item.match(pathname);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                role="menuitem"
+                aria-current={active ? "page" : undefined}
+                onClick={() => setOpen(false)}
+                className={[
+                  "flex items-center gap-2 px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--rw-accent)]",
+                  active
+                    ? "bg-[var(--rw-beige)] text-[var(--rw-ink)]"
+                    : "text-[var(--rw-ink)] hover:bg-[var(--rw-bg)]",
+                ].join(" ")}
+              >
+                <Icon name={item.icon} />
+                {item.label}
+              </Link>
+            );
+          })}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={onLogout}
+            className="flex w-full items-center px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-[var(--rw-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--rw-accent)]"
+          >
+            Log out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function NavLinks({
   pathname,
   onNavigate,
@@ -223,13 +329,7 @@ function NavLinks({
   );
 }
 
-export function AppNav({
-  desktopOpen,
-  onDesktopOpenChange,
-}: {
-  desktopOpen: boolean;
-  onDesktopOpenChange: (open: boolean) => void;
-}) {
+export function AppNav() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const unreadNotifications = useUnreadNotificationCount();
@@ -279,6 +379,29 @@ export function AppNav({
       </div>
       <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col">
         <NavLinks pathname={pathname} onNavigate={opts?.onNavigate} />
+        <div className="flex flex-col gap-1 px-3 pb-4">
+          <a
+            href="/#how"
+            onClick={opts?.onNavigate}
+            className="rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--rw-ink-muted)] hover:bg-[var(--rw-bg)] hover:text-[var(--rw-ink)]"
+          >
+            How it works
+          </a>
+          <Link
+            href="/communities"
+            onClick={opts?.onNavigate}
+            className="rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--rw-ink-muted)] hover:bg-[var(--rw-bg)] hover:text-[var(--rw-ink)]"
+          >
+            Community
+          </Link>
+          <a
+            href="/#impact"
+            onClick={opts?.onNavigate}
+            className="rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--rw-ink-muted)] hover:bg-[var(--rw-bg)] hover:text-[var(--rw-ink)]"
+          >
+            Sustainability
+          </a>
+        </div>
       </nav>
       <div className="border-t border-[var(--rw-border)] p-3">
         <button
@@ -294,23 +417,100 @@ export function AppNav({
 
   return (
     <>
-      <div
-        className={[
-          "fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3",
-          desktopOpen ? "lg:hidden" : "",
-        ].join(" ")}
-      >
+      <div className="fixed inset-x-0 top-0 z-40 hidden px-4 pt-3 lg:block">
+        <div className="mx-auto flex max-w-7xl items-center gap-2 rounded-[1.35rem] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 shadow-[0_12px_40px_rgba(23,42,58,0.1)]">
+          <Link
+            href="/"
+            aria-current={pathname === "/" ? "page" : undefined}
+            className="shrink-0 rounded-full px-3 py-1.5 text-base font-semibold tracking-tight text-[var(--rw-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+          >
+            ReWorth
+          </Link>
+          <nav aria-label="Primary" className="flex min-w-0 flex-1 justify-center">
+            <ul className="flex items-center gap-1">
+              {BAR_LINKS.map((item) => {
+                const active = item.match(pathname);
+                const hash = item.href.includes("#");
+                const href =
+                  hash && pathname === "/"
+                    ? item.href.slice(item.href.indexOf("#"))
+                    : item.href;
+                const className = [
+                  "block whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
+                  active
+                    ? "bg-[var(--rw-beige)] text-[var(--rw-ink)]"
+                    : "text-[var(--rw-ink-muted)] hover:bg-[var(--rw-bg)] hover:text-[var(--rw-ink)]",
+                ].join(" ");
+                return (
+                  <li key={item.href}>
+                    {hash ? (
+                      <a
+                        href={href}
+                        className={className}
+                        onClick={(event) => {
+                          if (pathname !== "/") return;
+                          const id = item.href.split("#")[1];
+                          const target = document.getElementById(id);
+                          if (!target) return;
+                          event.preventDefault();
+                          const top =
+                            target.getBoundingClientRect().top +
+                            window.scrollY -
+                            112;
+                          document.scrollingElement?.scrollTo({
+                            top,
+                            behavior: "smooth",
+                          });
+                          history.replaceState(null, "", `/#${id}`);
+                        }}
+                      >
+                        {item.label}
+                      </a>
+                    ) : (
+                      <Link
+                        href={item.href}
+                        aria-current={active ? "page" : undefined}
+                        className={className}
+                      >
+                        {item.label}
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </nav>
+          <Link
+            href="/chats"
+            aria-label="Chats"
+            aria-current={pathname.startsWith("/chats") ? "page" : undefined}
+            className={[
+              "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
+              pathname.startsWith("/chats")
+                ? "bg-[var(--rw-beige)] text-[var(--rw-ink)]"
+                : "text-[var(--rw-ink)] hover:bg-[var(--rw-bg)]",
+            ].join(" ")}
+          >
+            <Icon name="chats" />
+          </Link>
+          <NotificationBell count={unreadNotifications} className="" />
+          <Link
+            href="/sell"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--rw-accent)] px-3.5 py-2 text-sm font-semibold text-[var(--rw-on-accent)] hover:bg-[var(--rw-accent-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)] focus-visible:ring-offset-2"
+          >
+            <span aria-hidden>+</span>
+            List item
+          </Link>
+          <AccountMenu pathname={pathname} onLogout={() => void logout()} />
+        </div>
+      </div>
+
+      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 lg:hidden">
         <button
           type="button"
           aria-label="Open menu"
-          aria-expanded={open || desktopOpen}
-          onClick={() => {
-            if (window.matchMedia("(min-width: 1024px)").matches) {
-              onDesktopOpenChange(true);
-              return;
-            }
-            setOpen(true);
-          }}
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
           className="flex h-10 w-10 flex-col items-center justify-center gap-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
         >
           <span className="block h-0.5 w-5 bg-[var(--rw-ink)]" />
@@ -320,12 +520,6 @@ export function AppNav({
         <p className="text-base font-semibold tracking-tight">ReWorth</p>
         <NotificationBell count={unreadNotifications} />
       </div>
-
-      {desktopOpen ? (
-        <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 border-r border-[var(--rw-border)] lg:block">
-          {panel({ onClose: () => onDesktopOpenChange(false) })}
-        </aside>
-      ) : null}
 
       {open ? (
         <div className="fixed inset-0 z-50 lg:hidden">

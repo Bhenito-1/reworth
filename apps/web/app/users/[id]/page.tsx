@@ -325,7 +325,7 @@ export default function PublicProfilePage() {
           ) : (
             <ul className="mt-4 flex flex-wrap gap-3">
               {profile.activeListings.map((listing) => (
-                <li key={listing.id} className="w-[7.5rem] shrink-0">
+                <li key={listing.id} className="w-44 shrink-0">
                   <DiscoveryListingCard
                     listing={listing}
                     href={`/listings/${listing.id}?from=/users/${userId}`}
