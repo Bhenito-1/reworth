@@ -49,7 +49,13 @@ export function useUnreadNotificationCount() {
   return count;
 }
 
-export function NotificationBell({ count }: { count: number }) {
+export function NotificationBell({
+  count,
+  className = "ml-auto",
+}: {
+  count: number;
+  className?: string;
+}) {
   const label =
     count > 0
       ? `Notifications, ${count} unread`
@@ -59,7 +65,10 @@ export function NotificationBell({ count }: { count: number }) {
     <Link
       href="/notifications"
       aria-label={label}
-      className="relative ml-auto inline-flex h-10 w-10 items-center justify-center rounded-lg text-[var(--rw-ink)] hover:bg-[var(--rw-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+      className={[
+        "relative inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--rw-ink)] hover:bg-[var(--rw-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
+        className,
+      ].join(" ")}
     >
       <BellIcon />
       {count > 0 ? (

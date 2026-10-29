@@ -347,51 +347,7 @@ export function DiscoveryHomePage() {
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div className="mx-auto max-w-6xl px-4 pb-16 pt-4 sm:px-6">
-        <header className="flex items-center gap-4 py-3">
-          <Link href="/" className="text-lg font-semibold tracking-tight">
-            ReWorth
-          </Link>
-          <nav
-            aria-label="Discover"
-            className="hidden items-center gap-6 text-sm text-[var(--rw-ink-muted)] md:flex"
-          >
-            <a href="#how" className="hover:text-[var(--rw-ink)]">
-              How it Works
-            </a>
-            <Link href="/search" className="hover:text-[var(--rw-ink)]">
-              Explore
-            </Link>
-            <Link href="/communities" className="hover:text-[var(--rw-ink)]">
-              Community
-            </Link>
-            <a href="#impact" className="hover:text-[var(--rw-ink)]">
-              Sustainability
-            </a>
-          </nav>
-          <div className="ml-auto flex items-center gap-3">
-            <Link
-              href="/account"
-              className="text-sm font-medium text-[var(--rw-ink-muted)] hover:text-[var(--rw-ink)]"
-            >
-              Account
-            </Link>
-            <Link
-              href="/sell"
-              className="rounded-full bg-[var(--rw-accent)] px-4 py-2 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)] focus-visible:ring-offset-2"
-            >
-              Get Started
-            </Link>
-            <Link
-              href="/account"
-              aria-label="Your account"
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] text-sm font-semibold"
-            >
-              <span aria-hidden>R</span>
-            </Link>
-          </div>
-        </header>
-
-        <section className="pt-6">
+        <section className="pt-2">
           <p className="text-[11px] font-semibold tracking-[0.16em] text-[var(--rw-ink-muted)]">
             CIRCULAR MARKETPLACE · LAGOS CHAPTER
           </p>
@@ -936,11 +892,11 @@ export function DiscoveryHomePage() {
         <section
           id="how"
           aria-label="How ReWorth works here"
-          className="mt-12 grid gap-3 md:grid-cols-3"
+          className="mt-12 grid scroll-mt-28 gap-3 md:grid-cols-3"
         >
           <article
             id="impact"
-            className="rounded-3xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-5"
+            className="scroll-mt-28 rounded-3xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-5"
           >
             <h2 className="font-semibold">Lagos safe swap hubs</h2>
             <p className="mt-2 text-sm leading-6 text-[var(--rw-ink-muted)]">
