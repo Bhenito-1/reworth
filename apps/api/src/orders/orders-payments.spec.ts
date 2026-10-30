@@ -266,7 +266,6 @@ describe('escrow happy path + webhook replay', () => {
       },
       favourite: { deleteMany: jest.fn(async () => ({ count: 0 })) },
       listingEvent: { create: jest.fn(async () => ({})) },
-      favourite: { deleteMany: jest.fn(async () => ({ count: 0 })) },
       user: {
         findUnique: jest.fn(async () => ({
           id: 'buyer-1',
@@ -698,7 +697,6 @@ describe('disputes', () => {
       },
       favourite: { deleteMany: jest.fn(async () => ({ count: 0 })) },
       listingEvent: { create: jest.fn() },
-      favourite: { deleteMany: jest.fn(async () => ({ count: 0 })) },
       dispute: {
         findFirst: jest.fn(async () => null),
         create: jest.fn(async ({ data }: { data: unknown }) => data),
