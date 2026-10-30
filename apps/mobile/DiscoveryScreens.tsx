@@ -918,10 +918,10 @@ export function DiscoveryHome({
               >
                 {selected ? "Current" : "Select"}
               </Text>
-            </Pressable>
+            </View>
+          </Pressable>
           );
         })}
-      </View>
       {draftState ? (
         <>
           <Text style={[styles.railTitle, { color: c.ink, marginTop: 14, marginBottom: 8 }]}>

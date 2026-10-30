@@ -1305,8 +1305,17 @@ function ChatThread({
             accessibilityLabel="Message"
             maxLength={4000}
           />
-        </Pressable>
-      </View>
+          <Pressable
+            style={[styles.sendBtn, (busy || sending) && styles.disabled]}
+            disabled={busy || sending || !draft.trim()}
+            onPress={() => void sendText()}
+            accessibilityRole="button"
+            accessibilityLabel="Send"
+          >
+            <Text style={styles.sendText}>Send</Text>
+          </Pressable>
+        </View>
+      )}
       <View style={styles.actionRow}>
         <Pressable
           style={[

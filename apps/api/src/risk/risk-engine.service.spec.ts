@@ -166,6 +166,7 @@ describe('RiskEngineService.evaluateOnPublish', () => {
             profile: { preferredCommunity: 'Lekki' },
             devices: [],
           },
+          riskFlags: [],
         }),
         update: listingUpdate,
         count: jest.fn().mockResolvedValue(6),
