@@ -322,10 +322,11 @@ describe('audit — suspend user', () => {
       listing: { findMany: jest.fn().mockResolvedValue([]) },
       cartItem: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
       $executeRaw: jest.fn().mockResolvedValue(0),
-      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<void>) =>
-        fn(prisma),
-      ),
+      $transaction: jest.fn(),
     };
+    prisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof prisma) => Promise<void>) => fn(prisma),
+    );
 
     const { AdminPortalService } = await import('./admin-portal.service');
     const service = new AdminPortalService(
