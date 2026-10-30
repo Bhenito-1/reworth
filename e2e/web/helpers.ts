@@ -44,9 +44,12 @@ export async function apiHealthy(request: APIRequestContext): Promise<boolean> {
   }
 }
 
-/** Skip the suite when API is down — keeps default CI green. */
+/** Skip unless the API is up. A required E2E run fails instead of skipping. */
 export async function skipUnlessApiUp(request: APIRequestContext) {
   const ok = await apiHealthy(request);
+  if (!ok && process.env.E2E_REQUIRED === '1') {
+    throw new Error(`API not reachable at ${API_BASE}/healthz`);
+  }
   test.skip(!ok, `API not reachable at ${API_BASE}/healthz`);
 }
 
@@ -63,10 +66,11 @@ export async function login(
     },
   });
   if (!res.ok()) {
-    test.skip(
-      true,
-      `login failed for ${email} (${res.status()}) — run pnpm prisma:seed && pnpm seed:staging`,
-    );
+    const message = `login failed for ${email} (${res.status()}) — run pnpm prisma:seed && pnpm seed:staging`;
+    if (process.env.E2E_REQUIRED === '1') {
+      throw new Error(message);
+    }
+    test.skip(true, message);
   }
   const body = await res.json();
   expect(body.accessToken).toBeTruthy();
