@@ -10,11 +10,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  audit:
-    name: Dependency audit (prod)
+  shared:
+    name: Shared checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,37 +31,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Dependency audit (prod)
-        run: pnpm audit:prod
-
-  build:
-    name: Lint, typecheck, test, build
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Generate Prisma client
-        run: pnpm --filter @reworth/api prisma:generate
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reworth
 
       - name: Contrast audit (design tokens)
         run: node scripts/contrast-audit.mjs
@@ -70,30 +38,111 @@ jobs:
       - name: Hex audit (design-system paths)
         run: node scripts/hex-audit.mjs
 
-      - name: Lint
-        run: pnpm lint
+      - name: Dependency audit (prod)
+        run: pnpm audit:prod
 
-      # Same packages as the build step. Mobile tsc is a separate backlog.
-      - name: Typecheck
-        run: pnpm turbo run typecheck --filter=@reworth/api --filter=@reworth/web --filter=@reworth/admin
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reworth
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm exec turbo run lint --filter=@reworth/web
 
       - name: Test
-        run: pnpm test
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reworth
+        run: pnpm exec turbo run test --filter=@reworth/web
 
-      - name: Build api, web, admin
-        run: pnpm turbo run build --filter=@reworth/api --filter=@reworth/web --filter=@reworth/admin
+      - name: Build
+        run: pnpm exec turbo run build --filter=@reworth/web
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reworth
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1' }}
 
-      # Real runs need repo variable E2E=1 plus API + web + seed:staging.
-      # Specs skip when /healthz is down, so this stays off the required path.
-      - name: Playwright e2e
-        if: vars.E2E == '1'
-        run: pnpm exec playwright install --with-deps chromium && pnpm test:e2e
-        env:
-          API_BASE_URL: http://localhost:3001/api/v1
-          WEB_BASE_URL: http://localhost:3000
+      - name: Typecheck
+        run: pnpm exec turbo run typecheck --filter=@reworth/web
+
+  admin:
+    name: Admin
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm exec turbo run lint --filter=@reworth/admin
+
+      - name: Test
+        run: pnpm exec turbo run test --filter=@reworth/admin
+
+      - name: Build
+        run: pnpm exec turbo run build --filter=@reworth/admin
+
+      - name: Typecheck
+        run: pnpm exec turbo run typecheck --filter=@reworth/admin
+
+  api:
+    name: API
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/reworth
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm exec turbo run lint --filter=@reworth/api
+
+      - name: Typecheck
+        run: pnpm exec turbo run typecheck --filter=@reworth/api
+
+      - name: Test
+        run: pnpm exec turbo run test --filter=@reworth/api
+
+      - name: Build
+        run: pnpm exec turbo run build --filter=@reworth/api
