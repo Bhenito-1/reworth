@@ -44,6 +44,7 @@ export class ResendEmailProvider implements EmailProvider {
   }
 
   async send(message: EmailMessage): Promise<void> {
+    const supportRequest = message.meta?.emailCategory === 'support_request';
     const html =
       message.html ??
       renderTransactionalEmail({
@@ -55,6 +56,9 @@ export class ResendEmailProvider implements EmailProvider {
       }).html;
 
     if (!this.apiKey) {
+      if (supportRequest) {
+        throw new Error('Support email delivery is not configured');
+      }
       this.logger.warn('RESEND_API_KEY missing; logging email instead');
       this.logger.log(
         { to: message.to, subject: message.subject },
@@ -106,6 +110,7 @@ export class ResendEmailProvider implements EmailProvider {
       }
       this.logger.log({ to: message.to, subject: message.subject }, 'email:resend');
     } catch (err) {
+      if (supportRequest) throw err;
       this.logger.warn(
         `Resend send failed (${(err as Error).message}); logging instead`,
       );

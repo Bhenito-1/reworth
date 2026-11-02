@@ -76,6 +76,7 @@ const BAR_LINKS: { href: string; label: string; match: (pathname: string) => boo
     match: (p) => p.startsWith("/communities"),
   },
   { href: "/#impact", label: "Sustainability", match: () => false },
+  { href: "/support", label: "Support", match: (p) => p.startsWith("/support") },
 ];
 
 /** Sell, wishlist, and cart live under Account on desktop. */
@@ -332,7 +333,45 @@ function NavLinks({
 export function AppNav() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [maskHeight, setMaskHeight] = useState(0);
   const unreadNotifications = useUnreadNotificationCount();
+
+  useEffect(() => {
+    let frame = 0;
+    const updateMask = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (window.scrollY <= 0) {
+          setMaskHeight(0);
+          return;
+        }
+
+        let boundary = 0;
+        document
+          .querySelectorAll<HTMLElement>("[data-scroll-mask-bar]")
+          .forEach((bar) => {
+            if (getComputedStyle(bar).display === "none") return;
+            const rect = bar.getBoundingClientRect();
+            if (rect.bottom > 0 && rect.top < window.innerHeight) {
+              boundary = Math.max(boundary, rect.bottom);
+            }
+          });
+        setMaskHeight((current) =>
+          Math.abs(current - boundary) < 1 ? current : boundary,
+        );
+      });
+    };
+
+    updateMask();
+    window.addEventListener("scroll", updateMask, { passive: true });
+    window.addEventListener("resize", updateMask);
+    return () => {
+      window.removeEventListener("scroll", updateMask);
+      window.removeEventListener("resize", updateMask);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [pathname]);
 
   async function logout() {
     const refreshToken = getRefreshToken();
@@ -394,6 +433,13 @@ export function AppNav() {
           >
             Community
           </Link>
+          <Link
+            href="/support"
+            onClick={opts?.onNavigate}
+            className="rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--rw-ink-muted)] hover:bg-[var(--rw-bg)] hover:text-[var(--rw-ink)]"
+          >
+            Support
+          </Link>
           <a
             href="/#impact"
             onClick={opts?.onNavigate}
@@ -417,7 +463,17 @@ export function AppNav() {
 
   return (
     <>
-      <div className="fixed inset-x-0 top-0 z-40 hidden px-4 pt-3 lg:block">
+      {maskHeight > 0 ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-x-0 top-0 z-20 backdrop-blur-[2px]"
+          style={{
+            height: `${maskHeight + 24}px`,
+            background: `linear-gradient(to bottom, var(--rw-bg) 0px, var(--rw-bg) ${maskHeight}px, transparent 100%)`,
+          }}
+        />
+      ) : null}
+      <div data-scroll-mask-bar className="fixed inset-x-0 top-0 z-40 hidden px-4 pt-3 lg:block">
         <div className="mx-auto flex max-w-7xl items-center gap-2 rounded-[1.35rem] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 shadow-[0_12px_40px_rgba(23,42,58,0.1)]">
           <Link
             href="/"
@@ -505,7 +561,7 @@ export function AppNav() {
         </div>
       </div>
 
-      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 lg:hidden">
+      <div data-scroll-mask-bar className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 lg:hidden">
         <button
           type="button"
           aria-label="Open menu"

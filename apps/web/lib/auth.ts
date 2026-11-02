@@ -197,6 +197,7 @@ export function isPublicAuthPath(pathname: string): boolean {
   if (pathname === "/onboarding" || pathname.startsWith("/onboarding/")) {
     return true;
   }
+  if (pathname === "/support" || pathname.startsWith("/support/")) return true;
   return false;
 }
 
