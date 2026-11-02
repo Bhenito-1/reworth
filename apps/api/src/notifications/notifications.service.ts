@@ -1,4 +1,10 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   NotificationChannel,
@@ -73,25 +79,38 @@ export class NotificationsService {
         NotificationChannel.EMAIL,
       ] as NotificationChannel[]);
 
-    const prefs = await this.prisma.notificationPreference.findMany({
-      where: { userId: input.userId, category: input.category },
-    });
-    const prefMap = new Map(
-      prefs.map((p) => [`${p.channel}`, p.enabled] as const),
-    );
+    const wantsEmail = channels.includes(NotificationChannel.EMAIL);
 
-    const profile = await this.prisma.profile.findUnique({
-      where: { userId: input.userId },
-    });
-    const user = await this.prisma.user.findUnique({
-      where: { id: input.userId },
-    });
-    const consents = await this.prisma.consentRecord.findMany({
-      where: {
-        userId: input.userId,
-        channel: { in: ['EMAIL', 'MARKETING'] },
-      },
-    });
+    // One round-trip: only load email/consent rows when EMAIL is in play.
+    const [prefs, profile, user, consents] = await Promise.all([
+      this.prisma.notificationPreference.findMany({
+        where: { userId: input.userId, category: input.category },
+        select: { channel: true, enabled: true },
+      }),
+      this.prisma.profile.findUnique({
+        where: { userId: input.userId },
+        select: { quietHoursStart: true, quietHoursEnd: true },
+      }),
+      wantsEmail
+        ? this.prisma.user.findUnique({
+            where: { id: input.userId },
+            select: { email: true },
+          })
+        : Promise.resolve(null),
+      wantsEmail
+        ? this.prisma.consentRecord.findMany({
+            where: {
+              userId: input.userId,
+              channel: { in: ['EMAIL', 'MARKETING'] },
+            },
+            select: { channel: true, granted: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const prefMap = new Map(
+      prefs.map((p) => [p.channel, p.enabled] as const),
+    );
     const emailAllowed = consents.some(
       (row) => row.channel === 'EMAIL' && row.granted,
     );
@@ -106,9 +125,11 @@ export class NotificationsService {
       profile?.quietHoursEnd ?? null,
       new Date(),
     );
+    const pushDeliveryEnabled = this.isPushDeliveryEnabled();
 
     for (const channel of channels) {
       const enabledPref = prefMap.get(channel);
+      // Missing preference row = opt-in default (matches settings UI).
       const userDisabled = enabledPref === false;
       const critical = isCriticalCategory(input.category);
 
@@ -122,12 +143,17 @@ export class NotificationsService {
         continue;
       }
 
+      // PUSH / EMAIL: honour per-category preference before any I/O.
       if (!input.forceDelivery && userDisabled) {
         skipped.push({ channel, reason: 'preference_disabled' });
         continue;
       }
 
       if (channel === NotificationChannel.PUSH) {
+        if (!pushDeliveryEnabled) {
+          skipped.push({ channel, reason: 'push_disabled' });
+          continue;
+        }
         if (!input.forceDelivery && inQuietHours) {
           skipped.push({ channel, reason: 'quiet_hours' });
           continue;
@@ -158,19 +184,36 @@ export class NotificationsService {
           continue;
         }
 
-        const tokens = await this.prisma.devicePushToken.findMany({
+        // Subscriptions only after preference / quiet / cap gates pass.
+        const subscriptions = await this.prisma.webPushSubscription.findMany({
           where: { userId: input.userId },
+          select: { id: true, endpoint: true, p256dh: true, auth: true },
         });
+        if (!subscriptions.length) {
+          // Browser push toggle off / never enabled → no network send.
+          skipped.push({ channel, reason: 'no_subscription' });
+          continue;
+        }
+
         const row = await this.persist(input, channel);
         created.push({ id: row.id, channel });
-        await this.push.send({
+        const staleIds = await this.push.send({
           userId: input.userId,
           title: input.title,
           body: input.body,
           deepLink: input.deepLink,
-          tokens: tokens.map((t) => t.token),
+          subscriptions: subscriptions.map(({ id, endpoint, p256dh, auth }) => ({
+            id,
+            endpoint,
+            keys: { p256dh, auth },
+          })),
           meta: input.meta,
         });
+        if (staleIds.length) {
+          await this.prisma.webPushSubscription.deleteMany({
+            where: { id: { in: staleIds }, userId: input.userId },
+          });
+        }
         continue;
       }
 
@@ -223,6 +266,11 @@ export class NotificationsService {
     }
 
     return { created, skipped };
+  }
+
+  /** ENABLE_PUSH must be true for any browser push delivery. */
+  private isPushDeliveryEnabled(): boolean {
+    return (this.config.get<string>('ENABLE_PUSH') ?? 'false').toLowerCase() === 'true';
   }
 
   async unreadCount(userId: string) {
@@ -339,15 +387,56 @@ export class NotificationsService {
     return { disabled: categories.length };
   }
 
-  async registerPushToken(
-    userId: string,
-    token: string,
-    platform: string,
-  ) {
-    return this.prisma.devicePushToken.upsert({
-      where: { userId_token: { userId, token } },
-      create: { userId, token, platform },
-      update: { platform },
+  getWebPushPublicKey() {
+    const publicKey = this.config.get<string>('WEB_PUSH_VAPID_PUBLIC_KEY')?.trim();
+    if (!publicKey) {
+      throw new BadRequestException(
+        'Web Push is not configured. Set WEB_PUSH_VAPID_PUBLIC_KEY on the API.',
+      );
+    }
+    return { publicKey };
+  }
+
+  async registerWebPushSubscription(userId: string, dto: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+    expirationTime?: number | null;
+  }) {
+    const parsed = new URL(dto.endpoint);
+    const host = parsed.hostname.toLowerCase();
+    const allowed =
+      host === 'fcm.googleapis.com' ||
+      host === 'web.push.apple.com' ||
+      host.endsWith('.push.services.mozilla.com') ||
+      host.endsWith('.notify.windows.com') ||
+      host.endsWith('.push.apple.com');
+    if (parsed.protocol !== 'https:' || !allowed) {
+      throw new BadRequestException('Unsupported browser push endpoint');
+    }
+    return this.prisma.webPushSubscription.upsert({
+      where: { endpoint: dto.endpoint },
+      create: {
+        userId,
+        endpoint: dto.endpoint,
+        p256dh: dto.keys.p256dh,
+        auth: dto.keys.auth,
+        expirationTime:
+          dto.expirationTime != null ? new Date(dto.expirationTime) : null,
+      },
+      update: {
+        userId,
+        p256dh: dto.keys.p256dh,
+        auth: dto.keys.auth,
+        expirationTime:
+          dto.expirationTime != null ? new Date(dto.expirationTime) : null,
+      },
+      select: { id: true, createdAt: true },
+    });
+  }
+
+  async removeWebPushSubscription(userId: string, endpoint?: string) {
+    return this.prisma.webPushSubscription.deleteMany({
+      where: endpoint ? { userId, endpoint } : { userId },
     });
   }
 

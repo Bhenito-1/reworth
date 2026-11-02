@@ -7,16 +7,17 @@ export class MockPushProvider implements PushProvider {
   private readonly logger = new Logger(MockPushProvider.name);
   readonly sent: PushMessage[] = [];
 
-  async send(message: PushMessage): Promise<void> {
+  async send(message: PushMessage): Promise<string[]> {
     this.sent.push(message);
     this.logger.log(
       {
         userId: message.userId,
         title: message.title,
-        tokens: message.tokens.length,
+        subscriptions: message.subscriptions.length,
         deepLink: message.deepLink,
       },
       'push:mock',
     );
+    return [];
   }
 }
