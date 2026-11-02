@@ -719,7 +719,7 @@ export default function SellPage() {
                 2–6 clear photos. AI drafts the rest in about a minute.
               </p>
 
-              <div className="mt-8 grid grid-cols-3 gap-3 sm:grid-cols-4">
+              <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
                 {photos.map((p) => (
                   <div
                     key={p.id}

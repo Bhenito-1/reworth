@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Skeleton } from "@reworth/ui-web";
+import { PullToRefresh } from "../../components/PullToRefresh";
 import { apiFetch, ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import { removeListing } from "../../lib/inventory";
@@ -97,13 +98,13 @@ export default function SellingPage() {
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     const token = getAccessToken();
     if (!token) {
       router.replace("/");
       return;
     }
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const res = await apiFetch<{ items: MineItem[] }>("/listings/mine", {
@@ -117,7 +118,7 @@ export default function SellingPage() {
       }
       setError(err instanceof ApiError ? err.message : "Could not load listings");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [router]);
 
@@ -156,142 +157,136 @@ export default function SellingPage() {
   const shown = expanded ? visible : visible.slice(0, 10);
 
   return (
-    <main className="mx-auto min-h-[100dvh] max-w-2xl bg-[var(--rw-bg)] px-4 py-8 text-[var(--rw-ink)] sm:px-8">
-      <h1 className="text-3xl font-semibold tracking-tight">My listings</h1>
-      <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-        Every listing you have made, including live, in review, rejected, sold, closed, and removed.
-      </p>
-
-      <div className="mt-4">
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={loading}
-          onClick={() => void load()}
-        >
-          {loading ? "Refreshing…" : "Refresh"}
-        </Button>
-      </div>
-
-      <div className="mt-6 flex flex-wrap gap-2" role="tablist" aria-label="Listing status">
-        {FILTERS.map((tab) => {
-          const selected = filter === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              onClick={() => {
-                setFilter(tab.id);
-                setExpanded(false);
-              }}
-              className={[
-                "rounded-full px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
-                selected
-                  ? "bg-[var(--rw-accent)] text-white"
-                  : "border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] text-[var(--rw-ink)]",
-              ].join(" ")}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {loading ? (
-        <div className="mt-8 space-y-3">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-20 w-full" />
-        </div>
-      ) : error ? (
-        <p className="mt-8 text-sm text-[var(--rw-error)]" role="alert">
-          {error}
+    <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
+      <PullToRefresh
+        className="mx-auto max-w-2xl px-4 py-8 sm:px-8"
+        onRefresh={() => load({ silent: true })}
+      >
+        <h1 className="text-3xl font-semibold tracking-tight">My listings</h1>
+        <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+          Every listing you have made, including live, in review, rejected, sold, closed, and removed.
         </p>
-      ) : items.length === 0 ? (
-        <div className="mt-8">
-          <EmptyState
-            title="No listings yet"
-            description="When you publish, live, in-review, and rejected listings show up here."
-            action={
-              <Link href="/sell">
-                <Button variant="primary">List an item</Button>
-              </Link>
-            }
-          />
-        </div>
-      ) : visible.length === 0 ? (
-        <div className="mt-8">
-          <EmptyState
-            title={`No ${FILTERS.find((tab) => tab.id === filter)?.label.toLowerCase()} listings`}
-            description="Try another status, or list something new."
-          />
-        </div>
-      ) : (
-        <ul className="mt-8 space-y-3">
-          {shown.map((item) => {
-            const group = groupOf(item);
+
+        <div className="mt-6 flex flex-wrap gap-2" role="tablist" aria-label="Listing status">
+          {FILTERS.map((tab) => {
+            const selected = filter === tab.id;
             return (
-              <li
-                key={item.id}
-                className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-4"
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => {
+                  setFilter(tab.id);
+                  setExpanded(false);
+                }}
+                className={[
+                  "rounded-full px-3 py-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]",
+                  selected
+                    ? "bg-[var(--rw-accent)] text-white"
+                    : "border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] text-[var(--rw-ink)]",
+                ].join(" ")}
               >
-                <Link href={`/listings/${item.id}`} className="block">
-                  <div className="flex min-w-0 items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="break-words font-semibold">{item.title || "Untitled listing"}</p>
-                      <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
-                        {formatNgn({ amountKobo: item.priceKobo })}
-                      </p>
-                    </div>
-                    <span
-                      className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(item.status)}`}
-                    >
-                      {item.reviewLabel}
-                    </span>
-                  </div>
-                  {item.reviewNote ? (
-                    <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-                      {item.reviewNote}
-                    </p>
-                  ) : null}
-                </Link>
-                {group === "rejected" ? (
-                  <Link
-                    href={`/selling/${item.id}`}
-                    className="mt-3 inline-block text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-                  >
-                    See why and fix it
-                  </Link>
-                ) : null}
-                {item.status === "DRAFT" || item.canRemove ? (
-                  <button
-                    type="button"
-                    className="mt-3 block text-sm font-medium text-[var(--rw-error)] hover:underline disabled:opacity-50"
-                    disabled={removingId === item.id}
-                    onClick={() => void onRemove(item)}
-                  >
-                    {removingId === item.id
-                      ? item.status === "DRAFT"
-                        ? "Deleting…"
-                        : "Removing…"
-                      : item.status === "DRAFT"
-                        ? "Delete draft"
-                        : "Remove from marketplace"}
-                  </button>
-                ) : null}
-              </li>
+                {tab.label}
+              </button>
             );
           })}
-        </ul>
-      )}
-      {!loading && visible.length > 10 && !expanded ? (
-        <div className="mt-4">
-          <Button variant="secondary" onClick={() => setExpanded(true)}>
-            See more
-          </Button>
         </div>
-      ) : null}
+
+        {loading ? (
+          <div className="mt-8 space-y-3">
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : error ? (
+          <p className="mt-8 text-sm text-[var(--rw-error)]" role="alert">
+            {error}
+          </p>
+        ) : items.length === 0 ? (
+          <div className="mt-8">
+            <EmptyState
+              title="No listings yet"
+              description="When you publish, live, in-review, and rejected listings show up here."
+              action={
+                <Link href="/sell">
+                  <Button variant="primary">List an item</Button>
+                </Link>
+              }
+            />
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="mt-8">
+            <EmptyState
+              title={`No ${FILTERS.find((tab) => tab.id === filter)?.label.toLowerCase()} listings`}
+              description="Try another status, or list something new."
+            />
+          </div>
+        ) : (
+          <ul className="mt-8 space-y-3">
+            {shown.map((item) => {
+              const group = groupOf(item);
+              return (
+                <li
+                  key={item.id}
+                  className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-4"
+                >
+                  <Link href={`/listings/${item.id}`} className="block">
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="break-words font-semibold">{item.title || "Untitled listing"}</p>
+                        <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
+                          {formatNgn({ amountKobo: item.priceKobo })}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(item.status)}`}
+                      >
+                        {item.reviewLabel}
+                      </span>
+                    </div>
+                    {item.reviewNote ? (
+                      <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+                        {item.reviewNote}
+                      </p>
+                    ) : null}
+                  </Link>
+                  {group === "rejected" ? (
+                    <Link
+                      href={`/selling/${item.id}`}
+                      className="mt-3 inline-block text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
+                    >
+                      See why and fix it
+                    </Link>
+                  ) : null}
+                  {item.status === "DRAFT" || item.canRemove ? (
+                    <button
+                      type="button"
+                      className="mt-3 block text-sm font-medium text-[var(--rw-error)] hover:underline disabled:opacity-50"
+                      disabled={removingId === item.id}
+                      onClick={() => void onRemove(item)}
+                    >
+                      {removingId === item.id
+                        ? item.status === "DRAFT"
+                          ? "Deleting…"
+                          : "Removing…"
+                        : item.status === "DRAFT"
+                          ? "Delete draft"
+                          : "Remove from marketplace"}
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {!loading && visible.length > 10 && !expanded ? (
+          <div className="mt-4">
+            <Button variant="secondary" onClick={() => setExpanded(true)}>
+              See more
+            </Button>
+          </div>
+        ) : null}
+      </PullToRefresh>
     </main>
   );
 }

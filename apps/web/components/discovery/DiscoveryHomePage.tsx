@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Chip, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "./DiscoveryListingCard";
+import { PullToRefresh } from "../PullToRefresh";
 import { ApiError, apiFetch } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
@@ -346,7 +347,10 @@ export function DiscoveryHomePage() {
 
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
-      <div className="mx-auto max-w-6xl px-4 pb-16 pt-4 sm:px-6">
+      <PullToRefresh
+        className="mx-auto max-w-6xl px-4 pb-16 pt-4 sm:px-6"
+        onRefresh={() => load(loc, { silent: true })}
+      >
         <section className="pt-2">
           <p className="text-[11px] font-semibold tracking-[0.16em] text-[var(--rw-ink-muted)]">
             CIRCULAR MARKETPLACE · LAGOS CHAPTER
@@ -954,7 +958,7 @@ export function DiscoveryHomePage() {
           </div>
           <p className="mt-6 text-xs text-[var(--rw-ink-muted)]">© 2026 ReWorth</p>
         </footer>
-      </div>
+      </PullToRefresh>
       {toast ? (
         <div className="fixed bottom-6 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2 lg:left-[calc(50%+var(--rw-sidebar-offset,0px))]">
           <Toast

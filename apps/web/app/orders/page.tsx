@@ -10,6 +10,7 @@ import {
   EmptyState,
   Skeleton,
 } from "@reworth/ui-web";
+import { PullToRefresh } from "../../components/PullToRefresh";
 import { ApiError, apiFetch } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
@@ -97,15 +98,18 @@ export default function OrdersListPage() {
   const [meId, setMeId] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderDto[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
     const token = getAccessToken();
     if (!token) {
       router.replace("/");
       return;
     }
-    setLoading(true);
+    const soft = Boolean(opts?.soft);
+    if (soft) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const [me, list] = await Promise.all([
@@ -121,7 +125,8 @@ export default function OrdersListPage() {
       }
       setError(err instanceof ApiError ? err.message : "Could not load orders");
     } finally {
-      setLoading(false);
+      if (soft) setRefreshing(false);
+      else setLoading(false);
     }
   }, [router]);
 
@@ -167,7 +172,10 @@ export default function OrdersListPage() {
         }}
       />
 
-      <div className="relative z-10 mx-auto max-w-2xl px-4 pb-16 pt-6 sm:px-8">
+      <PullToRefresh
+        className="relative z-10 mx-auto max-w-2xl px-4 pb-16 pt-6 sm:px-8"
+        onRefresh={() => load({ soft: true })}
+      >
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
           Orders
         </h1>
@@ -272,7 +280,7 @@ export default function OrdersListPage() {
             ))}
           </div>
         )}
-      </div>
+      </PullToRefresh>
     </main>
   );
 }

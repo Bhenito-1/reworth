@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 import { formatNgn } from "@reworth/shared";
+import { InstallAppButton } from "./InstallAppButton";
 
 const focus =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)] focus-visible:ring-offset-2";
@@ -441,6 +442,8 @@ export function LandingPage() {
     setSaved((current) => ({ ...current, [id]: !current[id] }));
   }
 
+  const installHeroClass = `inline-flex min-h-11 w-full max-w-xs items-center justify-center rounded-full border border-white/80 px-5 text-sm font-medium text-white hover:bg-white/10 ${focus}`;
+
   return (
     <div className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <a
@@ -563,7 +566,7 @@ export function LandingPage() {
                   <ArrowIcon />
                 </Link>
               </div>
-              <div className="mt-8 hidden gap-3 lg:flex">
+              <div className="mt-8 hidden flex-wrap items-center justify-center gap-3 lg:flex">
                 <Link
                   href="/onboarding"
                   className={`inline-flex min-h-11 items-center gap-2 rounded-full bg-[var(--rw-accent)] px-5 text-sm font-medium text-white hover:bg-[var(--rw-accent-hover)] ${focus}`}
@@ -577,6 +580,9 @@ export function LandingPage() {
                 >
                   Login
                 </Link>
+              </div>
+              <div className="mt-3 flex justify-center lg:mt-4">
+                <InstallAppButton className={installHeroClass} />
               </div>
 
               <p className="mt-5 inline-flex items-center gap-2 text-xs text-white/90 lg:hidden">
@@ -939,6 +945,7 @@ export function LandingPage() {
           </Link>
         </div>
       </nav>
+
     </div>
   );
 }

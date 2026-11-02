@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en-NG">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#172A3A" />
+    <title>You're offline · ReWorth</title>
+    <style>
+      :root { color-scheme: light; font-family: system-ui, sans-serif; color: #172a3a; background: #fcfaf6; }
+      body { box-sizing: border-box; display: grid; min-height: 100dvh; margin: 0; padding: 1.5rem; place-items: center; text-align: center; }
+      main { width: min(100%, 28rem); }
+      img { width: 4rem; height: 4rem; object-fit: contain; }
+      h1 { margin: 1rem 0 .5rem; font-size: clamp(1.5rem, 6vw, 2rem); }
+      p { color: #59636d; line-height: 1.6; }
+      button { min-height: 2.75rem; margin-top: 1rem; padding: .7rem 1.2rem; border: 0; border-radius: 999px; color: white; background: #172a3a; font: inherit; font-weight: 650; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/brand/icons/pwa-192.png" alt="" />
+      <h1>You're offline</h1>
+      <p>Reconnect to continue buying, selling, and chatting on ReWorth. Pages you’ve already opened may still be available.</p>
+      <button type="button" onclick="location.reload()">Try again</button>
+    </main>
+  </body>
+</html>
