@@ -1,4 +1,4 @@
-﻿ve this on# AGENTS.md — ReWorth living context
+﻿# AGENTS.md — ReWorth living context
 
 > Update this file after every phase. Resume point of truth with `docs/PHASE_STATUS.md`.
 
@@ -9,18 +9,15 @@
 - Tagline: *"Lagos, your unused things are worth something."*
 - **Conflict rule:** Product → `PRD.md`. Engineering → `CURSOR-PROMPT.md` / `CURSOR-PROMPT-PHASE2-3.md`.
 
-## Mobile-first doctrine
+## Surface doctrine
 
-- **Primary product surface:** iOS + Android (`apps/mobile`, Expo).
-- **Web** (`apps/web`) is a **responsive companion** — browse, search, listing detail, checkout — not the lead surface.
-- **Admin** (`apps/admin`) is ops-only; out of scope for mobile parity.
-- **Every feature** is designed, built, and tested mobile-first.
-- **Build order within every phase:** mobile (iOS + Android) → web parity.
-- **Web parity** ships in-phase **or** is explicitly listed under Known gaps / `docs/MOBILE_PARITY.md` — never silently skipped.
+- **Primary consumer surface:** Web PWA (`apps/web`) — installable standalone app, responsive layout, offline shell (`public/sw.js`), Web Push via VAPID (`PUSH_PROVIDER=web-push`).
+- **Admin** (`apps/admin`) is ops-only.
+- The native Expo app was removed; do not reintroduce Expo push or `apps/mobile`.
 
 ## Definition of Done
 
-Functional · UX · **mobile behaviour verified on iOS + Android; web parity delivered or tracked in known gaps** · security · analytics · error/loading/empty states · a11y · tests · docs · PO acceptance. (PRD §59, mobile-first amendment.)
+Functional · UX · PWA behaviour verified on mobile + desktop browsers · security · analytics · error/loading/empty states · a11y · tests · docs · PO acceptance. (PRD §59, PWA amendment.)
 
 ## Current phase
 
@@ -30,20 +27,19 @@ Functional · UX · **mobile behaviour verified on iOS + Android; web parity del
 | Last completed (post-launch) | **3.3** (`v2.2-monetization`) |
 | MVP Admin | **`v0.8-admin`** (+ harden) |
 | MVP Risk / Security | **`v0.9-risk-security`** (+ harden) |
-| Status | **Near complete** — tokens + brand + Maestro testIDs/`com.reworth.app` + listing App Links stubs; device recording / staging k6 / Termii remain |
-| Next | Execute `docs/STAGING_RAILS.md` (Termii → Paystack test → Expo push); Maestro ≤60s on device; staging k6; store AASA/Play SHA |
+| Status | **Near complete** — web PWA primary; Web Push + VAPID; staging rails / k6 / Termii remain |
+| Next | Execute `docs/STAGING_RAILS.md` (Termii → Paystack test → web-push); staging k6 |
 
 ## MVP / post-launch
 
 MVP: scaffold → … → trust (`v0.7`) → **admin (`v0.8-admin`)** → risk (`v0.9`) → RC.  
-Post-launch through `v2.2-monetization`: swap → communities → intelligence → verticals → AI → B2B/expansion → monetization.
+Post-launch through `v2.2-monetization`: swap → communities → intelligence → verticals → AI → B2B/expansion · monetization.
 
 ## Known gaps
 
-- Real device Maestro ≤60s recording still open (`e2e/mobile/00_demo_60s.yaml` + `scripts/record-maestro-demo.ps1`; testIDs include listing-card-0 / chats-title / locate / meetup)
 - Staging k6 p95 certification; pen-test / NDPR / store sign-offs
 - Cross-border: ADR-007 design only; consumer pilot = SW + Edo + Abuja + PH + Kano (`config/regions`, `status=pilot`)
-- Web companion for Boost / Featured / Seller Plus (mobile full — see `docs/MOBILE_PARITY.md`)
+- Device push tokens table dropped; use `/devices/web-push-subscriptions`. Offline caches public shells/assets only; API actions need connectivity.
 - Promoted search self-serve later (ADR-009 admin-assigned)
 - Payments still mock-default in local (Paystack adapter present)
 - Termii live SMS/WhatsApp keys still pending (dual-channel mock verified)
