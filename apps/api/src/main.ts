@@ -9,6 +9,7 @@ import { join, resolve } from 'path';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { defaultMediaRoot } from './providers/local-fs-storage.adapter';
+import { isSwaggerDocsPath, setupSwagger } from './swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -61,6 +62,28 @@ async function bootstrap() {
   app.use(helmet.noSniff());
   app.use(helmet.frameguard({ action: 'deny' }));
   app.use(helmet.hsts({ maxAge: 15552000, includeSubDomains: true }));
+  app.use(
+    (
+      req: { path?: string },
+      res: { setHeader: (name: string, value: string) => void },
+      next: () => void,
+    ) => {
+      if (req.path && isSwaggerDocsPath(req.path)) {
+        res.setHeader(
+          'Content-Security-Policy',
+          [
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob:",
+            "font-src 'self' data:",
+            "connect-src 'self'",
+          ].join('; '),
+        );
+      }
+      next();
+    },
+  );
 
   // Preserve raw body for Paystack webhook HMAC (ADR-002)
   app.use(
@@ -141,6 +164,8 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  setupSwagger(app);
 
   // Prefer API_PORT so an ambient shell PORT (IDE tooling, etc.) cannot steal 3001.
   const port = Number(process.env.API_PORT ?? process.env.PORT ?? 3001);
