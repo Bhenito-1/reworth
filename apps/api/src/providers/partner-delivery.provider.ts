@@ -173,11 +173,9 @@ export class PartnerDeliveryProvider implements DeliveryProvider {
     );
     if (!res.ok) {
       const text = await res.text();
-      this.logger.warn({
-        event: 'partner.shipment.status.failed',
-        status: res.status,
-        body: text.slice(0, 200),
-      });
+      throw new Error(
+        `Partner updateStatus failed: ${res.status} ${text.slice(0, 400)}`,
+      );
     }
   }
 
@@ -191,14 +189,15 @@ export class PartnerDeliveryProvider implements DeliveryProvider {
   }
 
   /**
-   * Verify partner webhook. Empty secret = open (local/mock compatible).
+   * Verify partner webhook. No secret means reject.
+   * Local dry-runs opt in with DELIVERY_WEBHOOK_OPEN=true in the controller.
    */
   static verifyWebhookSignature(
     rawBody: string,
     signature: string | undefined,
     secret: string | undefined = process.env.DELIVERY_WEBHOOK_SECRET,
   ): boolean {
-    if (!secret) return true;
+    if (!secret) return false;
     if (!signature) return false;
     const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
     const a = Buffer.from(expected);

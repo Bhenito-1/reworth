@@ -9,6 +9,7 @@ type Props = {
   exception: DeliveryExceptionCopy;
   role: "buyer" | "seller";
   onDispute?: () => void;
+  onReattempt?: () => void;
   onDismissSoft?: () => void;
 };
 
@@ -16,6 +17,7 @@ export function DeliveryExceptionBanner({
   exception,
   role,
   onDispute,
+  onReattempt,
   onDismissSoft,
 }: Props) {
   const actions =
@@ -39,6 +41,16 @@ export function DeliveryExceptionBanner({
         ))}
       </View>
       <View style={styles.row}>
+        {onReattempt && role === "buyer" ? (
+          <Pressable
+            style={styles.secondary}
+            onPress={onReattempt}
+            accessibilityRole="button"
+            accessibilityLabel="Ask the rider to try again"
+          >
+            <Text style={styles.secondaryText}>Ask the rider to try again</Text>
+          </Pressable>
+        ) : null}
         {onDispute && role === "buyer" ? (
           <Pressable
             style={styles.primary}

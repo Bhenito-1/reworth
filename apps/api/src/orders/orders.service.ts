@@ -34,8 +34,10 @@ import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  BULKY_DELIVERY_RATES,
   computeDeliveryFeeKobo,
   DELIVERY_PROVIDER,
+  isBulkyDeliveryCategory,
   type DeliveryProvider,
 } from '../providers/delivery.provider';
 import { haversineKm } from '../providers/search.provider';
@@ -276,6 +278,7 @@ export class OrdersService {
   ): Promise<OrderDto> {
     const listing = await this.prisma.listing.findUnique({
       where: { id: dto.listingId },
+      include: { category: { select: { slug: true } } },
     });
     if (!listing) throw new NotFoundException('Listing not found');
     if (listing.sellerId === buyerId) {
@@ -359,7 +362,12 @@ export class OrdersService {
     const toLat = dto.toLat ?? fromLat + 0.02;
     const toLng = dto.toLng ?? fromLng + 0.02;
     const distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
-    const deliveryFeeKobo = computeDeliveryFeeKobo(distanceKm);
+    const deliveryFeeKobo = computeDeliveryFeeKobo(
+      distanceKm,
+      isBulkyDeliveryCategory(listing.category?.slug)
+        ? BULKY_DELIVERY_RATES
+        : undefined,
+    );
 
     const totalKobo = computeOrderTotalKobo({
       amountKobo,

@@ -31,6 +31,7 @@ export type DeliveryShipment = {
   etaFrom: string | null;
   etaTo: string | null;
   failureReason: string | null;
+  attemptCount?: number;
   events: {
     id: string;
     status: string;
@@ -43,8 +44,10 @@ export function shipmentStatusLabel(status: string): string {
   switch (status) {
     case "QUOTED":
       return "Delivery quoted";
+    case "OFFERED":
+      return "Waiting for a rider";
     case "ASSIGNED":
-      return "Rider assigned";
+      return "Rider accepted";
     case "PICKED_UP":
       return "Collected from seller";
     case "IN_TRANSIT":
@@ -75,15 +78,21 @@ export type JourneyStep = {
 export const DELIVERY_JOURNEY_STEPS: JourneyStep[] = [
   {
     key: "QUOTED",
-    title: "Paid & protected",
-    buyerHint: "Your payment is held until you confirm the item.",
-    sellerHint: "Buyer paid — prepare the item for collection.",
+    title: "Delivery quoted",
+    buyerHint: "The fee is locked. Pay to offer this run to a rider.",
+    sellerHint: "The buyer has a quote. Nothing is collected until they pay.",
+  },
+  {
+    key: "OFFERED",
+    title: "Waiting for a rider",
+    buyerHint: "Your payment is protected. A rider has been offered this delivery.",
+    sellerHint: "A rider has been asked to collect on the day you confirmed.",
   },
   {
     key: "ASSIGNED",
-    title: "Rider assigned",
-    buyerHint: "A rider will collect from the seller next.",
-    sellerHint: "Have the item packed and accessible.",
+    title: "Rider accepted",
+    buyerHint: "Your rider accepted and will collect from the seller.",
+    sellerHint: "The rider accepted. Have the item packed and easy to reach.",
   },
   {
     key: "PICKED_UP",
@@ -113,11 +122,12 @@ export const DELIVERY_JOURNEY_STEPS: JourneyStep[] = [
 
 const JOURNEY_RANK: Record<string, number> = {
   QUOTED: 0,
-  ASSIGNED: 1,
-  PICKED_UP: 2,
-  IN_TRANSIT: 3,
-  OUT_FOR_DELIVERY: 4,
-  DELIVERED: 5,
+  OFFERED: 1,
+  ASSIGNED: 2,
+  PICKED_UP: 3,
+  IN_TRANSIT: 4,
+  OUT_FOR_DELIVERY: 5,
+  DELIVERED: 6,
   FAILED: -1,
 };
 
@@ -250,6 +260,16 @@ export function getOrderShipment(
   orderId: string,
 ): Promise<DeliveryShipment> {
   return apiFetch(`/orders/${orderId}/shipment`, { token });
+}
+
+export function reattemptDelivery(
+  token: string,
+  orderId: string,
+): Promise<{ orderId: string; status: string; attemptCount: number }> {
+  return apiFetch(`/orders/${orderId}/delivery/reattempt`, {
+    method: "POST",
+    token,
+  });
 }
 
 export function fallbackDeliveryDestination(

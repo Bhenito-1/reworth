@@ -1,6 +1,7 @@
 import {
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsOptional,
@@ -30,4 +31,9 @@ export class CreateAdminUserDto {
 export class AssignRoleDto {
   @IsEnum(AdminRole)
   role!: AdminRole;
+}
+
+export class SetDeliveryDriverDto {
+  @IsBoolean()
+  enabled!: boolean;
 }

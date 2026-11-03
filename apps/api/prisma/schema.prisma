@@ -383,6 +383,8 @@ enum DisputeResolution {
 
 enum DeliveryShipmentStatus {
   QUOTED
+  /// Funded, waiting for the assigned rider to accept.
+  OFFERED
   ASSIGNED
   PICKED_UP
   IN_TRANSIT
@@ -1528,10 +1530,23 @@ model DeliveryShipment {
   status           DeliveryShipmentStatus @default(QUOTED)
   etaFrom          DateTime?
   etaTo            DateTime?
-  failureReason    String?
-  assignedDriverId String?                @db.Uuid
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  failureReason     String?
+  assignedDriverId  String?                @db.Uuid
+  /// Set when the assigned rider accepts. Addresses stay hidden until then.
+  driverAcceptedAt  DateTime?
+  /// How many times the buyer has asked for another attempt after FAILED.
+  attemptCount      Int                    @default(0)
+  /// Riders who declined this offer. Auto-assign skips them.
+  declinedDriverIds String[]               @default([])
+  pickupLine        String?
+  pickupLat         Float?
+  pickupLng         Float?
+  dropoffLine       String?
+  dropoffLat        Float?
+  dropoffLng        Float?
+  dropoffArea       String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 
   order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   assignedDriver User?           @relation("ShipmentDriver", fields: [assignedDriverId], references: [id], onDelete: SetNull)

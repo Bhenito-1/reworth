@@ -20,6 +20,7 @@ type UsersRes = {
     displayName: string | null;
     community: string | null;
     roles: string[];
+    isDeliveryDriver?: boolean;
     createdAt: string;
   }[];
 };
@@ -164,6 +165,16 @@ export default function UsersPage() {
                     `/admin/users/${row.id}/reset-verification`,
                     { method: "POST" },
                   );
+                  await reload();
+                }}
+              />
+              <ActionButton
+                label={row.isDeliveryDriver ? "Remove rider" : "Make rider"}
+                onClick={async () => {
+                  await adminFetch(`/admin/users/${row.id}/delivery-driver`, {
+                    method: "POST",
+                    body: { enabled: !row.isDeliveryDriver },
+                  });
                   await reload();
                 }}
               />

@@ -2,7 +2,11 @@
 import { ConflictException } from '@nestjs/common';
 import { NotificationChannel } from '@prisma/client';
 import { createHmac } from 'crypto';
-import { computeDeliveryFeeKobo } from '../providers/delivery.provider';
+import {
+  BULKY_DELIVERY_RATES,
+  computeDeliveryFeeKobo,
+  isBulkyDeliveryCategory,
+} from '../providers/delivery.provider';
 import { haversineKm } from '../providers/search.provider';
 import { MockDeliveryProvider } from '../providers/mock-delivery.provider';
 import { PartnerDeliveryProvider } from '../providers/partner-delivery.provider';
@@ -22,6 +26,11 @@ describe('delivery quote math', () => {
     expect(computeDeliveryFeeKobo(1)).toBe(150_000 + 15_000);
     expect(computeDeliveryFeeKobo(1.01)).toBe(150_000 + 30_000);
     expect(computeDeliveryFeeKobo(5)).toBe(150_000 + 75_000);
+    expect(isBulkyDeliveryCategory('home-furniture')).toBe(true);
+    expect(isBulkyDeliveryCategory('phones-tablets')).toBe(false);
+    expect(computeDeliveryFeeKobo(3.1, BULKY_DELIVERY_RATES)).toBe(
+      1_200_000 + 80_000 * 4,
+    );
   });
 
   it('MockDeliveryProvider quote uses haversine + formula', async () => {
@@ -412,7 +421,7 @@ describe('PartnerDeliveryProvider', () => {
     ).toBe(false);
     expect(
       PartnerDeliveryProvider.verifyWebhookSignature(raw, undefined, undefined),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 
@@ -592,5 +601,42 @@ describe('driver milestones', () => {
         'idem-fail',
       ),
     ).rejects.toThrow(/failureReason/i);
+  });
+
+  it('rejects a forward skip and hides another rider’s replay', async () => {
+    const idem = new Map<string, any>();
+    const { svc } = makeDriverService({
+      idem,
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'ASSIGNED',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+      },
+    });
+    await expect(
+      svc.submitDriverMilestone(
+        'driver-A',
+        'order-1',
+        { status: 'DELIVERED' },
+        'idem-skip',
+      ),
+    ).rejects.toThrow(/Cannot skip/i);
+
+    await svc.submitDriverMilestone(
+      'driver-A',
+      'order-1',
+      { status: 'PICKED_UP' },
+      'idem-owned',
+    );
+    await expect(
+      svc.submitDriverMilestone(
+        'driver-B',
+        'order-1',
+        { status: 'PICKED_UP' },
+        'idem-owned',
+      ),
+    ).rejects.toThrow(/Not assigned/i);
   });
 });

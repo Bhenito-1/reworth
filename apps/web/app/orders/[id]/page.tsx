@@ -22,6 +22,7 @@ import { getAccessToken } from "../../../lib/auth";
 import {
   discloseOrderAddress,
   getOrderShipment,
+  reattemptDelivery,
   type DeliveryShipment,
 } from "../../../lib/delivery";
 import {
@@ -122,6 +123,7 @@ export default function OrderDetailPage() {
     distanceKm: number | null;
   } | null>(null);
   const [discloseBusy, setDiscloseBusy] = useState(false);
+  const [reattemptBusy, setReattemptBusy] = useState(false);
   const [disclosedAddress, setDisclosedAddress] = useState<string | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -207,6 +209,21 @@ export default function OrderDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!shipment) return;
+    const live = [
+      "QUOTED",
+      "OFFERED",
+      "ASSIGNED",
+      "PICKED_UP",
+      "IN_TRANSIT",
+      "OUT_FOR_DELIVERY",
+    ].includes(shipment.status);
+    if (!live) return;
+    const timer = setInterval(() => void load(true), 8000);
+    return () => clearInterval(timer);
+  }, [shipment?.status, load]);
 
   useEffect(() => {
     if (searchParams.get("dispute") === "1") setDisputeOpen(true);
@@ -754,6 +771,30 @@ export default function OrderDetailPage() {
           <DeliveryExceptionBanner
             exception={deliveryException}
             role={isSeller ? "seller" : "buyer"}
+            reattemptBusy={reattemptBusy}
+            onReattempt={
+              isBuyer &&
+              shipment?.status === "FAILED" &&
+              (shipment.attemptCount ?? 0) < 2
+                ? () => {
+                    const token = getAccessToken();
+                    if (!token || !orderId) return;
+                    setReattemptBusy(true);
+                    void reattemptDelivery(token, orderId)
+                      .then(() => load(true))
+                      .catch((err: unknown) => {
+                        setToast({
+                          message:
+                            err instanceof ApiError
+                              ? err.message
+                              : "Could not ask for another attempt",
+                          tone: "error",
+                        });
+                      })
+                      .finally(() => setReattemptBusy(false));
+                  }
+                : undefined
+            }
             onDispute={
               canDispute
                 ? () => {

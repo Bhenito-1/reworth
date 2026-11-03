@@ -368,6 +368,14 @@ export default function AccountPage() {
               className="grid grid-cols-2 gap-3 sm:grid-cols-3"
               aria-label="Account modules"
             >
+              {me.isDeliveryDriver ? (
+                <Link
+                  href="/driver"
+                  className="flex min-w-0 items-center gap-2 rounded-[var(--rw-radius-lg)] border border-[var(--rw-accent)] bg-[var(--rw-bg-elevated)] px-3 py-3 text-sm font-semibold leading-tight text-[var(--rw-ink)]"
+                >
+                  <span className="min-w-0">Driver runs</span>
+                </Link>
+              ) : null}
               {ACCOUNT_LINKS.map((item) => (
                 <Link
                   key={item.href}

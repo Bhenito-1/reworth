@@ -6,12 +6,16 @@ type Props = {
   exception: DeliveryExceptionCopy;
   role: "buyer" | "seller";
   onDispute?: () => void;
+  onReattempt?: () => void;
+  reattemptBusy?: boolean;
 };
 
 export function DeliveryExceptionBanner({
   exception,
   role,
   onDispute,
+  onReattempt,
+  reattemptBusy,
 }: Props) {
   const actions =
     role === "buyer" ? exception.buyerActions : exception.sellerActions;
@@ -35,6 +39,16 @@ export function DeliveryExceptionBanner({
           <li key={a}>{a}</li>
         ))}
       </ul>
+      {onReattempt && role === "buyer" ? (
+        <button
+          type="button"
+          disabled={reattemptBusy}
+          className="mt-4 inline-flex min-h-10 items-center justify-center rounded-[var(--rw-radius)] border border-[var(--rw-ink)] px-4 text-sm font-semibold text-[var(--rw-ink)] disabled:opacity-50"
+          onClick={onReattempt}
+        >
+          {reattemptBusy ? "Asking…" : "Ask the rider to try again"}
+        </button>
+      ) : null}
       {onDispute && role === "buyer" ? (
         <button
           type="button"

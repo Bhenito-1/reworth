@@ -17,7 +17,6 @@ import { haversineKm } from '../src/providers/search.provider';
 import { computeOrderTotalKobo, computeProtectionFeeKobo } from '../src/orders/order-fees';
 
 const DRIVER_STATUSES = [
-  'ASSIGNED',
   'PICKED_UP',
   'IN_TRANSIT',
   'OUT_FOR_DELIVERY',
@@ -175,6 +174,7 @@ async function main() {
   );
 
   await delivery.assignDriver(order.id, driver.id);
+  await delivery.acceptDelivery(driver.id, order.id);
 
   for (const status of DRIVER_STATUSES) {
     const key = `demo-${order.id}-${status}`;

@@ -81,6 +81,11 @@ export class OrderDeliveryController {
   assignDriver(@Param('id') id: string, @Body() dto: AssignDriverDto) {
     return this.delivery.assignDriver(id, dto.driverUserId);
   }
+
+  @Post(':id/delivery/reattempt')
+  reattempt(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.delivery.reattemptDelivery(user.id, id);
+  }
 }
 
 @Controller('driver')
@@ -91,6 +96,16 @@ export class DriverDeliveryController {
   @Get('assignments')
   list(@CurrentUser() user: AuthUser) {
     return this.delivery.listDriverAssignments(user.id);
+  }
+
+  @Post('shipments/:orderId/accept')
+  accept(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string) {
+    return this.delivery.acceptDelivery(user.id, orderId);
+  }
+
+  @Post('shipments/:orderId/decline')
+  decline(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string) {
+    return this.delivery.declineDelivery(user.id, orderId);
   }
 
   @Post('shipments/:orderId/milestones')
@@ -120,13 +135,20 @@ export class DeliveryWebhookController {
     @Req() req: Request & { rawBody?: Buffer | string },
   ) {
     const secret = process.env.DELIVERY_WEBHOOK_SECRET;
+    const open =
+      (process.env.DELIVERY_WEBHOOK_OPEN ?? '').trim().toLowerCase() === 'true';
     if (secret) {
       const raw =
         typeof req.rawBody === 'string'
           ? req.rawBody
           : req.rawBody
             ? req.rawBody.toString('utf8')
-            : JSON.stringify(dto);
+            : '';
+      if (!raw) {
+        throw new UnauthorizedException(
+          'Delivery webhook requires the raw request body',
+        );
+      }
       const ok = PartnerDeliveryProvider.verifyWebhookSignature(
         raw,
         signature,
@@ -135,6 +157,10 @@ export class DeliveryWebhookController {
       if (!ok) {
         throw new UnauthorizedException('Invalid delivery webhook signature');
       }
+    } else if (!open) {
+      throw new UnauthorizedException(
+        'Delivery webhook secret is not configured',
+      );
     }
     return this.delivery.handleWebhook(dto);
   }

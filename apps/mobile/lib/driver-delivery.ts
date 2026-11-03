@@ -1,16 +1,30 @@
 import { apiFetch } from "./api";
 import type { DeliveryShipmentStatus } from "./delivery";
 
+export type DriverStop = {
+  line?: string | null;
+  area?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+};
+
 export type DriverAssignment = {
   orderId: string;
   shipmentId: string;
   status: DeliveryShipmentStatus;
+  accepted?: boolean;
   providerRef: string | null;
   etaFrom: string | null;
   etaTo: string | null;
+  distanceKm?: number | null;
   listingTitle: string | null;
   community: string | null;
   city: string | null;
+  sellerName?: string | null;
+  dropoffArea?: string | null;
+  pickup?: DriverStop | null;
+  dropoff?: DriverStop | null;
+  sellerPhone?: string | null;
   orderStatus: string;
 };
 
@@ -35,6 +49,31 @@ export function nextMilestone(
   status: DeliveryShipmentStatus,
 ): DeliveryShipmentStatus | null {
   return NEXT[status] ?? null;
+}
+
+export const MILESTONE_LABEL: Record<string, string> = {
+  PICKED_UP: "Collected",
+  IN_TRANSIT: "On the way",
+  OUT_FOR_DELIVERY: "Out for delivery",
+  DELIVERED: "Delivered",
+};
+
+export function milestoneButtonLabel(status: string): string {
+  return MILESTONE_LABEL[status] ?? status.replace(/_/g, " ");
+}
+
+export async function acceptDriverRun(token: string, orderId: string) {
+  return apiFetch<DriverMilestoneResult>(
+    `/driver/shipments/${orderId}/accept`,
+    { method: "POST", token },
+  );
+}
+
+export async function declineDriverRun(token: string, orderId: string) {
+  return apiFetch<DriverMilestoneResult>(
+    `/driver/shipments/${orderId}/decline`,
+    { method: "POST", token },
+  );
 }
 
 export async function listDriverAssignments(

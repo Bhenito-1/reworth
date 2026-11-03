@@ -10,12 +10,16 @@ import {
 import { ScrollView } from "./BoundScroll";
 import { getAccessToken } from "../lib/auth";
 import {
+  acceptDriverRun,
+  declineDriverRun,
   listDriverAssignments,
+  milestoneButtonLabel,
   nextMilestone,
   newIdempotencyKey,
   submitDriverMilestone,
   type DriverAssignment,
 } from "../lib/driver-delivery";
+import { shipmentStatusLabel } from "../lib/delivery";
 import { ApiError } from "../lib/api";
 import { colors } from "../theme/tokens";
 
@@ -23,7 +27,7 @@ type Props = {
   onOpenOrder?: (orderId: string) => void;
 };
 
-export function DriverRunsPanel({ onOpenOrder }: Props) {
+export function DriverRunsPanel({ onOpenOrder: _onOpenOrder }: Props) {
   const [rows, setRows] = useState<DriverAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +58,38 @@ export function DriverRunsPanel({ onOpenOrder }: Props) {
     void load();
   }, [load]);
 
+  async function accept(row: DriverAssignment) {
+    const token = await getAccessToken();
+    if (!token) return;
+    setBusyId(row.orderId);
+    setToast(null);
+    try {
+      await acceptDriverRun(token, row.orderId);
+      setToast("Accepted. Pickup and dropoff are now visible.");
+      await load();
+    } catch (e) {
+      setToast(e instanceof ApiError ? e.message : "Could not accept");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function decline(row: DriverAssignment) {
+    const token = await getAccessToken();
+    if (!token) return;
+    setBusyId(row.orderId);
+    setToast(null);
+    try {
+      await declineDriverRun(token, row.orderId);
+      setToast("Declined. The run goes to the next rider.");
+      await load();
+    } catch (e) {
+      setToast(e instanceof ApiError ? e.message : "Could not decline");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function advance(row: DriverAssignment, failed = false) {
     const token = await getAccessToken();
     if (!token) return;
@@ -83,7 +119,9 @@ export function DriverRunsPanel({ onOpenOrder }: Props) {
             : "Update not applied",
         );
       } else {
-        setToast(`Updated → ${result.status}`);
+        setToast(
+          `Updated → ${shipmentStatusLabel(result.status ?? status)}`,
+        );
       }
       await load();
     } catch (e) {
@@ -116,52 +154,88 @@ export function DriverRunsPanel({ onOpenOrder }: Props) {
         <Text style={styles.copy}>No active assignments.</Text>
       ) : null}
       {rows.map((row) => {
+        const offered = row.status === "OFFERED" && !row.accepted;
         const next = nextMilestone(row.status);
         const busy = busyId === row.orderId;
+        const pickup =
+          row.pickup?.line || row.pickup?.area || row.community || "Seller area";
+        const dropoff =
+          row.dropoff?.line || row.dropoff?.area || row.dropoffArea || "Buyer area";
         return (
           <View key={row.orderId} style={styles.card} testID={`driver-run-${row.orderId}`}>
-            <Pressable onPress={() => onOpenOrder?.(row.orderId)}>
-              <Text style={styles.cardTitle}>
-                {row.listingTitle ?? "Delivery"}
-              </Text>
-              <Text style={styles.meta}>
-                {row.status.replace(/_/g, " ")}
-                {row.community ? ` · ${row.community}` : ""}
-              </Text>
-            </Pressable>
-            <TextInput
-              style={styles.input}
-              placeholder="Failure reason (if needed)"
-              placeholderTextColor={colors.muted}
-              value={failReason[row.orderId] ?? ""}
-              onChangeText={(t) =>
-                setFailReason((prev) => ({ ...prev, [row.orderId]: t }))
-              }
-              accessibilityLabel="Failure reason"
-            />
+            <Text style={styles.cardTitle}>
+              {row.listingTitle ?? "Delivery"}
+            </Text>
+            <Text style={styles.meta}>
+              {shipmentStatusLabel(row.status)}
+              {row.community ? ` · ${row.community}` : ""}
+            </Text>
+            <Text style={styles.meta}>Pickup · {pickup}</Text>
+            <Text style={styles.meta}>Dropoff · {dropoff}</Text>
+            {row.sellerPhone ? (
+              <Text style={styles.meta}>Seller phone · {row.sellerPhone}</Text>
+            ) : null}
+            {offered ? null : (
+              <TextInput
+                style={styles.input}
+                placeholder="Failure reason (if needed)"
+                placeholderTextColor={colors.muted}
+                value={failReason[row.orderId] ?? ""}
+                onChangeText={(t) =>
+                  setFailReason((prev) => ({ ...prev, [row.orderId]: t }))
+                }
+                accessibilityLabel="Failure reason"
+              />
+            )}
             <View style={styles.row}>
-              {next ? (
+              {offered ? (
+                <>
+                  <Pressable
+                    style={[styles.btn, styles.btnPrimary]}
+                    disabled={busy}
+                    onPress={() => void accept(row)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Accept delivery"
+                  >
+                    <Text style={styles.btnPrimaryText}>
+                      {busy ? "…" : "Accept delivery"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.btn, styles.btnDanger]}
+                    disabled={busy}
+                    onPress={() => void decline(row)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Decline delivery"
+                  >
+                    <Text style={styles.btnDangerText}>Decline</Text>
+                  </Pressable>
+                </>
+              ) : null}
+              {!offered && next ? (
                 <Pressable
                   style={[styles.btn, styles.btnPrimary]}
                   disabled={busy}
                   onPress={() => void advance(row, false)}
                   accessibilityRole="button"
-                  accessibilityLabel={`Mark ${next}`}
+                  accessibilityLabel={`Mark ${milestoneButtonLabel(next)}`}
                 >
                   <Text style={styles.btnPrimaryText}>
-                    {busy ? "…" : `Mark ${next.replace(/_/g, " ")}`}
+                    {busy ? "…" : `Mark ${milestoneButtonLabel(next)}`}
                   </Text>
                 </Pressable>
               ) : null}
-              <Pressable
-                style={[styles.btn, styles.btnDanger]}
-                disabled={busy}
-                onPress={() => void advance(row, true)}
-                accessibilityRole="button"
-                accessibilityLabel="Mark failed"
-              >
-                <Text style={styles.btnDangerText}>Failed</Text>
-              </Pressable>
+              {offered ? null : (
+                <Pressable
+                  style={[styles.btn, styles.btnDanger]}
+                  disabled={busy}
+                  onPress={() => void advance(row, true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Could not deliver"
+                >
+                  <Text style={styles.btnDangerText}>Could not deliver</Text>
+                </Pressable>
+              )}
             </View>
           </View>
         );

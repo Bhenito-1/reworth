@@ -26,7 +26,11 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdminPortalService } from './admin-portal.service';
 import { USERS_READ } from './admin-roles';
-import { AssignRoleDto, CreateAdminUserDto } from './dto/admin-users.dto';
+import {
+  AssignRoleDto,
+  CreateAdminUserDto,
+  SetDeliveryDriverDto,
+} from './dto/admin-users.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard, AdminOnlyGuard)
@@ -112,6 +116,7 @@ export class AdminUsersController {
       email: user.email,
       phone: user.phone,
       status: user.status,
+      isDeliveryDriver: user.isDeliveryDriver,
       profile: user.profile
         ? {
             displayName: user.profile.displayName,
@@ -161,5 +166,31 @@ export class AdminUsersController {
     });
 
     return { ok: true, userId: id, role: dto.role };
+  }
+
+  @Post('users/:id/delivery-driver')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.OPERATIONS)
+  async setDeliveryDriver(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: SetDeliveryDriverDto,
+    @Req() req: { ip?: string },
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: { isDeliveryDriver: dto.enabled },
+    });
+    await this.audit.log({
+      actorUserId: actor.id,
+      actorRole: actor.roles[0] ?? null,
+      action: dto.enabled ? 'DELIVERY_DRIVER_GRANTED' : 'DELIVERY_DRIVER_REVOKED',
+      entityType: 'User',
+      entityId: id,
+      afterJson: { isDeliveryDriver: updated.isDeliveryDriver },
+      ip: req.ip ?? null,
+    });
+    return { ok: true, userId: id, isDeliveryDriver: updated.isDeliveryDriver };
   }
 }

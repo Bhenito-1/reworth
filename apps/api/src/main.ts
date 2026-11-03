@@ -11,6 +11,26 @@ import { AppModule } from './app.module';
 import { defaultMediaRoot } from './providers/local-fs-storage.adapter';
 import { isSwaggerDocsPath, setupSwagger } from './swagger';
 
+/** localhost and 127.0.0.1 are different browser logins. Allow both for one dev server. */
+function withLoopbackTwins(origins: string[]): string[] {
+  const extra: string[] = [];
+  for (const origin of origins) {
+    try {
+      const url = new URL(origin);
+      if (url.hostname === 'localhost') {
+        url.hostname = '127.0.0.1';
+        extra.push(url.origin);
+      } else if (url.hostname === '127.0.0.1') {
+        url.hostname = 'localhost';
+        extra.push(url.origin);
+      }
+    } catch {
+      /* leave non-URL origins as given */
+    }
+  }
+  return [...new Set([...origins, ...extra])];
+}
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
@@ -18,12 +38,15 @@ async function bootstrap() {
   });
   app.useLogger(app.get(Logger));
 
-  const webOrigins = (
-    process.env.WEB_ORIGIN ?? 'http://localhost:3000,http://localhost:3003'
-  )
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const webOrigins = withLoopbackTwins(
+    (
+      process.env.WEB_ORIGIN ??
+      'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3003'
+    )
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
   const adminOrigin = process.env.ADMIN_ORIGIN ?? 'http://localhost:3002';
   const mobileWebOrigins = (
     process.env.MOBILE_WEB_ORIGINS ??
@@ -88,6 +111,26 @@ async function bootstrap() {
   // Preserve raw body for Paystack webhook HMAC (ADR-002)
   app.use(
     '/api/v1/webhooks/paystack',
+    raw({ type: '*/*' }),
+    (
+      req: { body?: Buffer | unknown; rawBody?: Buffer },
+      _res: unknown,
+      next: () => void,
+    ) => {
+      if (Buffer.isBuffer(req.body)) {
+        req.rawBody = req.body;
+        try {
+          req.body = JSON.parse(req.body.toString('utf8'));
+        } catch {
+          /* leave as-is if not JSON */
+        }
+      }
+      next();
+    },
+  );
+  // Delivery partner webhook HMAC. Sign the raw bytes, not a re-serialized body.
+  app.use(
+    '/api/v1/webhooks/delivery',
     raw({ type: '*/*' }),
     (
       req: { body?: Buffer | unknown; rawBody?: Buffer },

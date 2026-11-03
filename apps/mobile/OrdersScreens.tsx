@@ -27,6 +27,7 @@ import {
   formatDeliveryEta,
   getDeliveryQuote,
   getOrderShipment,
+  reattemptDelivery,
   privacyBeforePayCopy,
   type DeliveryShipment,
 } from "./lib/delivery";
@@ -898,6 +899,21 @@ export function OrderDetailModal({
     else setOrder(null);
   }, [orderId, load]);
 
+  useEffect(() => {
+    if (!shipment) return;
+    const live = [
+      "QUOTED",
+      "OFFERED",
+      "ASSIGNED",
+      "PICKED_UP",
+      "IN_TRANSIT",
+      "OUT_FOR_DELIVERY",
+    ].includes(String(shipment.status));
+    if (!live) return;
+    const timer = setInterval(() => void load(true), 8000);
+    return () => clearInterval(timer);
+  }, [shipment?.status, load]);
+
   function applyCancelled(current: OrderDetail): OrderDetail {
     return {
       ...current,
@@ -1185,6 +1201,28 @@ export function OrderDetailModal({
                         <DeliveryExceptionBanner
                           exception={ex}
                           role={isSeller ? "seller" : "buyer"}
+                          onReattempt={
+                            isBuyer &&
+                            shipment.status === "FAILED" &&
+                            (shipment.attemptCount ?? 0) < 2
+                              ? () => {
+                                  void (async () => {
+                                    const token = await getAccessToken();
+                                    if (!token) return;
+                                    try {
+                                      await reattemptDelivery(token, order.id);
+                                      await load(true);
+                                    } catch (err) {
+                                      setError(
+                                        err instanceof ApiError
+                                          ? err.message
+                                          : "Could not ask for another attempt",
+                                      );
+                                    }
+                                  })();
+                                }
+                              : undefined
+                          }
                           onDispute={
                             allowDispute
                               ? () => {
