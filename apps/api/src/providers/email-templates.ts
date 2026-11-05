@@ -18,6 +18,15 @@ export type TransactionalEmailInput = {
   cta?: EmailCta;
   footerNote?: string;
   appUrl?: string;
+  /** Bottom legal/context line under the card. */
+  disclaimer?: string;
+};
+
+export type SupportRequestEmailInput = {
+  name: string;
+  email: string;
+  message: string;
+  appUrl?: string;
 };
 
 const BRAND = {
@@ -93,6 +102,9 @@ export function renderTransactionalEmail(input: TransactionalEmailInput): {
       ? { ...input.cta, url: resolvePublicAppUrl(input.cta.url)! }
       : undefined;
   const footer = input.footerNote ?? 'Thanks,\nThe ReWorth Team';
+  const disclaimer =
+    input.disclaimer ??
+    'Sent by ReWorth because you have an account with us.';
 
   const textBlocks: string[] = [];
   if (input.greeting) textBlocks.push(input.greeting);
@@ -109,7 +121,7 @@ export function renderTransactionalEmail(input: TransactionalEmailInput): {
   const paragraphHtml = paragraphs
     .map(
       (p) =>
-        `<p style="margin:0 0 16px;font-size:16px;line-height:1.55;color:${BRAND.ink};font-family:${FONT};">${escapeHtml(p)}</p>`,
+        `<p style="margin:0 0 16px;font-size:16px;line-height:1.55;color:${BRAND.ink};font-family:${FONT};">${escapeHtml(p).replace(/\n/g, '<br />')}</p>`,
     )
     .join('');
 
@@ -182,7 +194,7 @@ export function renderTransactionalEmail(input: TransactionalEmailInput): {
           </tr>
         </table>
         <p style="margin:16px 0 0;max-width:560px;font-size:11px;line-height:1.45;color:${BRAND.muted};font-family:${FONT};">
-          Sent by ReWorth because you have an account with us.
+          ${escapeHtml(disclaimer)}
         </p>
       </td>
     </tr>
@@ -191,6 +203,65 @@ export function renderTransactionalEmail(input: TransactionalEmailInput): {
 </html>`;
 
   return { text, html };
+}
+
+/** Internal inbox email when someone submits /support. */
+export function renderSupportRequestEmail(
+  input: SupportRequestEmailInput,
+): { subject: string; text: string; html: string } {
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  const message = input.message.trim();
+  const preview = message.slice(0, 110);
+  const drafted = renderTransactionalEmail({
+    preview,
+    title: 'New support request',
+    paragraphs: [
+      `From: ${name}`,
+      `Email: ${email}`,
+      'Message:',
+      message,
+      'Tip: use Reply in your mail client to answer this customer directly.',
+    ],
+    footerNote: 'ReWorth Support',
+    appUrl: input.appUrl,
+    disclaimer:
+      'Inbound support request from the ReWorth contact form. Reply goes to the customer.',
+  });
+
+  return {
+    subject: `ReWorth support · ${name}`,
+    text: drafted.text,
+    html: drafted.html,
+  };
+}
+
+/** Confirmation email to the person who contacted support. */
+export function renderSupportAcknowledgementEmail(
+  input: SupportRequestEmailInput,
+): { subject: string; text: string; html: string } {
+  const name = input.name.trim();
+  const greetingName = name.split(/\s+/)[0] || name;
+  const drafted = renderTransactionalEmail({
+    preview: 'We received your message and will reply soon.',
+    title: 'We got your support request',
+    greeting: `Hi ${greetingName},`,
+    paragraphs: [
+      'Thanks for contacting ReWorth Support. We have received your message and will get back to you by email as soon as we can.',
+      'For reference, here is a copy of what you sent:',
+      input.message.trim(),
+    ],
+    footerNote: 'Thanks,\nThe ReWorth Support Team',
+    appUrl: input.appUrl,
+    disclaimer:
+      'You received this email because you contacted ReWorth Support.',
+  });
+
+  return {
+    subject: 'We received your ReWorth support request',
+    text: drafted.text,
+    html: drafted.html,
+  };
 }
 
 /** Wrap free-form notification body in the brand shell. */

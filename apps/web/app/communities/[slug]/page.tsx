@@ -268,7 +268,7 @@ export default function CommunityDetailPage() {
               ) : (
                 <ul className="mt-4 flex flex-wrap gap-3">
                   {listings.map((item) => (
-                    <li key={item.id} className="w-44 shrink-0">
+                    <li key={item.id} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
                       <DiscoveryListingCard listing={item} />
                     </li>
                   ))}

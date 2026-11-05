@@ -68,7 +68,7 @@
 | Simulator screenshots (iOS + Android) | Mobile | ☐ |
 | Store descriptions + keywords | Marketing | ☐ |
 | Tagline: *Lagos, your unused things are worth something.* | Brand | ☐ |
-| Web PWA installability (manifest + icons) | Web | ☐ / deferred if gap |
+| Web PWA installability (manifest + icons + offline SW + screenshots) | Web | ☑ code ready — confirm on HTTPS device / Lighthouse |
 
 ## External sign-offs still required
 

@@ -18,7 +18,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   ListNotificationsQueryDto,
   PatchPreferencesDto,
-  RegisterPushTokenDto,
+  WebPushSubscriptionDto,
+  DeleteWebPushSubscriptionDto,
 } from './dto/notifications.dto';
 import { NotificationsService } from './notifications.service';
 
@@ -89,21 +90,32 @@ export class NotificationsController {
     return this.notifications.markRead(user.id, id);
   }
 }
-
 @Controller('devices')
 @UseGuards(JwtAuthGuard)
 export class DevicesController {
   constructor(private readonly notifications: NotificationsService) {}
 
-  @Post('push-token')
-  register(
+  @Get('web-push/vapid-key')
+  vapidKey() {
+    return this.notifications.getWebPushPublicKey();
+  }
+
+  @Post('web-push-subscriptions')
+  registerWebPush(
     @CurrentUser() user: AuthUser,
-    @Body() dto: RegisterPushTokenDto,
+    @Body() dto: WebPushSubscriptionDto,
   ) {
-    return this.notifications.registerPushToken(
+    return this.notifications.registerWebPushSubscription(user.id, dto);
+  }
+
+  @Delete('web-push-subscriptions')
+  removeWebPush(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: DeleteWebPushSubscriptionDto,
+  ) {
+    return this.notifications.removeWebPushSubscription(
       user.id,
-      dto.token,
-      dto.platform,
+      dto.endpoint,
     );
   }
 }

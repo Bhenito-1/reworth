@@ -477,7 +477,7 @@ export default function ListingPdpPage() {
     return (
       <main className="min-h-[100dvh] bg-[var(--rw-bg)] px-4 py-8 sm:px-8">
         <div className="mx-auto max-w-3xl space-y-4">
-          <Skeleton className="h-[50dvh] w-full" label="Loading gallery" />
+          <Skeleton className="aspect-[4/5] max-h-[70dvh] w-full sm:aspect-[3/4] lg:aspect-[16/10]" label="Loading gallery" />
           <Skeleton className="h-8 w-1/2" label="Loading price" />
           <Skeleton className="h-6 w-3/4" label="Loading title" />
           <Skeleton className="h-32 w-full" label="Loading details" />
@@ -568,16 +568,17 @@ export default function ListingPdpPage() {
 
         <section aria-label="Photo gallery" className="rw-fade-up">
           {images.length === 0 ? (
-            <div className="flex h-[50dvh] items-center justify-center rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)] text-sm text-[var(--rw-ink-muted)]">
+            <div className="flex aspect-[4/5] max-h-[70dvh] items-center justify-center rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)] text-sm text-[var(--rw-ink-muted)] sm:aspect-[3/4] sm:max-h-[min(70dvh,36rem)] lg:aspect-[16/10] lg:max-h-[min(72dvh,42rem)]">
               No photos yet
             </div>
           ) : (
-            <div className="relative h-[50dvh] overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)]">
+            <div className="relative aspect-[4/5] max-h-[70dvh] overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)] sm:aspect-[3/4] sm:max-h-[min(70dvh,36rem)] lg:aspect-[16/10] lg:max-h-[min(72dvh,42rem)]">
               {listingImageUrl(images[photoIndex]) ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={listingImageUrl(images[photoIndex]) ?? ""}
                   alt={`Photo ${photoIndex + 1} of ${images.length}`}
+                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 56rem"
                   className="h-full w-full object-cover"
                 />
               ) : null}
@@ -1107,7 +1108,7 @@ export default function ListingPdpPage() {
             </h2>
             <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
               {similarInCategory.map((item) => (
-                <li key={item.id} className="w-44 shrink-0">
+                <li key={item.id} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
                   <DiscoveryListingCard listing={item} />
                 </li>
               ))}

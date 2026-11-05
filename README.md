@@ -74,7 +74,7 @@ pnpm test:e2e
 
 ## Stack
 
-Expo · Next.js 15 · NestJS · PostgreSQL/Prisma · Redis/BullMQ · adobe/s3mock · OpenSearch · Paystack · OpenAI — see ADR-001 / ADR-010.
+Next.js 15 PWA · NestJS · PostgreSQL/Prisma · Redis/BullMQ · adobe/s3mock · OpenSearch · Paystack · OpenAI — see ADR-001 / ADR-010.
 
 ## License
 

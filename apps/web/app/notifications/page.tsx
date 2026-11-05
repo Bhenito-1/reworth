@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
+import { PullToRefresh } from "../../components/PullToRefresh";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import { listConversations } from "../../lib/chat";
@@ -21,6 +22,7 @@ export default function NotificationsPage() {
   const router = useRouter();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{
@@ -28,13 +30,15 @@ export default function NotificationsPage() {
     tone?: "info" | "success" | "warn" | "error";
   } | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
     const token = getAccessToken();
     if (!token) {
       router.replace("/");
       return;
     }
-    setLoading(true);
+    const soft = Boolean(opts?.soft);
+    if (soft) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const rows = await listNotifications(token);
@@ -46,7 +50,8 @@ export default function NotificationsPage() {
       }
       setError(err instanceof ApiError ? err.message : "Could not load");
     } finally {
-      setLoading(false);
+      if (soft) setRefreshing(false);
+      else setLoading(false);
     }
   }, [router]);
 
@@ -157,7 +162,10 @@ export default function NotificationsPage() {
         }}
       />
 
-      <div className="relative z-10 mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-8">
+      <PullToRefresh
+        className="relative z-10 mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-8"
+        onRefresh={() => load({ soft: true })}
+      >
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">
@@ -267,7 +275,7 @@ export default function NotificationsPage() {
             })}
           </ul>
         )}
-      </div>
+      </PullToRefresh>
 
       {toast ? (
         <div className="fixed bottom-8 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2">

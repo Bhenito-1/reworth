@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
+import { Button, EmptyState, Modal, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 import {
@@ -13,6 +13,9 @@ import {
   channelLabel,
   getNotificationPreferences,
   isCriticalCategory,
+  getWebPushVapidKey,
+  saveWebPushSubscription,
+  deleteWebPushSubscription,
   patchNotificationPreference,
   type NotificationChannel,
   type NotificationPreference,
@@ -34,6 +37,9 @@ export default function NotificationSettingsPage() {
   const [quietStart, setQuietStart] = useState("22");
   const [quietEnd, setQuietEnd] = useState("7");
   const [quietBusy, setQuietBusy] = useState(false);
+  const [browserPushEnabled, setBrowserPushEnabled] = useState(false);
+  const [browserPushBusy, setBrowserPushBusy] = useState(false);
+  const [pushPrimeOpen, setPushPrimeOpen] = useState(false);
   const [toast, setToast] = useState<{
     message: string;
     tone?: "info" | "success" | "warn" | "error";
@@ -85,6 +91,134 @@ export default function NotificationSettingsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let active = true;
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      void navigator.serviceWorker.ready.then(async (registration) => {
+        const subscription = await registration.pushManager.getSubscription();
+        if (active) setBrowserPushEnabled(Boolean(subscription));
+      }).catch(() => undefined);
+    }
+    return () => { active = false; };
+  }, []);
+
+  async function disableBrowserPush() {
+    const token = getAccessToken();
+    if (!token) return;
+    setBrowserPushBusy(true);
+    try {
+      if (!("serviceWorker" in navigator)) {
+        throw new Error("This browser does not support service workers");
+      }
+      const registration = await navigator.serviceWorker.ready;
+      const current = await registration.pushManager.getSubscription();
+      await deleteWebPushSubscription(token, current?.endpoint).catch(() =>
+        deleteWebPushSubscription(token),
+      );
+      if (current) {
+        await current.unsubscribe().catch(() => undefined);
+      }
+      await deleteWebPushSubscription(token).catch(() => undefined);
+      setBrowserPushEnabled(false);
+      setToast({ message: "Browser notifications disabled", tone: "success" });
+    } catch (err) {
+      setToast({
+        message:
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Could not disable browser notifications",
+        tone: "error",
+      });
+    } finally {
+      setBrowserPushBusy(false);
+    }
+  }
+
+  /** Completes subscribe after permission is already granted (or just requested). */
+  async function enableBrowserPush() {
+    const token = getAccessToken();
+    if (!token) return;
+    setBrowserPushBusy(true);
+    try {
+      if (!("serviceWorker" in navigator)) {
+        throw new Error("This browser does not support service workers");
+      }
+      if (!("Notification" in window) || !("PushManager" in window)) {
+        throw new Error("This browser does not support push notifications");
+      }
+
+      let permission = Notification.permission;
+      if (permission === "default") {
+        permission = await Notification.requestPermission();
+      }
+      if (permission === "denied") {
+        throw new Error(
+          "Notifications are blocked for this site. Allow them in your browser site settings, then try Enable again.",
+        );
+      }
+      if (permission !== "granted") {
+        throw new Error("Notification permission was not granted");
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      const { publicKey } = await getWebPushVapidKey(token);
+      const padded = publicKey.replace(/-/g, "+").replace(/_/g, "/");
+      const padLen = (4 - (padded.length % 4)) % 4;
+      const applicationServerKey = Uint8Array.from(
+        atob(`${padded}${"=".repeat(padLen)}`),
+        (char) => char.charCodeAt(0),
+      );
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
+      const json = subscription.toJSON();
+      if (!json.keys?.p256dh || !json.keys.auth) {
+        await subscription.unsubscribe();
+        throw new Error("Browser returned an incomplete push subscription");
+      }
+      await saveWebPushSubscription(token, {
+        endpoint: subscription.endpoint,
+        expirationTime: subscription.expirationTime,
+        keys: json.keys as { p256dh: string; auth: string },
+      });
+      setBrowserPushEnabled(true);
+      setToast({ message: "Browser notifications enabled", tone: "success" });
+    } catch (err) {
+      setToast({
+        message:
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Could not enable browser notifications",
+        tone: "error",
+      });
+    } finally {
+      setBrowserPushBusy(false);
+    }
+  }
+
+  function onBrowserPushButtonClick() {
+    if (browserPushBusy) return;
+    if (browserPushEnabled) {
+      void disableBrowserPush();
+      return;
+    }
+    if (!("Notification" in window)) {
+      setToast({
+        message: "This browser does not support push notifications",
+        tone: "error",
+      });
+      return;
+    }
+    // Always show the ReWorth step first. The native browser dialog only
+    // appears after Continue, and only if permission was never decided.
+    setPushPrimeOpen(true);
+  }
 
   const criticalNote = useMemo(
     () =>
@@ -207,6 +341,22 @@ export default function NotificationSettingsPage() {
           </div>
         ) : (
           <div className="mt-8 space-y-6">
+            <section className="flex flex-wrap items-center justify-between gap-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4">
+              <div>
+                <h2 className="text-base font-semibold">Browser push notifications</h2>
+                <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
+                  Get offers, messages, and order updates as system alerts — even when ReWorth is closed.
+                  You can turn this off anytime.
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                disabled={browserPushBusy}
+                onClick={onBrowserPushButtonClick}
+              >
+                {browserPushBusy ? "…" : browserPushEnabled ? "Disable" : "Enable"}
+              </Button>
+            </section>
             <section
               className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
               aria-labelledby="quiet-hours-heading"
@@ -316,6 +466,86 @@ export default function NotificationSettingsPage() {
           </div>
         )}
       </div>
+
+      <Modal
+        open={pushPrimeOpen}
+        onClose={() => setPushPrimeOpen(false)}
+        title="Stay in the loop"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/icons/pwa-192.png"
+              alt=""
+              width={48}
+              height={48}
+              className="h-12 w-12 shrink-0 rounded-xl"
+            />
+            <p className="text-sm leading-relaxed text-[var(--rw-ink-muted)]">
+              {typeof Notification !== "undefined" &&
+              Notification.permission === "granted"
+                ? "ReWorth will send alerts for messages, offers, and orders on this device. You’ve already allowed notifications in your browser, so enabling won’t show another browser dialog."
+                : typeof Notification !== "undefined" &&
+                    Notification.permission === "denied"
+                  ? "Notifications are blocked for this site in your browser. Open site settings, allow notifications, then come back and enable."
+                  : "ReWorth can alert you about messages, offers, and orders on this device. Next, your browser will ask you to Allow — that system dialog can’t be restyled, but you only see it once."}
+            </p>
+          </div>
+          <ul className="space-y-2 text-sm text-[var(--rw-ink)]">
+            <li className="flex gap-2">
+              <span className="text-[var(--rw-accent)]" aria-hidden>
+                •
+              </span>
+              Messages and offers from buyers or sellers
+            </li>
+            <li className="flex gap-2">
+              <span className="text-[var(--rw-accent)]" aria-hidden>
+                •
+              </span>
+              Payment and delivery updates
+            </li>
+            <li className="flex gap-2">
+              <span className="text-[var(--rw-accent)]" aria-hidden>
+                •
+              </span>
+              Turn off anytime with Disable
+            </li>
+          </ul>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="secondary"
+              disabled={browserPushBusy}
+              onClick={() => setPushPrimeOpen(false)}
+            >
+              Not now
+            </Button>
+            {typeof Notification !== "undefined" &&
+            Notification.permission === "denied" ? (
+              <Button
+                variant="primary"
+                onClick={() => setPushPrimeOpen(false)}
+              >
+                Got it
+              </Button>
+            ) : (
+              <Button
+                variant="primary"
+                disabled={browserPushBusy}
+                onClick={() => {
+                  setPushPrimeOpen(false);
+                  void enableBrowserPush();
+                }}
+              >
+                {typeof Notification !== "undefined" &&
+                Notification.permission === "granted"
+                  ? "Enable alerts"
+                  : "Continue"}
+              </Button>
+            )}
+          </div>
+        </div>
+      </Modal>
 
       {toast ? (
         <div className="fixed bottom-8 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2">

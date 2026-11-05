@@ -2,6 +2,8 @@ import {
   isNoReplyAddress,
   parseFromAddress,
   renderNotificationEmail,
+  renderSupportAcknowledgementEmail,
+  renderSupportRequestEmail,
   renderTransactionalEmail,
   resolvePublicAppUrl,
 } from './email-templates';
@@ -62,5 +64,30 @@ describe('email-templates', () => {
     });
     expect(html).toContain('New offer');
     expect(html).toContain('https://app.reworth.ng/chats/abc');
+  });
+
+  it('renders support request and acknowledgement templates', () => {
+    const inbound = renderSupportRequestEmail({
+      name: 'Ada Okafor',
+      email: 'ada@example.com',
+      message: 'I cannot complete checkout on my order.\nPlease help.',
+      appUrl: 'https://app.reworth.ng',
+    });
+    expect(inbound.subject).toContain('Ada Okafor');
+    expect(inbound.text).toContain('ada@example.com');
+    expect(inbound.text).toContain('cannot complete checkout');
+    expect(inbound.html).toContain('New support request');
+    expect(inbound.html).toContain('ada@example.com');
+    expect(inbound.html).not.toContain('because you have an account');
+
+    const ack = renderSupportAcknowledgementEmail({
+      name: 'Ada Okafor',
+      email: 'ada@example.com',
+      message: 'I cannot complete checkout on my order.',
+    });
+    expect(ack.subject).toMatch(/received/i);
+    expect(ack.text).toContain('Hi Ada,');
+    expect(ack.html).toContain('We got your support request');
+    expect(ack.html).toContain('I cannot complete checkout');
   });
 });

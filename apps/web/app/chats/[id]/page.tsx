@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { formatNgn, nairaToKobo } from "@reworth/shared";
+import {
+  containsProhibitedChatContact,
+  formatNgn,
+  nairaToKobo,
+  PROHIBITED_CHAT_WARNING,
+} from "@reworth/shared";
 import {
   Button,
   EmptyState,
@@ -30,7 +35,6 @@ import {
   meetupMapsUrl,
   muteConversation,
   parseMeetupPin,
-  postMeetupPin,
   postMessage,
   rejectOffer,
   reportUser,
@@ -111,12 +115,8 @@ export default function ChatThreadPage() {
   const [sending, setSending] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const [offerBusy, setOfferBusy] = useState(false);
-  const [pinOpen, setPinOpen] = useState(false);
-  const [pinLabel, setPinLabel] = useState("Meetup point");
-  const [pinLat, setPinLat] = useState("6.4474");
-  const [pinLng, setPinLng] = useState("3.4721");
-  const [pinBusy, setPinBusy] = useState(false);
   const [counterFor, setCounterFor] = useState<OfferDto | null>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
   const [counterNaira, setCounterNaira] = useState("");
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
@@ -370,6 +370,10 @@ export default function ChatThreadPage() {
     const token = getAccessToken();
     const text = draft.trim();
     if (!token || !conversationId || !text || !meId) return;
+    if (containsProhibitedChatContact(text)) {
+      setToast({ message: PROHIBITED_CHAT_WARNING, tone: "warn" });
+      return;
+    }
     setSending(true);
     const cid = clientMsgId();
     const optimistic: ChatMessage = {
@@ -389,6 +393,7 @@ export default function ChatThreadPage() {
     };
     setMessages((prev) => [...prev, optimistic]);
     setDraft("");
+    requestAnimationFrame(resizeDraft);
     try {
       const saved = await postMessage(token, conversationId, {
         type: "TEXT",
@@ -407,6 +412,7 @@ export default function ChatThreadPage() {
     } catch (err) {
       setMessages((prev) => prev.filter((m) => m.clientMsgId !== cid));
       setDraft(text);
+      requestAnimationFrame(resizeDraft);
       setToast({
         message: err instanceof ApiError ? err.message : "Send failed",
         tone: "error",
@@ -416,55 +422,15 @@ export default function ChatThreadPage() {
     }
   }
 
-  function useBrowserLocation() {
-    if (!navigator.geolocation) {
-      setToast({ message: "Geolocation not available in this browser", tone: "warn" });
-      return;
-    }
-    setPinBusy(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setPinLat(String(pos.coords.latitude));
-        setPinLng(String(pos.coords.longitude));
-        setPinBusy(false);
-        setToast({ message: "Location filled from GPS", tone: "success" });
-      },
-      () => {
-        setPinBusy(false);
-        setToast({ message: "Could not get location permission", tone: "error" });
-      },
-      { enableHighAccuracy: false, timeout: 15000 },
-    );
-  }
-
-  async function shareMeetupPin() {
-    const token = getAccessToken();
-    if (!token || !conversationId) return;
-    const lat = Number(pinLat);
-    const lng = Number(pinLng);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      setToast({ message: "Enter valid lat/lng", tone: "warn" });
-      return;
-    }
-    setPinBusy(true);
-    try {
-      const saved = await postMeetupPin(token, conversationId, {
-        lat,
-        lng,
-        label: pinLabel.trim() || "Meetup point",
-        clientMsgId: clientMsgId(),
-      });
-      setMessages((prev) => [...prev, saved]);
-      setPinOpen(false);
-      setToast({ message: "Meetup pin shared", tone: "success" });
-    } catch (err) {
-      setToast({
-        message: err instanceof ApiError ? err.message : "Could not share pin",
-        tone: "error",
-      });
-    } finally {
-      setPinBusy(false);
-    }
+  function resizeDraft() {
+    const el = draftRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const lineHeight = 24;
+    const padding = 20; // py-2.5 ≈ 10+10
+    const maxHeight = lineHeight * 4 + padding;
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
   }
 
   async function submitOffer(amountKobo: number, note?: string) {
@@ -1008,19 +974,27 @@ export default function ChatThreadPage() {
                     </p>
                   ) : (
                     <div
-                      className={[
-                        "max-w-[85%] min-w-0 break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed",
-                        mine
-                          ? "ml-auto bg-[var(--rw-accent)] text-white"
-                          : "mr-auto border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]",
-                      ].join(" ")}
+                      className={
+                        mine ? "flex justify-end" : "flex justify-start"
+                      }
                     >
-                      {!mine && m.sender?.displayName ? (
-                        <p className="mb-1 text-xs font-semibold opacity-70">
-                          {m.sender.displayName}
+                      <div
+                        className={[
+                          "w-fit max-w-[min(75%,18.5rem)] break-words rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed sm:max-w-[min(70%,22rem)]",
+                          mine
+                            ? "bg-[var(--rw-accent)] text-white"
+                            : "border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]",
+                        ].join(" ")}
+                      >
+                        {!mine && m.sender?.displayName ? (
+                          <p className="mb-1 text-xs font-semibold opacity-70">
+                            {m.sender.displayName}
+                          </p>
+                        ) : null}
+                        <p className="whitespace-pre-wrap break-words">
+                          {m.body}
                         </p>
-                      ) : null}
-                      <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                      </div>
                     </div>
                   )}
                 </li>
@@ -1052,50 +1026,46 @@ export default function ChatThreadPage() {
             </Button>
           ) : (
             <>
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void sendText();
-              }
-            }}
-            placeholder="Message…"
-            aria-label="Message"
-            maxLength={4000}
-            className="w-full min-w-0 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
-          />
-          <div className="flex min-w-0 gap-2">
-            <Button
-              variant="primary"
-              size="sm"
-              className="shrink-0"
-              disabled={sending || !draft.trim()}
-              onClick={() => void sendText()}
-            >
-              Send
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="min-w-0 flex-1"
-              onClick={() => setOfferOpen(true)}
-              disabled={!meta}
-            >
-              Make offer
-            </Button>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              className="flex-1"
-              onClick={() => setPinOpen(true)}
-              disabled={!meta || sending}
-            >
-              Meetup pin
-            </Button>
+          <div className="flex min-w-0 items-end gap-2">
+            <textarea
+              ref={draftRef}
+              rows={1}
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                requestAnimationFrame(resizeDraft);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void sendText();
+                }
+              }}
+              placeholder="Message…"
+              aria-label="Message"
+              maxLength={4000}
+              className="max-h-[7.25rem] min-h-[2.75rem] min-w-0 flex-1 resize-none overflow-y-hidden rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+            />
+            <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
+              <Button
+                variant="primary"
+                size="sm"
+                className="shrink-0"
+                disabled={sending || !draft.trim()}
+                onClick={() => void sendText()}
+              >
+                Send
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="shrink-0 whitespace-nowrap"
+                onClick={() => setOfferOpen(true)}
+                disabled={!meta}
+              >
+                Make offer
+              </Button>
+            </div>
           </div>
             </>
           )}
@@ -1108,53 +1078,6 @@ export default function ChatThreadPage() {
         submitting={offerBusy}
         onSubmit={submitOffer}
       />
-
-      <Modal
-        open={pinOpen}
-        onClose={() => setPinOpen(false)}
-        title="Share meetup pin"
-      >
-        <div className="flex flex-col gap-4">
-          <p className="text-sm text-[var(--rw-ink-muted)]">
-            Private to this chat only — never shown on public listings.
-          </p>
-          <Input
-            label="Label"
-            value={pinLabel}
-            onChange={(e) => setPinLabel(e.target.value)}
-            placeholder="Lekki Mall gate"
-            maxLength={80}
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="Latitude"
-              value={pinLat}
-              onChange={(e) => setPinLat(e.target.value)}
-              inputMode="decimal"
-            />
-            <Input
-              label="Longitude"
-              value={pinLng}
-              onChange={(e) => setPinLng(e.target.value)}
-              inputMode="decimal"
-            />
-          </div>
-          <Button
-            variant="secondary"
-            disabled={pinBusy}
-            onClick={() => useBrowserLocation()}
-          >
-            {pinBusy ? "Working…" : "Use my location"}
-          </Button>
-          <Button
-            variant="primary"
-            disabled={pinBusy}
-            onClick={() => void shareMeetupPin()}
-          >
-            {pinBusy ? "Sharing…" : "Share pin in chat"}
-          </Button>
-        </div>
-      </Modal>
 
       <Modal
         open={Boolean(counterFor)}

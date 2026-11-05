@@ -305,7 +305,22 @@ describe('audit — suspend user', () => {
     const auditLog = jest.fn().mockResolvedValue({ id: 'a1' });
     const notify = jest.fn().mockResolvedValue({ created: [], skipped: [] });
     const revoke = jest.fn().mockResolvedValue(undefined);
-    const prisma = {
+    const prisma: {
+      user: {
+        findUnique: jest.Mock;
+        update: jest.Mock;
+      };
+      order: {
+        findMany: jest.Mock;
+        count: jest.Mock;
+        updateMany: jest.Mock;
+      };
+      orderEvent: { createMany: jest.Mock };
+      listing: { findMany: jest.Mock };
+      cartItem: { deleteMany: jest.Mock };
+      $executeRaw: jest.Mock;
+      $transaction: jest.Mock;
+    } = {
       user: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'u1',

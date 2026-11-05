@@ -264,8 +264,8 @@ describe('escrow happy path + webhook replay', () => {
         })),
         update: jest.fn(async () => ({})),
       },
-      listingEvent: { create: jest.fn(async () => ({})) },
       favourite: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+      listingEvent: { create: jest.fn(async () => ({})) },
       user: {
         findUnique: jest.fn(async () => ({
           id: 'buyer-1',
@@ -369,10 +369,10 @@ describe('escrow happy path + webhook replay', () => {
     expect(state.payouts).toHaveLength(1);
   });
 
-  it('auto-release cron releases funded past autoReleaseAt', async () => {
+  it('auto-release cron releases handed-over orders past autoReleaseAt', async () => {
     const state = {
       order: baseOrder({
-        status: 'FUNDED',
+        status: 'HANDED_OVER',
         fundedAt: new Date(Date.now() - 4 * 86400000),
         autoReleaseAt: new Date(Date.now() - 1000),
       }),
@@ -695,8 +695,8 @@ describe('disputes', () => {
         })),
         update: jest.fn(),
       },
-      listingEvent: { create: jest.fn() },
       favourite: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+      listingEvent: { create: jest.fn() },
       dispute: {
         findFirst: jest.fn(async () => null),
         create: jest.fn(async ({ data }: { data: unknown }) => data),

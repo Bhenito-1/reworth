@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { MessageType } from '@prisma/client';
+import { containsProhibitedChatContact } from '@reworth/shared';
 import { ChatScanProcessor } from './chat-scan.processor';
 import { ChatScanService } from './chat-scan.service';
 import { toMessageDto } from './message.mapper';
@@ -46,6 +47,21 @@ describe('PII redaction', () => {
     expect(dto).not.toHaveProperty('email');
     expect(dto.sender).toEqual({ id: 'u1', displayName: 'Ada' });
     assertNoPiiFields(dto as unknown as Record<string, unknown>);
+  });
+});
+
+describe('prohibited chat contact detection', () => {
+  it.each([
+    '+2348012345678',
+    '08012345678',
+    '8012345678',
+    'seller@example.com',
+  ])('detects %s', (contact) => {
+    expect(containsProhibitedChatContact(`Please contact me at ${contact}`)).toBe(true);
+  });
+
+  it('allows ordinary text and unrelated numbers', () => {
+    expect(containsProhibitedChatContact('The price is 1234567890 naira')).toBe(false);
   });
 });
 
