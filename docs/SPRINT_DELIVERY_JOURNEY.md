@@ -37,9 +37,9 @@ Ship the **customer story** on top of existing logistics plumbing: clear checkou
 
 Buyer and driver need separate logins. `localhost` and `127.0.0.1` do not share browser storage, so keep both windows open.
 
-1. Screen A — [http://localhost:3000](http://localhost:3000). Sign in as the seller `demo.seller@reworth.ng` / `DemoSeller!2026` only long enough to accept the order and set a delivery date. Sign out, then sign in as the buyer `ayo@demo.reworth.ng` / `DemoAyo!2026`.
-2. Screen B — [http://127.0.0.1:3000/driver](http://127.0.0.1:3000/driver). Sign in as `demo-driver@reworth.local` / `DemoDriver!2026`. Account shows **Driver runs** only for this user.
-3. On A, search a delivery listing (the IKEA Kivik sofa), add it, place the order with delivery, and pay with **Simulate payment**. The fee for furniture is the van rate (₦12,000 + ₦800/km), not the parcel rate.
+1. Screen A — [http://localhost:3000](http://localhost:3000). Sign in as the buyer `ayo@demo.reworth.ng` / `DemoAyo!2026`. The sofa is Ada’s listing, so it appears in Search, not under Ayo’s own listings.
+2. Screen B — [http://127.0.0.1:3000/driver](http://127.0.0.1:3000/driver). Sign in as `demo-driver@reworth.local` / `DemoDriver!2026`. This window is the rider console (no marketplace nav).
+3. On A, search **kivik**, open the IKEA Kivik sofa, place the order, and pay with **Simulate payment**. No seller sign-in. The fee for furniture is the van rate (₦12,000 + ₦800/km), not the parcel rate.
 4. On B, the run appears as **Waiting for a rider** with areas only. **Accept delivery**. Pickup and dropoff lines appear. Mark Collected → On the way → Out for delivery → Delivered.
 5. On A, the order timeline updates about every 8 seconds through **Rider accepted** and **Delivered**. Confirm receipt to release the funds.
 

@@ -80,10 +80,10 @@ export default function CartPage() {
       const n = res.orders.length;
       setToast(
         n === 1
-          ? "Order placed. The seller needs to confirm before you pay."
-          : `${n} orders placed. Each seller confirms before you pay.`,
+          ? "Order placed. Pay on the order to send it to a rider."
+          : `${n} orders placed. Pay each order to send it to a rider.`,
       );
-      router.push("/orders");
+      router.push(n === 1 ? `/orders/${res.orders[0].id}` : "/orders");
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : "Checkout failed");
       await load();
@@ -112,7 +112,7 @@ export default function CartPage() {
         </div>
         <p className="mb-6 text-sm text-[var(--rw-ink-muted)]">
           Saving an item here does not place an order or hold the units. Checkout
-          asks each seller to confirm before you pay.
+          reserves the units and takes you straight to payment.
         </p>
 
         {items === null && !error ? (

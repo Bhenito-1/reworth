@@ -17,6 +17,7 @@ export type DriverAssignment = {
   etaFrom: string | null;
   etaTo: string | null;
   distanceKm?: number | null;
+  quoteKobo?: number | null;
   listingTitle: string | null;
   community: string | null;
   city: string | null;

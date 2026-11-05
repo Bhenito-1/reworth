@@ -84,8 +84,8 @@ export function CartPanel({
         </Pressable>
       </View>
       <Text style={styles.copy}>
-        Adding an item does not place an order. Checkout reserves units and asks
-        the seller to confirm before you pay.
+        Adding an item does not place an order. Checkout reserves the units
+        and takes you straight to payment.
       </Text>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {items && items.length === 0 ? (

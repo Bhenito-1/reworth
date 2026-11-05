@@ -268,7 +268,7 @@ export default function CheckoutPage() {
         <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
           {isGift
             ? `Delivery to ${giftArea || "your area"}. The item is free. You pay the delivery fee for that area.`
-            : "Place an order. The seller confirms the delivery date before you pay. Units are reserved until you pay, cancel, or the seller declines."}
+            : "Place the order and pay on this screen. Delivery is set for tomorrow. The units stay reserved until you pay or cancel."}
         </p>
 
         <section

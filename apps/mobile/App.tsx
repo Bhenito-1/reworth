@@ -667,6 +667,7 @@ export default function App() {
     <SafeAreaView style={styles.safe}>
       <StatusBar style="dark" />
       <View style={styles.screen} accessibilityRole="summary">
+        {active === "profile" && profileSubtab === "driver" ? null : (
         <View style={styles.topBar}>
           <Pressable
             onPress={() => setNavOpen(true)}
@@ -703,6 +704,7 @@ export default function App() {
             </Pressable>
           ) : null}
         </View>
+        )}
         {active === "profile" ? (
           <>
             {profileSubtab === "saved" ? (
@@ -725,7 +727,13 @@ export default function App() {
                 onOpenOrder={(id) => setOrderId(id)}
               />
             ) : profileSubtab === "driver" ? (
-              <DriverRunsPanel onOpenOrder={(id) => setOrderId(id)} />
+              <View style={{ flex: 1 }}>
+                <DriverRunsPanel
+                  riderName={me?.profile?.displayName}
+                  onBack={() => setProfileSubtab("account")}
+                  onOpenOrder={(id) => setOrderId(id)}
+                />
+              </View>
             ) : profileSubtab === "cart" ? (
               cartSearch ? (
                 <SearchPanel
