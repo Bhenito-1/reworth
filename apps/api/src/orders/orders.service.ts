@@ -34,8 +34,10 @@ import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  BULKY_DELIVERY_RATES,
   computeDeliveryFeeKobo,
   DELIVERY_PROVIDER,
+  isBulkyDeliveryCategory,
   type DeliveryProvider,
 } from '../providers/delivery.provider';
 import { haversineKm } from '../providers/search.provider';
@@ -276,6 +278,7 @@ export class OrdersService {
   ): Promise<OrderDto> {
     const listing = await this.prisma.listing.findUnique({
       where: { id: dto.listingId },
+      include: { category: { select: { slug: true } } },
     });
     if (!listing) throw new NotFoundException('Listing not found');
     if (listing.sellerId === buyerId) {
@@ -359,7 +362,12 @@ export class OrdersService {
     const toLat = dto.toLat ?? fromLat + 0.02;
     const toLng = dto.toLng ?? fromLng + 0.02;
     const distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
-    const deliveryFeeKobo = computeDeliveryFeeKobo(distanceKm);
+    const deliveryFeeKobo = computeDeliveryFeeKobo(
+      distanceKm,
+      isBulkyDeliveryCategory(listing.category?.slug)
+        ? BULKY_DELIVERY_RATES
+        : undefined,
+    );
 
     const totalKobo = computeOrderTotalKobo({
       amountKobo,
@@ -384,8 +392,9 @@ export class OrdersService {
           totalKobo,
           fulfilmentMethod: FulfilmentMethod.DELIVERY,
           meetPointId: null,
-          status: 'CREATED',
-          confirmationStatus: 'PENDING',
+          status: 'PAYMENT_PENDING',
+          confirmationStatus: 'CONFIRMED',
+          deliveryDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
           buyerProtection: true,
         },
       });
@@ -429,7 +438,7 @@ export class OrdersService {
             unitPriceKobo,
             protectionFeeKobo,
             totalKobo,
-            confirmationStatus: 'PENDING',
+            confirmationStatus: 'CONFIRMED',
           },
         },
       });
@@ -459,7 +468,7 @@ export class OrdersService {
       userId: buyerId,
       category: NotificationCategory.ORDER_PLACED,
       title: 'Order placed',
-      body: `You ordered ${quantity} × ${title}. The seller will accept or reject it. You can pay after they accept.`,
+      body: `You ordered ${quantity} × ${title}. Pay to send it to a rider. Delivery is set for tomorrow.`,
       deepLink: orderLink,
       channels,
       meta: { orderId: order.id, quantity, listingId: listing.id },
@@ -467,8 +476,8 @@ export class OrdersService {
     await this.notifications.notify({
       userId: listing.sellerId,
       category: NotificationCategory.ORDER_PLACED,
-      title: 'New order to accept',
-      body: `A buyer ordered ${quantity} × ${title}. Open this to accept the order or reject it with a reason. Those units stay reserved until you respond.`,
+      title: 'New order',
+      body: `A buyer ordered ${quantity} × ${title}. They can pay now. Delivery is set for tomorrow, and the units stay reserved until they pay or cancel.`,
       deepLink: orderLink,
       channels,
       meta: { orderId: order.id, quantity, listingId: listing.id },
@@ -498,7 +507,7 @@ export class OrdersService {
         category: NotificationCategory.ORDER_PLACED,
         title: 'Orders placed',
         body: [
-          `You placed ${orders.length} orders. Each seller will accept or reject their order. You can pay after they accept.`,
+          `You placed ${orders.length} orders. Pay each one to send it to a rider. Delivery is set for tomorrow.`,
           ...orders.map(orderMailLine),
           `Total ${formatNaira(total)}.`,
         ].join('\n\n'),
@@ -525,9 +534,9 @@ export class OrdersService {
         this.notifications.notify({
           userId: sellerId,
           category: NotificationCategory.ORDER_PLACED,
-          title: 'New orders to accept',
+          title: 'New orders',
           body: [
-            `A buyer placed ${sellerOrders.length} orders with you. Open them to accept or reject. Those units stay reserved until you respond.`,
+            `A buyer placed ${sellerOrders.length} orders with you. They can pay now. Delivery is set for tomorrow, and the units stay reserved until they pay or cancel.`,
             ...sellerOrders.map(orderMailLine),
           ].join('\n\n'),
           deepLink: 'reworth://orders',
@@ -562,7 +571,7 @@ export class OrdersService {
         userId: buyerId,
         category: NotificationCategory.ORDER_PLACED,
         title: 'Order placed',
-        body: `You ordered ${order.quantity} × ${title}. The seller will accept or reject it. You can pay after they accept.`,
+        body: `You ordered ${order.quantity} × ${title}. Pay to send it to a rider. Delivery is set for tomorrow.`,
         deepLink: orderLink,
         channels: [NotificationChannel.EMAIL],
         meta: { orderId: order.id, quantity: order.quantity },
@@ -578,8 +587,8 @@ export class OrdersService {
     await this.notifications.notify({
       userId: order.sellerId,
       category: NotificationCategory.ORDER_PLACED,
-      title: 'New order to accept',
-      body: `A buyer ordered ${order.quantity} × ${title}. Open this to accept the order or reject it with a reason. Those units stay reserved until you respond.`,
+      title: 'New order',
+      body: `A buyer ordered ${order.quantity} × ${title}. They can pay now. Delivery is set for tomorrow, and the units stay reserved until they pay or cancel.`,
       deepLink: `reworth://orders/${order.id}`,
       channels: [NotificationChannel.EMAIL],
       meta: { orderId: order.id, quantity: order.quantity },

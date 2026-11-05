@@ -383,6 +383,8 @@ enum DisputeResolution {
 
 enum DeliveryShipmentStatus {
   QUOTED
+  /// Funded, waiting for the assigned rider to accept.
+  OFFERED
   ASSIGNED
   PICKED_UP
   IN_TRANSIT
@@ -449,6 +451,8 @@ model User {
   riskLevel       RiskLevel  @default(LOW)
   riskScore       Int        @default(0)
   enhancedVerificationRequired Boolean @default(false)
+  /** Platform rider — can submit delivery milestones for assigned shipments. */
+  isDeliveryDriver Boolean   @default(false)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   deletedAt       DateTime?
@@ -544,6 +548,7 @@ model User {
   estatePartners       EstatePartner[]
   circularHandoffsAsSeller CircularHandoff[] @relation("CircularHandoffSeller")
   sellerPayoutAccount  SellerPayoutAccount?
+  assignedShipments    DeliveryShipment[]    @relation("ShipmentDriver")
 
   @@map("users")
 }
@@ -1529,33 +1534,54 @@ model MeetPoint {
 }
 
 model DeliveryShipment {
-  id            String                 @id @default(uuid()) @db.Uuid
-  orderId       String                 @unique @db.Uuid
-  provider      String
-  providerRef   String?
-  quoteKobo     Int
-  distanceKm    Float?
-  status        DeliveryShipmentStatus @default(QUOTED)
-  etaFrom       DateTime?
-  etaTo         DateTime?
-  failureReason String?
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
+  id               String                 @id @default(uuid()) @db.Uuid
+  orderId          String                 @unique @db.Uuid
+  provider         String
+  providerRef      String?
+  quoteKobo        Int
+  distanceKm       Float?
+  status           DeliveryShipmentStatus @default(QUOTED)
+  etaFrom          DateTime?
+  etaTo            DateTime?
+  failureReason     String?
+  assignedDriverId  String?                @db.Uuid
+  /// Set when the assigned rider accepts. Addresses stay hidden until then.
+  driverAcceptedAt  DateTime?
+  /// How many times the buyer has asked for another attempt after FAILED.
+  attemptCount      Int                    @default(0)
+  /// Riders who declined this offer. Auto-assign skips them.
+  declinedDriverIds String[]               @default([])
+  pickupLine        String?
+  pickupLat         Float?
+  pickupLng         Float?
+  dropoffLine       String?
+  dropoffLat        Float?
+  dropoffLng        Float?
+  dropoffArea       String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 
-  order  Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  events DeliveryEvent[]
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  assignedDriver User?           @relation("ShipmentDriver", fields: [assignedDriverId], references: [id], onDelete: SetNull)
+  events         DeliveryEvent[]
 
   @@index([providerRef])
   @@index([status])
+  @@index([assignedDriverId])
   @@map("delivery_shipments")
 }
 
 model DeliveryEvent {
-  id         String                 @id @default(uuid()) @db.Uuid
-  shipmentId String                 @db.Uuid
-  status     DeliveryShipmentStatus
-  payload    Json?
-  createdAt  DateTime               @default(now())
+  id             String                 @id @default(uuid()) @db.Uuid
+  shipmentId     String                 @db.Uuid
+  status         DeliveryShipmentStatus
+  payload        Json?
+  /** DRIVER | WEBHOOK | SYSTEM — who submitted the milestone. */
+  source         String?
+  /** Client-reported event time (delayed / offline uploads). */
+  occurredAt     DateTime?
+  idempotencyKey String?                @unique
+  createdAt      DateTime               @default(now())
 
   shipment DeliveryShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
 

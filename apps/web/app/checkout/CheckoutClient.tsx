@@ -13,8 +13,10 @@ import {
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
+  deliveryWindowHint,
   fallbackDeliveryDestination,
   getDeliveryQuote,
+  privacyBeforePayCopy,
 } from "../../lib/delivery";
 import { getListing, listingImageUrl } from "../../lib/listings";
 import {
@@ -266,7 +268,7 @@ export default function CheckoutPage() {
         <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
           {isGift
             ? `Delivery to ${giftArea || "your area"}. The item is free. You pay the delivery fee for that area.`
-            : "Place an order. The seller confirms the delivery date before you pay. Units are reserved until you pay, cancel, or the seller declines."}
+            : "Place the order and pay on this screen. Delivery is set for tomorrow. The units stay reserved until you pay or cancel."}
         </p>
 
         <section
@@ -310,13 +312,22 @@ export default function CheckoutPage() {
 
         <section className="mt-8" aria-labelledby="fulfil-heading">
           <h2 id="fulfil-heading" className="text-lg font-semibold">
-            ReWorth delivery
+            How do you want it?
           </h2>
-          <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-            {isGift
-              ? `Delivery to ${giftArea || "your area"}. The fee is ₦1,500 plus ₦150 per kilometre.`
-              : "Every order is delivered by ReWorth. The courier is simulated for now. The fee is ₦1,500 plus ₦150 per kilometre, added before you pay."}
-          </p>
+          <div className="mt-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-accent)] bg-[var(--rw-accent-muted)]/40 px-4 py-3">
+            <p className="text-sm font-semibold text-[var(--rw-ink)]">
+              ReWorth delivery
+            </p>
+            <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
+              {isGift
+                ? `Delivery to ${giftArea || "your area"}. Fee quoted for your corridor.`
+                : `${deliveryWindowHint()}. Fee is quoted before you pay.`}
+            </p>
+            <p className="mt-2 text-xs text-[var(--rw-ink-muted)]">
+              {privacyBeforePayCopy()} Payment stays protected until you confirm
+              the item.
+            </p>
+          </div>
         </section>
 
         <section
