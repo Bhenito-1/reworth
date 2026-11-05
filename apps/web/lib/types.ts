@@ -128,6 +128,8 @@ export type PublicListing = {
   movingSale?: PublicListingMovingSale | null;
   geoLat: number | null;
   geoLng: number | null;
+  /** Owner-only when fetching your listing — not shown to buyers. */
+  pickupAddress?: string | null;
   distanceKm?: number | null;
   images: PublicListingImage[];
   seller: PublicListingSeller;
@@ -300,6 +302,8 @@ export type CreateListingBody = {
   city?: string;
   /** Phase 3.2 — donate / circular hand-off after N unsold days (null = off). */
   donateIfUnsoldDays?: number | null;
+  /** Internal pickup address (street). Never shown on public listing pages. */
+  addressPrivate?: string;
 };
 
 export type UpdateListingBody = CreateListingBody;

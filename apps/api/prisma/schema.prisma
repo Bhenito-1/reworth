@@ -439,6 +439,7 @@ enum ReviewStatus {
 }
 
 model User {
+  /// Stable unique account id (UUID) — payer/payee on payments, buyer/seller on orders.
   id              String     @id @default(uuid()) @db.Uuid
   phone           String?    @unique
   phoneVerifiedAt DateTime?
@@ -485,6 +486,7 @@ model User {
   mutesReceived        UserMute[]           @relation("UserMuted")
   ordersAsBuyer        Order[]              @relation("OrderBuyer")
   paymentsMade         Payment[]            @relation("PaymentPayer")
+  paymentsReceived     Payment[]            @relation("PaymentPayee")
   ordersAsSeller       Order[]              @relation("OrderSeller")
   orderEvents          OrderEvent[]         @relation("OrderEventActor")
   disputesOpened       Dispute[]            @relation("DisputeOpener")
@@ -682,6 +684,17 @@ model EmailSignupOtp {
   createdAt    DateTime @default(now())
 
   @@map("email_signup_otps")
+}
+
+/// Pending password reset codes for email/password accounts.
+model EmailPasswordResetOtp {
+  email     String   @id
+  codeHash  String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("email_password_reset_otps")
 }
 
 model AuditLog {
@@ -1228,11 +1241,15 @@ model OrderIntent {
 
 model Order {
   id                String           @id @default(uuid()) @db.Uuid
+  /// Public order reference for support, receipts, and payment linking.
+  reference         String           @unique
   listingId         String           @db.Uuid
   buyerId           String           @db.Uuid
   sellerId          String           @db.Uuid
   offerId           String?          @db.Uuid
   orderIntentId     String?          @unique @db.Uuid
+  /// Primary payment record for this order (set when checkout starts).
+  paymentId         String?          @unique @db.Uuid
   /// Set when several orders are placed from one cart checkout.
   checkoutId        String?          @db.Uuid
   amountKobo        Int
@@ -1289,6 +1306,7 @@ model Order {
   supportTickets     SupportTicket[]
   reviews            Review[]
   luxuryAuthJob      LuxuryAuthJob?
+  payment            Payment?         @relation("OrderPrimaryPayment", fields: [paymentId], references: [id], onDelete: SetNull)
 
   @@index([buyerId, createdAt])
   @@index([sellerId, createdAt])
@@ -1370,8 +1388,10 @@ model OrderEvent {
 model Payment {
   id               String        @id @default(uuid()) @db.Uuid
   orderId          String        @db.Uuid
-  /// The user who paid. For a gift or a swap leg this is the person receiving that delivery.
-  payerId          String?       @db.Uuid
+  /// User who pays (order buyer on standard sales; swap/gift leg payer on their order).
+  payerId          String        @db.Uuid
+  /// User who receives settlement for this payment (order seller on standard sales).
+  payeeId          String        @db.Uuid
   provider         String
   reference        String        @unique
   amountKobo       Int
@@ -1381,12 +1401,15 @@ model Payment {
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  payer   User?    @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: SetNull)
-  refunds Refund[]
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderPrimary  Order?   @relation("OrderPrimaryPayment")
+  payer         User     @relation("PaymentPayer", fields: [payerId], references: [id], onDelete: Cascade)
+  payee         User     @relation("PaymentPayee", fields: [payeeId], references: [id], onDelete: Cascade)
+  refunds       Refund[]
 
   @@index([orderId])
   @@index([payerId])
+  @@index([payeeId])
   @@map("payments")
 }
 

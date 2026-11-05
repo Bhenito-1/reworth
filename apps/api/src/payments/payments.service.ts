@@ -24,11 +24,13 @@ import {
 } from '../monetization/fee-rates';
 import { InitiatePaymentDto } from './dto/payments.dto';
 import { SWAP_FEE_PER_USER_KOBO } from '../swap/swap-fees';
+import { newPaymentReference } from '../common/transaction-reference';
 
 export type PaymentDto = {
   id: string;
   orderId: string;
-  payerId: string | null;
+  payerId: string;
+  payeeId: string;
   provider: string;
   reference: string;
   amountKobo: number;
@@ -56,6 +58,10 @@ export class PaymentsService {
       where: { idempotencyKey: dto.idempotencyKey },
     });
     if (existing) {
+      await this.prisma.order.updateMany({
+        where: { id: existing.orderId, paymentId: null },
+        data: { paymentId: existing.id },
+      });
       const payload = existing.providerPayload as { checkoutUrl?: string } | null;
       return this.toDto(existing, payload?.checkoutUrl);
     }
@@ -82,7 +88,7 @@ export class PaymentsService {
       where: { id: buyerId },
     });
     const email = buyer?.email ?? `${buyerId}@reworth.local`;
-    const reference = `rw_${order.id.replace(/-/g, '').slice(0, 16)}_${Date.now()}`;
+    const reference = newPaymentReference();
 
     const amountKobo =
       order.transactionType === 'SWAP'
@@ -98,20 +104,28 @@ export class PaymentsService {
       idempotencyKey: dto.idempotencyKey,
     });
 
-    const payment = await this.prisma.payment.create({
-      data: {
-        orderId: order.id,
-        payerId: buyerId,
-        provider: this.psp.name,
-        reference: result.reference,
-        amountKobo,
-        status: 'PENDING',
-        idempotencyKey: dto.idempotencyKey,
-        providerPayload: {
-          checkoutUrl: result.checkoutUrl,
-          paymentId: result.paymentId,
+    const payment = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.payment.create({
+        data: {
+          orderId: order.id,
+          payerId: buyerId,
+          payeeId: order.sellerId,
+          provider: this.psp.name,
+          reference: result.reference,
+          amountKobo,
+          status: 'PENDING',
+          idempotencyKey: dto.idempotencyKey,
+          providerPayload: {
+            checkoutUrl: result.checkoutUrl,
+            paymentId: result.paymentId,
+          },
         },
-      },
+      });
+      await tx.order.update({
+        where: { id: order.id },
+        data: { paymentId: row.id },
+      });
+      return row;
     });
 
     this.notifications.log('payment.initiated', {
@@ -297,6 +311,7 @@ export class PaymentsService {
       id: p.id,
       orderId: p.orderId,
       payerId: p.payerId,
+      payeeId: p.payeeId,
       provider: p.provider,
       reference: p.reference,
       amountKobo: p.amountKobo,

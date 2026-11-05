@@ -96,6 +96,7 @@ function draftResumeStep(listing: PublicListing): SellStep {
     return "draft";
   }
   if (!listing.community?.trim()) return "location";
+  if (!(listing.pickupAddress?.trim() || "").length) return "location";
   return "fulfilment";
 }
 
@@ -139,6 +140,7 @@ export default function SellPage() {
   const [sellingMode, setSellingMode] = useState<SellingModeValue>("SELL");
   const [negotiable, setNegotiable] = useState(true);
   const [community, setCommunity] = useState("");
+  const [pickupAddress, setPickupAddress] = useState("");
   const [stateKey, setStateKey] = useState("");
   const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
   const [donateIfUnsold, setDonateIfUnsold] = useState(false);
@@ -329,6 +331,7 @@ export default function SellPage() {
     setSellingMode((l.sellingMode as SellingModeValue) || "SELL");
     setNegotiable(l.negotiable);
     if (l.community) setCommunity(l.community);
+    setPickupAddress(l.pickupAddress?.trim() ?? "");
     if (l.city) setCity(l.city);
     if (l.donateIfUnsoldDays != null && l.donateIfUnsoldDays > 0) {
       setDonateIfUnsold(true);
@@ -483,6 +486,7 @@ export default function SellPage() {
       negotiable: sellingMode === "SELL" ? negotiable : false,
       sellingMode,
       community,
+      addressPrivate: pickupAddress.trim() || undefined,
       fulfilmentPickup: false,
       fulfilmentMeet: false,
       fulfilmentDelivery: true,
@@ -532,6 +536,12 @@ export default function SellPage() {
     }
     if (!community) {
       setError("Select an area in that state.");
+      return;
+    }
+    if (pickupAddress.trim().length < 8) {
+      setError(
+        "Add your pickup address (street and landmark). Buyers never see this — we use it for delivery.",
+      );
       return;
     }
     setBusy(true);
@@ -1128,6 +1138,18 @@ export default function SellPage() {
               <p className="mt-3 text-[var(--rw-ink-muted)]">
                 Choose a state first. Areas in that state show up after you
                 select it. Buyers see the area, never your street address.
+              </p>
+              <Input
+                className="mt-6"
+                label="Pickup address (internal)"
+                value={pickupAddress}
+                onChange={(e) => setPickupAddress(e.target.value)}
+                placeholder="e.g. 12 Admiralty Way, Lekki Phase 1"
+                disabled={busy}
+              />
+              <p className="mt-2 text-xs text-[var(--rw-ink-muted)]">
+                Couriers and delivery quotes use this location. It is never shown
+                on your public listing.
               </p>
               <label className="mt-6 block text-sm font-medium">
                 State

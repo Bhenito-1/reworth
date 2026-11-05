@@ -66,6 +66,23 @@ export class VerifyEmailOtpDto {
   device?: DeviceDto;
 }
 
+export class RequestPasswordResetDto {
+  @IsEmail()
+  email!: string;
+}
+
+export class ConfirmPasswordResetDto {
+  @IsEmail()
+  email!: string;
+
+  @Matches(/^\d{6}$/)
+  code!: string;
+
+  @IsString()
+  @MinLength(8)
+  password!: string;
+}
+
 export class RefreshDto {
   @IsString()
   @MinLength(10)

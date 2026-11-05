@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -427,6 +428,9 @@ export class ListingsService {
     return {
       ...dto,
       rejectionReason: isOwner ? await this.ownerRejectionReason(id, listing.status) : null,
+      ...(isOwner
+        ? { pickupAddress: listing.addressPrivate ?? null }
+        : {}),
     };
   }
 
@@ -461,6 +465,23 @@ export class ListingsService {
       nextMode === 'SELL' ? dto.priceKobo : 0;
     const priceChanged =
       nextPrice !== undefined && nextPrice !== listing.priceKobo;
+
+    let geoLat = dto.geoLat;
+    let geoLng = dto.geoLng;
+    const communityNext =
+      dto.community !== undefined ? dto.community : listing.community;
+    if (
+      dto.community !== undefined &&
+      communityNext &&
+      dto.geoLat === undefined &&
+      dto.geoLng === undefined
+    ) {
+      const g = await this.geo.geocodeCommunity(communityNext, dto.city ?? listing.city ?? undefined);
+      if (g) {
+        geoLat = g.geoLat;
+        geoLng = g.geoLng;
+      }
+    }
 
     const updated = await this.prisma.listing.update({
       where: { id },
@@ -510,8 +531,16 @@ export class ListingsService {
         ...(dto.city !== undefined
           ? { city: dto.city.trim() || 'Lagos' }
           : {}),
-        ...(dto.geoLat !== undefined ? { geoLat: dto.geoLat } : {}),
-        ...(dto.geoLng !== undefined ? { geoLng: dto.geoLng } : {}),
+        ...(dto.geoLat !== undefined
+          ? { geoLat: dto.geoLat }
+          : geoLat !== undefined
+            ? { geoLat }
+            : {}),
+        ...(dto.geoLng !== undefined
+          ? { geoLng: dto.geoLng }
+          : geoLng !== undefined
+            ? { geoLng }
+            : {}),
         ...(dto.addressPrivate !== undefined
           ? { addressPrivate: dto.addressPrivate }
           : {}),
@@ -659,6 +688,22 @@ export class ListingsService {
 
   async publish(id: string, sellerId: string) {
     const listing = await this.requireOwner(id, sellerId);
+    if (
+      listing.fulfilmentDelivery !== false &&
+      listing.sellingMode !== 'SWAP'
+    ) {
+      const pickup = listing.addressPrivate?.trim() ?? '';
+      if (pickup.length < 8) {
+        throw new BadRequestException(
+          'Add your pickup address (street and area) before publishing. Buyers never see it — we use it for delivery quotes.',
+        );
+      }
+      if (listing.geoLat == null || listing.geoLng == null) {
+        throw new BadRequestException(
+          'Select an area so we can estimate delivery from your pickup location.',
+        );
+      }
+    }
     if (
       listing.sellingMode !== 'GIVE_AWAY' &&
       listing.sellingMode !== 'SWAP'

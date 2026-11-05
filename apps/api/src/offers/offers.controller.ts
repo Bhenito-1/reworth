@@ -70,4 +70,9 @@ export class OffersController {
   withdraw(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.offers.withdraw(id, user.id);
   }
+
+  @Get('order-intents/:id')
+  getOrderIntent(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.offers.getOrderIntent(id, user.id);
+  }
 }

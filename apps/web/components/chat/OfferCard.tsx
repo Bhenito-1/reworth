@@ -3,6 +3,12 @@
 import { formatNgn } from "@reworth/shared";
 import { Button, Chip } from "@reworth/ui-web";
 import {
+  canAcceptOrRejectOffer,
+  canCounterOffer,
+  canWithdrawOffer,
+  offerProposerId,
+} from "../../lib/offer-actions";
+import {
   offerStatusLabel,
   type OfferDto,
 } from "../../lib/chat";
@@ -28,10 +34,13 @@ export function OfferCard({
   onWithdraw,
   onCheckout,
 }: Props) {
-  const isSeller = meId === offer.sellerId;
   const isBuyer = meId === offer.buyerId;
   const pending = offer.status === "PENDING";
   const accepted = offer.status === "ACCEPTED";
+  const proposerId = offerProposerId(offer);
+  const showRespond = canAcceptOrRejectOffer(offer, meId);
+  const showCounter = canCounterOffer(offer, meId);
+  const showWithdraw = canWithdrawOffer(offer, meId);
 
   return (
     <article
@@ -41,7 +50,7 @@ export function OfferCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-medium text-[var(--rw-ink-muted)]">
-            Offer
+            {proposerId === offer.sellerId && pending ? "Counter offer" : "Offer"}
           </p>
           <p className="mt-1 text-2xl font-semibold tracking-tight">
             {formatNgn({ amountKobo: offer.amountKobo })}
@@ -56,7 +65,7 @@ export function OfferCard({
       ) : null}
       {pending ? (
         <div className="mt-4 flex flex-wrap gap-2">
-          {isSeller ? (
+          {showRespond ? (
             <>
               <Button
                 variant="primary"
@@ -74,17 +83,19 @@ export function OfferCard({
               >
                 Reject
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={onCounter}
-              >
-                Counter
-              </Button>
             </>
           ) : null}
-          {isBuyer ? (
+          {showCounter ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={onCounter}
+            >
+              Counter
+            </Button>
+          ) : null}
+          {showWithdraw ? (
             <Button
               variant="danger"
               size="sm"
@@ -104,7 +115,7 @@ export function OfferCard({
             disabled={busy}
             onClick={onCheckout}
           >
-            Checkout
+            Complete order
           </Button>
         </div>
       ) : null}
