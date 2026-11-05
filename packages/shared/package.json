@@ -10,6 +10,10 @@
       "default": "./dist/index.js"
     }
   },
+  "dependencies": {
+    "libphonenumber-js": "^1.13.13",
+    "validator": "^13.15.35"
+  },
   "scripts": {
     "build": "tsc",
     "lint": "node -e \"console.log('lint ok')\"",
@@ -18,6 +22,7 @@
   },
   "devDependencies": {
     "@reworth/config": "workspace:*",
+    "@types/validator": "^13.15.10",
     "typescript": "^5.9.3"
   }
 }

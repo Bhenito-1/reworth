@@ -85,7 +85,7 @@ export function DiscoveryListingCard({
             e.stopPropagation();
             onAddToCart(listing);
           }}
-          className="absolute right-1.5 top-11 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 text-[var(--rw-ink)] shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+          className="absolute right-1.5 top-[3.75rem] z-10 flex h-8 w-8 items-center justify-center rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 text-[var(--rw-ink)] shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
         >
           <CartIcon className="h-4 w-4" />
         </button>

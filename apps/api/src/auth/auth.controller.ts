@@ -7,6 +7,7 @@ import {
   OAuthCallbackDto,
   RefreshDto,
   RegisterDto,
+  VerifyEmailOtpDto,
 } from './dto/auth.dto';
 
 @Controller('auth')
@@ -15,8 +16,16 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Post('register')
-  register(@Body() dto: RegisterDto, @Req() req: { ip?: string }) {
-    return this.auth.register(dto, req.ip);
+  register(@Body() dto: RegisterDto) {
+    return this.auth.register(dto);
+  }
+
+  @Post('email-otp/verify')
+  verifyEmailOtp(
+    @Body() dto: VerifyEmailOtpDto,
+    @Req() req: { ip?: string },
+  ) {
+    return this.auth.verifyEmailOtp(dto, req.ip);
   }
 
   @Post('login')

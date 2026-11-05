@@ -7,13 +7,13 @@ alwaysApply: true
 
 **Post-launch series:** last tag `v2.2-monetization` (Phase 3.3).
 
-**Active track:** Ops / city launches (`docs/CITY_PLAYBOOK.md`) · mobile parity gaps (`docs/MOBILE_PARITY.md`).
+**Active track:** Ops / city launches (`docs/CITY_PLAYBOOK.md`) · web PWA polish.
 
-## Mobile-first (mandatory)
+## PWA-first (mandatory)
 
-- Design → build → test on **mobile first** (iOS + Android).
-- **Build order every phase / track:** mobile → web companion parity.
-- Web gaps must be shipped in-phase or listed in `AGENTS.md` / `docs/MOBILE_PARITY.md` — never silent.
+- Design → build → test on **mobile browsers first**, then desktop.
+- Primary consumer surface: `apps/web` (installable PWA).
+- Do not reintroduce Expo / `apps/mobile` without an ADR.
 
 Do **not** invent a new numbered phase without an explicit product prompt.
 
@@ -27,4 +27,4 @@ Do **not** invent a new numbered phase without an explicit product prompt.
 
 ## Resume
 
-See `docs/PHASE_STATUS.md` and `docs/MOBILE_PARITY.md`. Primary consumer surface: `apps/mobile`.
+See `docs/PHASE_STATUS.md`. Primary consumer surface: `apps/web` PWA.

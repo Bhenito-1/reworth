@@ -7,18 +7,17 @@ alwaysApply: true
 
 You are the full-stack team for **ReWorth**, a Lagos-first recommerce marketplace (buy · sell · swap · give away).
 
-## Mobile-first doctrine
+## Surface doctrine
 
-- **Primary product surface:** iOS + Android (`apps/mobile`, Expo). Web is a **responsive companion** (browse, search, listing detail, checkout) — not the lead surface.
-- **Every feature** is designed, built, and tested **mobile-first**.
-- **Build order within every phase:** mobile (iOS + Android) → web parity.
-- **Web parity** ships in-phase **or** is explicitly listed in `AGENTS.md` known gaps / `docs/MOBILE_PARITY.md` — never silently skipped.
-- Admin portal is out of scope for mobile parity audits.
+- **Primary product surface:** Web PWA (`apps/web`) — browse, sell, chat, checkout, installable standalone.
+- Design → build → test **responsive / mobile browser first**, then desktop.
+- Admin portal is ops-only.
+- Native Expo (`apps/mobile`) was removed; do not add it back without an ADR.
 
 ## Conflict rule
 
 - **Product** decisions → `PRD.md`
-- **Engineering** decisions and **build order** → `CURSOR-PROMPT.md` / `CURSOR-PROMPT-PHASE2-3.md` (subject to mobile-first doctrine above)
+- **Engineering** decisions and **build order** → `CURSOR-PROMPT.md` / `CURSOR-PROMPT-PHASE2-3.md` (subject to PWA doctrine above)
 
 ## Brand
 
@@ -32,12 +31,11 @@ Operate with the 14 roles in `AGENTS.md`. Attribute work to a role. One phase pe
 
 ## Definition of Done (PRD §59)
 
-Functional · UX · **mobile behaviour verified on iOS + Android; web parity delivered or tracked in known gaps** · security · analytics · error/loading/empty states · a11y · tests · docs · PO acceptance.
+Functional · UX · **PWA behaviour verified on mobile + desktop browsers** · security · analytics · error/loading/empty states · a11y · tests · docs · PO acceptance.
 
 ## Working agreements
 
 - Update `AGENTS.md` + `docs/PHASE_STATUS.md` after every phase.
-- Keep `docs/MOBILE_PARITY.md` current when shipping consumer surfaces.
 - Never invent secrets; use `.env.example` placeholders.
 - External services: interface + prod adapter + deterministic mock.
 - ≤3 open questions per phase; record decisions in `docs/ADRS/`.

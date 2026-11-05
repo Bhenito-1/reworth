@@ -305,7 +305,22 @@ describe('audit — suspend user', () => {
     const auditLog = jest.fn().mockResolvedValue({ id: 'a1' });
     const notify = jest.fn().mockResolvedValue({ created: [], skipped: [] });
     const revoke = jest.fn().mockResolvedValue(undefined);
-    const prisma = {
+    const prisma: {
+      user: {
+        findUnique: jest.Mock;
+        update: jest.Mock;
+      };
+      order: {
+        findMany: jest.Mock;
+        count: jest.Mock;
+        updateMany: jest.Mock;
+      };
+      orderEvent: { createMany: jest.Mock };
+      listing: { findMany: jest.Mock };
+      cartItem: { deleteMany: jest.Mock };
+      $executeRaw: jest.Mock;
+      $transaction: jest.Mock;
+    } = {
       user: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'u1',
@@ -322,10 +337,11 @@ describe('audit — suspend user', () => {
       listing: { findMany: jest.fn().mockResolvedValue([]) },
       cartItem: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
       $executeRaw: jest.fn().mockResolvedValue(0),
-      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<void>) =>
-        fn(prisma),
-      ),
+      $transaction: jest.fn(),
     };
+    prisma.$transaction.mockImplementation(
+      async (fn: (tx: typeof prisma) => Promise<void>) => fn(prisma),
+    );
 
     const { AdminPortalService } = await import('./admin-portal.service');
     const service = new AdminPortalService(

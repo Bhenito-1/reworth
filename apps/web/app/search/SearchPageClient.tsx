@@ -326,7 +326,7 @@ export default function SearchPageClient() {
 
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
-      <header className="sticky top-14 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)]/90 backdrop-blur-md lg:top-[var(--rw-nav-offset,0px)]">
+      <header data-scroll-mask-bar className="sticky top-14 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)] backdrop-blur-md lg:top-[var(--rw-nav-offset,0px)]">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
           <form
             onSubmit={onSubmit}
@@ -630,7 +630,7 @@ export default function SearchPageClient() {
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="h-52 w-[7.5rem] shrink-0 rounded-[var(--rw-radius-lg)]"
+                  className="h-[clamp(10rem,51vw,13rem)] w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 rounded-[var(--rw-radius-lg)] sm:h-52 sm:w-[10rem]"
                   label="Loading result"
                 />
               ))}
@@ -673,7 +673,7 @@ export default function SearchPageClient() {
                 {result.items.map((item) => {
                   const own = meId != null && item.seller.id === meId;
                   return (
-                    <li key={item.id} className="w-[7.5rem] shrink-0">
+                    <li key={item.id} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
                       <DiscoveryListingCard
                         listing={item}
                         favourited={favourites.has(item.id)}

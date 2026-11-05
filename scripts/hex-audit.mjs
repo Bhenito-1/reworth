@@ -24,7 +24,7 @@ const WHITE_BLACK = new Set([
 
 function listed() {
   const out = execSync(
-    'git ls-files "apps/mobile/components/**/*.{ts,tsx}" "apps/mobile/theme/**/*.{ts,tsx}" "packages/ui-web/src/components/**/*.{ts,tsx}"',
+    'git ls-files "packages/ui-web/src/components/**/*.{ts,tsx}"',
     { encoding: "utf8" },
   );
   return out.split(/\r?\n/).filter(Boolean);

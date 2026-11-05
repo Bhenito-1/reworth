@@ -1,8 +1,10 @@
+import { randomInt, timingSafeEqual } from 'crypto';
 import {
   BadRequestException,
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -34,6 +36,7 @@ import type {
   LoginDto,
   OAuthCallbackDto,
   RegisterDto,
+  VerifyEmailOtpDto,
 } from './dto/auth.dto';
 import { suspendedAccountMessage } from './suspended-account';
 
@@ -43,8 +46,13 @@ type TokenPair = {
   expiresIn: string;
 };
 
+const SIGNUP_OTP_TTL_MS = 10 * 60 * 1000;
+const SIGNUP_OTP_MAX_ATTEMPTS = 5;
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -69,19 +77,118 @@ export class AuthService {
 
   async register(
     dto: RegisterDto,
-    ip?: string,
-  ): Promise<TokenPair & { userId: string }> {
+  ): Promise<{ email: string; expiresInSeconds: number }> {
     const email = dto.email.trim().toLowerCase();
     if (dto.password.length < 8) {
       throw new BadRequestException('Password must be at least 8 characters');
     }
-    const displayName =
-      dto.displayName?.trim() || email.split('@')[0];
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      throw new ConflictException('Email already registered');
+    }
+    const displayName = dto.displayName?.trim() || email.split('@')[0];
+    const code = String(randomInt(100000, 1000000));
+    const passwordHash = await hashPassword(dto.password);
+    const expiresAt = new Date(Date.now() + SIGNUP_OTP_TTL_MS);
+    await this.prisma.emailSignupOtp.upsert({
+      where: { email },
+      create: {
+        email,
+        codeHash: hashWithPepper(code, this.otpPepper),
+        passwordHash,
+        displayName,
+        attempts: 0,
+        expiresAt,
+      },
+      update: {
+        codeHash: hashWithPepper(code, this.otpPepper),
+        passwordHash,
+        displayName,
+        attempts: 0,
+        expiresAt,
+      },
+    });
+    const message = renderTransactionalEmail({
+      preview: 'Your ReWorth sign-up code',
+      title: 'Confirm your email',
+      greeting: `Hi ${displayName},`,
+      paragraphs: [
+        `Your sign-up code is ${code}. It expires in 10 minutes.`,
+        'If you did not ask for this, you can ignore the email.',
+      ],
+      footerNote: 'Thanks,\nThe ReWorth Team',
+    });
+    await this.email.send({
+      to: email,
+      subject: 'Your ReWorth sign-up code',
+      text: message.text,
+      html: message.html,
+      meta: { emailCategory: 'signup_otp' },
+    });
+    // shortcut: mock inbox logs the code, drop this when every env has a real mailbox
+    if (this.email.name === 'mock-email') {
+      this.logger.log(`signup otp for ${email}: ${code}`);
+    }
+    return { email, expiresInSeconds: SIGNUP_OTP_TTL_MS / 1000 };
+  }
+
+  async verifyEmailOtp(
+    dto: VerifyEmailOtpDto,
+    ip?: string,
+  ): Promise<TokenPair & { userId: string }> {
+    const email = dto.email.trim().toLowerCase();
+    const row = await this.prisma.emailSignupOtp.findUnique({
+      where: { email },
+    });
+    if (!row || row.expiresAt.getTime() < Date.now()) {
+      if (row) {
+        await this.prisma.emailSignupOtp.delete({ where: { email } });
+      }
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+    if (row.attempts >= SIGNUP_OTP_MAX_ATTEMPTS) {
+      throw new UnauthorizedException('Too many attempts. Request a new code.');
+    }
+    const given = Buffer.from(hashWithPepper(dto.code.trim(), this.otpPepper));
+    const expected = Buffer.from(row.codeHash);
+    const match =
+      given.length === expected.length && timingSafeEqual(given, expected);
+    if (!match) {
+      await this.prisma.emailSignupOtp.update({
+        where: { email },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+
+    await this.prisma.emailSignupOtp.delete({ where: { email } });
     const user = await this.createUserWithPassword({
       email,
-      password: dto.password,
-      displayName,
+      passwordHash: row.passwordHash,
+      displayName: row.displayName,
     });
+    await this.sendWelcome(email, row.displayName, user.id);
+    const tokens = await this.issueTokenPair(user.id, dto.device);
+    await this.audit.log({
+      actorUserId: user.id,
+      action: 'REGISTER',
+      entityType: 'User',
+      entityId: user.id,
+      afterJson: { email, method: 'email_otp' },
+      ip: ip ?? null,
+    });
+    return { ...tokens, userId: user.id };
+  }
+
+  private get otpPepper(): string {
+    return this.config.get<string>('OTP_PEPPER') ?? 'dev-otp-pepper';
+  }
+
+  private async sendWelcome(
+    email: string,
+    displayName: string,
+    userId: string,
+  ) {
     const appUrl = resolvePublicAppUrl(
       this.config.get<string>('EMAIL_APP_URL'),
       this.config.get<string>('APP_URL'),
@@ -110,19 +217,9 @@ export class AuthService {
       html: welcome.html,
       meta: {
         emailCategory: 'welcome',
-        entityRefId: `welcome-${user.id}`,
+        entityRefId: `welcome-${userId}`,
       },
     });
-    const tokens = await this.issueTokenPair(user.id, dto.device);
-    await this.audit.log({
-      actorUserId: user.id,
-      action: 'REGISTER',
-      entityType: 'User',
-      entityId: user.id,
-      afterJson: { email, method: 'email_password' },
-      ip: ip ?? null,
-    });
-    return { ...tokens, userId: user.id };
   }
 
   async login(dto: LoginDto, ip?: string): Promise<TokenPair & { userId: string }> {
@@ -321,7 +418,9 @@ export class AuthService {
 
   async createUserWithPassword(input: {
     email: string;
-    password: string;
+    password?: string;
+    /** Already argon2-hashed. Used after email OTP so the password is not stored twice. */
+    passwordHash?: string;
     displayName?: string;
     roles?: AdminRole[];
   }) {
@@ -330,7 +429,11 @@ export class AuthService {
     if (existing) {
       throw new ConflictException('Email already registered');
     }
-    const passwordHash = await hashPassword(input.password);
+    if (!input.password && !input.passwordHash) {
+      throw new BadRequestException('Password required');
+    }
+    const passwordHash =
+      input.passwordHash ?? (await hashPassword(input.password!));
     return this.prisma.user.create({
       data: {
         email,

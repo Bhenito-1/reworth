@@ -4,6 +4,10 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "turbo run dev --filter=@reworth/api --filter=@reworth/web --filter=@reworth/admin",
+    "db:deploy:staging": "dotenv -e .env.staging -- pnpm db:deploy",
+    "db:deploy:prod": "dotenv -e .env.production -- pnpm db:deploy",
+    "build:staging": "dotenv -e .env.staging -- turbo run build",
+    "build:prod": "dotenv -e .env.production -- turbo run build",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
@@ -21,7 +25,10 @@
   "pnpm": {
     "overrides": {
       "multer": "^2.3.0",
-      "tar": "^7.5.19"
+      "tar": "^7.5.19",
+      "proxy-addr": ">=2.0.8",
+      "shell-quote": "1.11.0",
+      "next": "15.5.28"
     }
   },
   "devDependencies": {

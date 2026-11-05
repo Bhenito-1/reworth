@@ -159,6 +159,7 @@ describe('RiskEngineService.evaluateOnPublish', () => {
           priceKobo: 50_000_00,
           community: 'Lekki',
           images: [{ id: 'i1', originalKey: 'a.jpg' }],
+          riskFlags: [],
           category: { slug: 'electronics' },
           subcategory: null,
           seller: {

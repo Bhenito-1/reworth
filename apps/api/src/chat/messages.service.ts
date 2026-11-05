@@ -1,10 +1,15 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { MessageType, NotificationChannel } from '@prisma/client';
+import {
+  containsProhibitedChatContact,
+  PROHIBITED_CHAT_WARNING,
+} from '@reworth/shared';
 import { AdminAlertsService } from '../admin/admin-alerts.service';
 import { REPORTS } from '../admin/admin-roles';
 import { NotificationCategory } from '../notifications/notification-categories';
@@ -14,7 +19,6 @@ import { ChatGateway } from './chat.gateway';
 import { ChatScanProcessor } from './chat-scan.processor';
 import { NotificationStub } from './notification.stub';
 import { toMessageDto, type MessageDto } from './message.mapper';
-import { redactPhoneEmail } from './pii.util';
 import type { PostMeetupPinDto, PostMessageDto } from './dto/chat.dto';
 import { encodeMeetupPin, meetupPinPreview } from './meetup-pin';
 
@@ -412,8 +416,15 @@ export class MessagesService {
       if (existing) return toMessageDto(existing);
     }
 
-    const scrubbed = dto.body != null ? redactPhoneEmail(dto.body) : null;
     const type = dto.type ?? MessageType.TEXT;
+    if (
+      type === MessageType.TEXT &&
+      dto.body &&
+      containsProhibitedChatContact(dto.body)
+    ) {
+      throw new BadRequestException(PROHIBITED_CHAT_WARNING);
+    }
+    const scrubbed = dto.body ?? null;
 
     const created = await this.prisma.message.create({
       data: {

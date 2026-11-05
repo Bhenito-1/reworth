@@ -496,7 +496,7 @@ model User {
   notifications        Notification[]
   adminAlerts          AdminAlert[]
   notificationPrefs    NotificationPreference[]
-  devicePushTokens     DevicePushToken[]
+  webPushSubscriptions WebPushSubscription[]
   supportTickets       SupportTicket[]
   addressDisclosures   AddressDisclosure[]  @relation("AddressDiscloser")
   reviewsGiven         Review[]             @relation("ReviewReviewer")
@@ -674,6 +674,19 @@ model RefreshToken {
   @@index([familyId])
   @@index([tokenHash])
   @@map("refresh_tokens")
+}
+
+/// Pending email signup. The user row is created only after the code matches.
+model EmailSignupOtp {
+  email        String   @id
+  codeHash     String
+  passwordHash String
+  displayName  String
+  attempts     Int      @default(0)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@map("email_signup_otps")
 }
 
 model AuditLog {
@@ -1646,18 +1659,20 @@ model NotificationPreference {
   @@map("notification_preferences")
 }
 
-model DevicePushToken {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid
-  token     String
-  platform  String
-  createdAt DateTime @default(now())
+model WebPushSubscription {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @db.Uuid
+  endpoint       String    @unique @db.Text
+  p256dh         String    @db.Text
+  auth           String    @db.Text
+  expirationTime DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, token])
   @@index([userId])
-  @@map("device_push_tokens")
+  @@map("web_push_subscriptions")
 }
 
 model SupportTicket {

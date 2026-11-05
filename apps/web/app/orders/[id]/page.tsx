@@ -1021,7 +1021,7 @@ export default function OrderDetailPage() {
             </h2>
             <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
               {alsoLike.map((item) => (
-                <li key={item.id} className="w-[7.5rem] shrink-0">
+                <li key={item.id} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
                   <DiscoveryListingCard listing={item} />
                 </li>
               ))}

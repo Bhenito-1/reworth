@@ -2,9 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 /**
  * ReWorth Playwright config — golden paths under e2e/web/.
- * Specs skip when API healthz is not 200 (default CI stays green).
- * Force run with API up: pnpm test:e2e
- * Optional: E2E=1 in CI after seeding staging + starting API.
+ * Specs skip when API healthz is not 200.
+ * A required run sets E2E_REQUIRED=1 and fails if the API is down.
  */
 export default defineConfig({
   testDir: './e2e/web',
