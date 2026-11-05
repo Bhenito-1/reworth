@@ -77,6 +77,11 @@ function LoginForm() {
           value={password}
           onChange={setPassword}
         />
+        <p className="-mt-2 text-right text-sm">
+          <Link href="/forgot-password" className="font-medium text-[var(--rw-accent)]">
+            Forgot password?
+          </Link>
+        </p>
         {error ? (
           <p className="text-sm text-[var(--rw-error)]" role="alert">
             {error}

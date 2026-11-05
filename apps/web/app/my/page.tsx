@@ -235,7 +235,7 @@ export default function MyPage() {
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="h-52 w-44 shrink-0 rounded-[var(--rw-radius-lg)]"
+                  className="h-[clamp(10rem,51vw,13rem)] w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 rounded-[var(--rw-radius-lg)] sm:h-52 sm:w-[10rem]"
                   label="Loading"
                 />
               ))}
@@ -310,7 +310,7 @@ function ItemsTab({
   return (
     <ul className="flex flex-wrap gap-3">
       {items.map((row) => (
-        <li key={row.favouriteId} className="w-44 shrink-0">
+        <li key={row.favouriteId} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
           <DiscoveryListingCard
             listing={row.listing}
             favourited

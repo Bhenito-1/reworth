@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import { Button, Chip, EmptyState, Modal, Skeleton } from "@reworth/ui-web";
+import { PullToRefresh } from "../../components/PullToRefresh";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
@@ -21,6 +22,7 @@ export default function ChatsPage() {
   const router = useRouter();
   const [items, setItems] = useState<ConversationListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ConversationListItem | null>(
     null,
@@ -28,13 +30,15 @@ export default function ChatsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
     const token = getAccessToken();
     if (!token) {
       router.replace("/");
       return;
     }
-    setLoading(true);
+    const soft = Boolean(opts?.soft);
+    if (soft) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const rows = await listConversations(token);
@@ -52,7 +56,8 @@ export default function ChatsPage() {
             : "Could not load chats",
       );
     } finally {
-      setLoading(false);
+      if (soft) setRefreshing(false);
+      else setLoading(false);
     }
   }, [router]);
 
@@ -161,7 +166,10 @@ export default function ChatsPage() {
         }}
       />
 
-      <div className="relative z-10 mx-auto max-w-lg px-4 pt-8 sm:px-6">
+      <PullToRefresh
+        className="relative z-10 mx-auto max-w-lg px-4 pb-10 pt-8 sm:px-6"
+        onRefresh={() => load({ soft: true })}
+      >
         <header className="mb-6">
           <p className="text-sm font-medium text-[var(--rw-accent)]">ReWorth</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">Chats</h1>
@@ -270,7 +278,7 @@ export default function ChatsPage() {
             })}
           </ul>
         )}
-      </div>
+      </PullToRefresh>
 
       <Modal
         open={Boolean(pendingDelete)}

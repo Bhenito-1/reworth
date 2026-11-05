@@ -44,6 +44,7 @@ import { PartnerModule } from './partner/partner.module';
 import { CircularModule } from './circular/circular.module';
 import { MonetizationModule } from './monetization/monetization.module';
 import { CartModule } from './cart/cart.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -131,6 +132,7 @@ import { CartModule } from './cart/cart.module';
     PartnerModule,
     CircularModule,
     MonetizationModule,
+    SupportModule,
   ],
   providers: [
     {

@@ -119,8 +119,15 @@ describe('NotificationsService', () => {
     quietHoursStart?: number | null;
     quietHoursEnd?: number | null;
     email?: string | null;
-    tokens?: string[];
+    subscriptions?: Array<{
+      id: string;
+      endpoint: string;
+      p256dh: string;
+      auth: string;
+    }>;
     consents?: { channel: string; granted: boolean }[];
+    /** Defaults true so existing push assertions keep working. */
+    enablePush?: boolean;
   }) {
     const created: any[] = [];
     const prisma: any = {
@@ -153,10 +160,18 @@ describe('NotificationsService', () => {
           ],
         ),
       },
-      devicePushToken: {
+      webPushSubscription: {
         findMany: jest.fn(async () =>
-          (opts.tokens ?? ['tok-1']).map((token) => ({ token })),
+          opts.subscriptions ?? [
+            {
+              id: 'sub-1',
+              endpoint: 'https://fcm.googleapis.com/fcm/send/test',
+              p256dh: 'dGVzdC1wMjU2ZGgta2V5LXZhbHVlMTIz',
+              auth: 'dGVzdC1hdXRo',
+            },
+          ],
         ),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
       },
       notification: {
         create: jest.fn(async ({ data }: any) => {
@@ -169,10 +184,11 @@ describe('NotificationsService', () => {
     const push = new MockPushProvider();
     const email = new MockEmailProvider();
     const config = {
-      get: (key: string) =>
-        key === 'APP_URL' || key === 'WEB_ORIGIN'
-          ? 'http://localhost:3000'
-          : undefined,
+      get: (key: string) => {
+        if (key === 'APP_URL' || key === 'WEB_ORIGIN') return 'http://localhost:3000';
+        if (key === 'ENABLE_PUSH') return opts.enablePush === false ? 'false' : 'true';
+        return undefined;
+      },
     } as unknown as import('@nestjs/config').ConfigService;
     const svc = new NotificationsService(prisma, config, push, email);
     return { svc, push, email, created, prisma };
@@ -248,7 +264,7 @@ describe('NotificationsService', () => {
   });
 
   it('disable PRICE_DROP push → no push; PAYMENT_RECEIVED still gets IN_APP', async () => {
-    const { svc, push, created } = buildService({
+    const { svc, push, created, prisma } = buildService({
       prefs: [
         {
           category: NotificationCategory.PRICE_DROP,
@@ -263,13 +279,22 @@ describe('NotificationsService', () => {
       ],
     });
 
-    await svc.notify({
+    const result = await svc.notify({
       userId: 'user-1',
       category: NotificationCategory.PRICE_DROP,
       title: 'Price drop',
       body: 'Item cheaper',
     });
     expect(push.sent).toHaveLength(0);
+    expect(
+      result.skipped.some(
+        (s) =>
+          s.channel === NotificationChannel.PUSH &&
+          s.reason === 'preference_disabled',
+      ),
+    ).toBe(true);
+    // Preference gate must run before subscription lookup (no extra DB hit).
+    expect(prisma.webPushSubscription.findMany).not.toHaveBeenCalled();
     expect(
       created.some(
         (c) =>
@@ -287,6 +312,56 @@ describe('NotificationsService', () => {
       channels: [NotificationChannel.IN_APP],
     });
     expect(payment.created.some((c) => c.channel === 'IN_APP')).toBe(true);
+  });
+
+  it('ENABLE_PUSH=false skips push without hitting subscriptions', async () => {
+    const { svc, push, prisma } = buildService({ enablePush: false });
+    const result = await svc.notify({
+      userId: 'user-1',
+      category: NotificationCategory.NEW_MESSAGE,
+      title: 'Hi',
+      body: 'msg',
+      channels: [NotificationChannel.PUSH],
+    });
+    expect(push.sent).toHaveLength(0);
+    expect(prisma.webPushSubscription.findMany).not.toHaveBeenCalled();
+    expect(
+      result.skipped.some(
+        (s) =>
+          s.channel === NotificationChannel.PUSH && s.reason === 'push_disabled',
+      ),
+    ).toBe(true);
+  });
+
+  it('no browser subscription → skip push (settings Disable)', async () => {
+    const { svc, push } = buildService({ subscriptions: [] });
+    const result = await svc.notify({
+      userId: 'user-1',
+      category: NotificationCategory.NEW_OFFER,
+      title: 'Offer',
+      body: 'New offer',
+      channels: [NotificationChannel.PUSH],
+    });
+    expect(push.sent).toHaveLength(0);
+    expect(
+      result.skipped.some(
+        (s) =>
+          s.channel === NotificationChannel.PUSH &&
+          s.reason === 'no_subscription',
+      ),
+    ).toBe(true);
+  });
+
+  it('EMAIL-only notify does not load push subscriptions', async () => {
+    const { svc, prisma } = buildService({});
+    await svc.notify({
+      userId: 'user-1',
+      category: NotificationCategory.ORDER_PLACED,
+      title: 'Order',
+      body: 'placed',
+      channels: [NotificationChannel.EMAIL],
+    });
+    expect(prisma.webPushSubscription.findMany).not.toHaveBeenCalled();
   });
 
   it('setPreference forces IN_APP enabled for PAYMENT_RECEIVED', async () => {

@@ -13,6 +13,7 @@ import {
   Toast,
 } from "@reworth/ui-web";
 import { MakeOfferModal } from "../../../components/chat/MakeOfferModal";
+import { OFFER_MULTI_UNIT_HINT } from "../../../lib/offer-copy";
 import { ListingReviews } from "../../../components/trust/ListingReviews";
 import { SwapProposalModal } from "../../../components/swap/SwapProposalModal";
 import { apiFetch, ApiError } from "../../../lib/api";
@@ -83,7 +84,6 @@ export default function ListingPdpPage() {
     message: string;
     tone?: "info" | "success" | "warn" | "error";
     durationMs?: number;
-    inline?: boolean;
   } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
@@ -276,7 +276,7 @@ export default function ListingPdpPage() {
       sessionStorage.setItem(
         "reworth:offer-notice",
         JSON.stringify({
-          message: `Offer of ${amountLabel} sent for ${item}. The seller can accept, decline, or counter it.`,
+          message: `Offer of ${amountLabel} sent for ${item}. ${OFFER_MULTI_UNIT_HINT}`,
           tone: "success",
           durationMs: 6000,
         }),
@@ -293,7 +293,6 @@ export default function ListingPdpPage() {
           message: `Your offer of ${amountLabel} for ${item} was not sent. ${reason}`,
           tone: "error",
           durationMs: 6000,
-          inline: true,
         });
       });
     } finally {
@@ -477,7 +476,7 @@ export default function ListingPdpPage() {
     return (
       <main className="min-h-[100dvh] bg-[var(--rw-bg)] px-4 py-8 sm:px-8">
         <div className="mx-auto max-w-3xl space-y-4">
-          <Skeleton className="h-[50dvh] w-full" label="Loading gallery" />
+          <Skeleton className="aspect-[4/5] max-h-[70dvh] w-full sm:aspect-[3/4] lg:aspect-[16/10]" label="Loading gallery" />
           <Skeleton className="h-8 w-1/2" label="Loading price" />
           <Skeleton className="h-6 w-3/4" label="Loading title" />
           <Skeleton className="h-32 w-full" label="Loading details" />
@@ -532,16 +531,6 @@ export default function ListingPdpPage() {
       />
 
       <div className="relative z-10 mx-auto max-w-3xl px-4 pb-16 pt-6 sm:px-8">
-        {toast?.inline ? (
-          <div className="sticky top-14 z-20 mb-4">
-            <Toast
-              message={toast.message}
-              tone={toast.tone}
-              durationMs={toast.durationMs}
-              onDismiss={() => setToast(null)}
-            />
-          </div>
-        ) : null}
         <header className="mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             {backHref ? (
@@ -568,16 +557,17 @@ export default function ListingPdpPage() {
 
         <section aria-label="Photo gallery" className="rw-fade-up">
           {images.length === 0 ? (
-            <div className="flex h-[50dvh] items-center justify-center rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)] text-sm text-[var(--rw-ink-muted)]">
+            <div className="flex aspect-[4/5] max-h-[70dvh] items-center justify-center rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)] text-sm text-[var(--rw-ink-muted)] sm:aspect-[3/4] sm:max-h-[min(70dvh,36rem)] lg:aspect-[16/10] lg:max-h-[min(72dvh,42rem)]">
               No photos yet
             </div>
           ) : (
-            <div className="relative h-[50dvh] overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)]">
+            <div className="relative aspect-[4/5] max-h-[70dvh] overflow-hidden rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)] sm:aspect-[3/4] sm:max-h-[min(70dvh,36rem)] lg:aspect-[16/10] lg:max-h-[min(72dvh,42rem)]">
               {listingImageUrl(images[photoIndex]) ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={listingImageUrl(images[photoIndex]) ?? ""}
                   alt={`Photo ${photoIndex + 1} of ${images.length}`}
+                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 56rem"
                   className="h-full w-full object-cover"
                 />
               ) : null}
@@ -1107,7 +1097,7 @@ export default function ListingPdpPage() {
             </h2>
             <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
               {similarInCategory.map((item) => (
-                <li key={item.id} className="w-44 shrink-0">
+                <li key={item.id} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
                   <DiscoveryListingCard listing={item} />
                 </li>
               ))}
@@ -1239,7 +1229,7 @@ export default function ListingPdpPage() {
         )}
       </Modal>
 
-      {toast && !toast.inline ? (
+      {toast ? (
         <div className="fixed bottom-6 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2 lg:left-[calc(50%+var(--rw-sidebar-offset,0px))]">
           <Toast
             message={toast.message}

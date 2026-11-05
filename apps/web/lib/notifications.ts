@@ -229,13 +229,34 @@ export function patchNotificationPreference(
   });
 }
 
-export function registerPushToken(
+export type WebPushSubscriptionPayload = {
+  endpoint: string;
+  expirationTime: number | null;
+  keys: { p256dh: string; auth: string };
+};
+
+export function getWebPushVapidKey(token: string): Promise<{ publicKey: string }> {
+  return apiFetch("/devices/web-push/vapid-key", { token, cache: "no-store" });
+}
+
+export function saveWebPushSubscription(
   token: string,
-  body: { token: string; platform: string },
+  body: WebPushSubscriptionPayload,
 ): Promise<unknown> {
-  return apiFetch("/devices/push-token", {
+  return apiFetch("/devices/web-push-subscriptions", {
     method: "POST",
     token,
     body,
+  });
+}
+
+export function deleteWebPushSubscription(
+  token: string,
+  endpoint?: string,
+) {
+  return apiFetch<{ count: number }>("/devices/web-push-subscriptions", {
+    method: "DELETE",
+    token,
+    body: endpoint ? { endpoint } : {},
   });
 }

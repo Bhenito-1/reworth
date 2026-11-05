@@ -21,9 +21,11 @@ function mockNotifications(): NotificationsService {
 function baseOrder(overrides: Record<string, unknown> = {}) {
   return {
     id: 'order-1',
+    reference: 'RW-ORD-TESTORDER1',
     listingId: 'listing-1',
     buyerId: 'buyer-1',
     sellerId: 'seller-1',
+    paymentId: null as string | null,
     offerId: null as string | null,
     orderIntentId: null as string | null,
     amountKobo: 100_000_00,
@@ -47,12 +49,14 @@ function basePayment(overrides: Record<string, unknown> = {}) {
   return {
     id: 'pay-1',
     orderId: 'order-1',
+    payerId: 'buyer-1',
+    payeeId: 'seller-1',
     provider: 'mock-psp',
-    reference: 'ref-1',
+    reference: 'RW-PAY-TESTPAY1',
     amountKobo: 102_500_00,
     status: 'PENDING' as string,
-    idempotencyKey: 'idem-1',
-    providerPayload: { checkoutUrl: 'https://mock-psp.local/checkout/ref-1' },
+    idempotencyKey: null as string | null,
+    providerPayload: { checkoutUrl: 'https://mock-psp.local/checkout/RW-PAY-TESTPAY1' },
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -181,9 +185,17 @@ describe('escrow happy path + webhook replay', () => {
             where,
             data,
           }: {
-            where: { status?: string | { in?: string[] } };
+            where: {
+              status?: string | { in?: string[] };
+              id?: string;
+              paymentId?: null;
+            };
             data: Record<string, unknown>;
           }) => {
+            if (where.id && where.id !== state.order.id) return { count: 0 };
+            if (where.paymentId === null && state.order.paymentId) {
+              return { count: 0 };
+            }
             const statusOk = (() => {
               if (!where.status) return true;
               if (typeof where.status === 'string') {
@@ -346,14 +358,15 @@ describe('escrow happy path + webhook replay', () => {
       idempotencyKey: 'idem-1',
     });
     expect(pay2.id).toBe(pay.id);
+    expect(state.order.paymentId).toBe('pay-1');
 
-    await payments.handleMockWebhook({ reference: 'ref-1' });
+    await payments.handleMockWebhook({ reference: pay.reference });
     expect(state.order.status).toBe('FUNDED');
     expect(state.payment.status).toBe('SUCCESS');
 
-    await payments.handleMockWebhook({ reference: 'ref-1' });
-    await payments.handleMockWebhook({ reference: 'ref-1' });
-    await payments.handleMockWebhook({ reference: 'ref-1' });
+    await payments.handleMockWebhook({ reference: pay.reference });
+    await payments.handleMockWebhook({ reference: pay.reference });
+    await payments.handleMockWebhook({ reference: pay.reference });
     expect(state.order.status).toBe('FUNDED');
 
     state.order.status = 'FUNDED';
@@ -509,6 +522,7 @@ describe('disputes', () => {
         update: jest.fn(),
       },
       listingEvent: { create: jest.fn() },
+      favourite: { deleteMany: jest.fn(async () => ({ count: 0 })) },
       $transaction: jest.fn(async (fn: (tx: any) => Promise<unknown>) =>
         fn(prisma),
       ),

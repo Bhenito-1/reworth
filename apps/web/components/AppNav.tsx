@@ -76,6 +76,7 @@ const BAR_LINKS: { href: string; label: string; match: (pathname: string) => boo
     match: (p) => p.startsWith("/communities"),
   },
   { href: "/#impact", label: "Sustainability", match: () => false },
+  { href: "/support", label: "Support", match: (p) => p.startsWith("/support") },
 ];
 
 /** Sell, wishlist, and cart live under Account on desktop. */
@@ -298,12 +299,14 @@ function AccountMenu({
 function NavLinks({
   pathname,
   onNavigate,
+  className,
 }: {
   pathname: string;
   onNavigate?: () => void;
+  className?: string;
 }) {
   return (
-    <ul className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-4">
+    <ul className={["flex flex-col gap-1 px-3", className].filter(Boolean).join(" ")}>
       {ITEMS.map((item) => {
         const active = item.match(pathname);
         return (
@@ -332,7 +335,54 @@ function NavLinks({
 export function AppNav() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [maskHeight, setMaskHeight] = useState(0);
   const unreadNotifications = useUnreadNotificationCount();
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    let frame = 0;
+    const updateMask = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (window.scrollY <= 0) {
+          setMaskHeight(0);
+          return;
+        }
+
+        let boundary = 0;
+        document
+          .querySelectorAll<HTMLElement>("[data-scroll-mask-bar]")
+          .forEach((bar) => {
+            if (getComputedStyle(bar).display === "none") return;
+            const rect = bar.getBoundingClientRect();
+            if (rect.bottom > 0 && rect.top < window.innerHeight) {
+              boundary = Math.max(boundary, rect.bottom);
+            }
+          });
+        setMaskHeight((current) =>
+          Math.abs(current - boundary) < 1 ? current : boundary,
+        );
+      });
+    };
+
+    updateMask();
+    window.addEventListener("scroll", updateMask, { passive: true });
+    window.addEventListener("resize", updateMask);
+    return () => {
+      window.removeEventListener("scroll", updateMask);
+      window.removeEventListener("resize", updateMask);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [pathname]);
 
   async function logout() {
     const refreshToken = getRefreshToken();
@@ -348,7 +398,7 @@ export function AppNav() {
   }
 
   const panel = (opts?: { onClose?: () => void; onNavigate?: () => void }) => (
-    <div className="flex h-full flex-col bg-[var(--rw-bg-elevated)]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--rw-bg-elevated)]">
       <div className="flex items-center justify-between px-5 pb-2 pt-5">
         <div>
           <p className="text-lg font-semibold tracking-tight text-[var(--rw-ink)]">
@@ -377,9 +427,10 @@ export function AppNav() {
           </button>
         ) : null}
       </div>
-      <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col">
-        <NavLinks pathname={pathname} onNavigate={opts?.onNavigate} />
-        <div className="flex flex-col gap-1 px-3 pb-4">
+      <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-2 [-webkit-overflow-scrolling:touch]">
+          <NavLinks pathname={pathname} onNavigate={opts?.onNavigate} />
+          <div className="flex flex-col gap-1 px-3 pb-2 pt-1">
           <a
             href="/#how"
             onClick={opts?.onNavigate}
@@ -394,6 +445,13 @@ export function AppNav() {
           >
             Community
           </Link>
+          <Link
+            href="/support"
+            onClick={opts?.onNavigate}
+            className="rounded-xl px-3 py-2.5 text-sm font-medium text-[var(--rw-ink-muted)] hover:bg-[var(--rw-bg)] hover:text-[var(--rw-ink)]"
+          >
+            Support
+          </Link>
           <a
             href="/#impact"
             onClick={opts?.onNavigate}
@@ -401,6 +459,7 @@ export function AppNav() {
           >
             Sustainability
           </a>
+          </div>
         </div>
       </nav>
       <div className="border-t border-[var(--rw-border)] p-3">
@@ -417,7 +476,17 @@ export function AppNav() {
 
   return (
     <>
-      <div className="fixed inset-x-0 top-0 z-40 hidden px-4 pt-3 lg:block">
+      {maskHeight > 0 ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-x-0 top-0 z-20 backdrop-blur-[2px]"
+          style={{
+            height: `${maskHeight + 24}px`,
+            background: `linear-gradient(to bottom, var(--rw-bg) 0px, var(--rw-bg) ${maskHeight}px, transparent 100%)`,
+          }}
+        />
+      ) : null}
+      <div data-scroll-mask-bar className="fixed inset-x-0 top-0 z-40 hidden px-4 pt-3 lg:block">
         <div className="mx-auto flex max-w-7xl items-center gap-2 rounded-[1.35rem] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 shadow-[0_12px_40px_rgba(23,42,58,0.1)]">
           <Link
             href="/"
@@ -505,7 +574,7 @@ export function AppNav() {
         </div>
       </div>
 
-      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 lg:hidden">
+      <div data-scroll-mask-bar className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 lg:hidden">
         <button
           type="button"
           aria-label="Open menu"
@@ -529,7 +598,7 @@ export function AppNav() {
             className="absolute inset-0 bg-black/40"
             onClick={() => setOpen(false)}
           />
-          <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] shadow-xl">
+          <aside className="absolute inset-y-0 left-0 flex h-full w-72 max-w-[85vw] flex-col overflow-hidden shadow-xl">
             {panel({
               onClose: () => setOpen(false),
               onNavigate: () => setOpen(false),

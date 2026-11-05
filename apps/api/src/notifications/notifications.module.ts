@@ -8,8 +8,8 @@ import {
   MockEmailProvider,
 } from '../providers/mock-email.provider';
 import { ResendEmailProvider } from '../providers/resend-email.provider';
-import { ExpoPushProvider } from '../providers/expo-push.provider';
 import { MockPushProvider } from '../providers/mock-push.provider';
+import { WebPushProvider } from '../providers/web-push.provider';
 import { PUSH_PROVIDER } from '../providers/push.provider';
 import {
   DevicesController,
@@ -46,8 +46,19 @@ export function createPushProvider(config: ConfigService) {
   const provider = (
     config.get<string>('PUSH_PROVIDER') ?? 'mock'
   ).toLowerCase();
-  if (provider === 'expo') {
-    return new ExpoPushProvider();
+  if (provider === 'web-push') {
+    const publicKey = config.get<string>('WEB_PUSH_VAPID_PUBLIC_KEY') ?? '';
+    const privateKey = config.get<string>('WEB_PUSH_VAPID_PRIVATE_KEY') ?? '';
+    const subject = config.get<string>('WEB_PUSH_VAPID_SUBJECT') ?? '';
+    if (!publicKey || !privateKey || !subject) {
+      throw new Error('PUSH_PROVIDER=web-push requires WEB_PUSH_VAPID_PUBLIC_KEY, WEB_PUSH_VAPID_PRIVATE_KEY, and WEB_PUSH_VAPID_SUBJECT');
+    }
+    return new WebPushProvider(
+      publicKey,
+      privateKey,
+      subject,
+      config.get<string>('WEB_ORIGIN'),
+    );
   }
   return new MockPushProvider();
 }

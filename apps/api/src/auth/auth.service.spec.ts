@@ -30,6 +30,12 @@ describe('AuthService', () => {
         update: jest.fn(),
         delete: jest.fn(),
       },
+      emailPasswordResetOtp: {
+        upsert: jest.fn(),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
       verification: {
         findFirst: jest.fn(),
         create: jest.fn(),
@@ -243,6 +249,63 @@ describe('AuthService', () => {
       expect(email.send).toHaveBeenCalledWith(
         expect.objectContaining({ subject: 'Welcome to ReWorth' }),
       );
+    });
+  });
+
+  describe('password reset OTP', () => {
+    it('sends a code for email/password accounts without leaking missing users', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: 'u1',
+        email: 'ada@reworth.ng',
+        passwordHash: 'hash',
+        status: 'ACTIVE',
+        profile: { displayName: 'Ada' },
+      });
+      prisma.emailPasswordResetOtp.upsert.mockResolvedValue({});
+
+      const result = await service.requestPasswordReset({
+        email: 'ada@reworth.ng',
+      });
+
+      expect(result.expiresInSeconds).toBe(600);
+      expect(prisma.emailPasswordResetOtp.upsert).toHaveBeenCalled();
+      expect(email.send).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'ada@reworth.ng' }),
+      );
+
+      prisma.user.findUnique.mockResolvedValueOnce(null);
+      const silent = await service.requestPasswordReset({
+        email: 'ghost@reworth.ng',
+      });
+      expect(silent.email).toBe('ghost@reworth.ng');
+      expect(email.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('updates password when code matches and revokes sessions', async () => {
+      prisma.emailPasswordResetOtp.findUnique.mockResolvedValue({
+        email: 'ada@reworth.ng',
+        codeHash: hashWithPepper('333333', 'dev-otp-pepper'),
+        attempts: 0,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'u1',
+        email: 'ada@reworth.ng',
+        passwordHash: 'old',
+        status: 'ACTIVE',
+      });
+      prisma.user.update.mockResolvedValue({});
+      prisma.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.confirmPasswordReset({
+        email: 'ada@reworth.ng',
+        code: '333333',
+        password: 'newpassword99',
+      });
+
+      expect(result).toEqual({ ok: true });
+      expect(prisma.user.update).toHaveBeenCalled();
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalled();
     });
   });
 });

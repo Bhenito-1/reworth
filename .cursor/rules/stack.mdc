@@ -8,23 +8,23 @@ alwaysApply: true
 | Area | Decision |
 | --- | --- |
 | Monorepo | Turborepo + pnpm |
-| **Primary client** | **React Native + Expo** (`apps/mobile`) — iOS + Android |
-| Web companion | Next.js 15 App Router, TypeScript, Tailwind (`apps/web`) — browse / search / PDP / checkout |
+| **Primary client** | **Next.js 15 PWA** (`apps/web`) — installable web app |
 | Admin | Next.js 15 (`apps/admin`) — ops only; not a consumer surface |
 | API | NestJS modular monolith, REST `/api/v1` |
 | DB | PostgreSQL 16 + Prisma; Redis + BullMQ |
 | Media | S3-compatible object store (`STORAGE_DRIVER=s3`, `S3StorageAdapter`); local compose runs **adobe/s3mock**; disk fallback (`STORAGE_DRIVER=local`) |
 | Search | OpenSearch + Postgres FTS fallback |
 | Auth | JWT + email/password + Google/Apple OAuth |
-| Push | Mock default; `PUSH_PROVIDER=expo` for store |
+| Push | `PUSH_PROVIDER=web-push` + VAPID (mock default for local unless enabled) |
 | Payments | Paystack + mock PSP; escrow-shaped (ADR-002) |
 | AI | OpenAI GPT-4o default + rule-based mock |
 | Locale | NGN, en-NG, WAT |
 
 ## Surface priority
 
-1. Mobile (iOS + Android)  
-2. Web companion parity  
-3. Admin (ops)
+1. Web PWA (`apps/web`)  
+2. Admin (ops)
+
+Do **not** reintroduce `apps/mobile` / Expo without an ADR.
 
 Stack changes require a new ADR under `docs/ADRS/`. See ADR-001.

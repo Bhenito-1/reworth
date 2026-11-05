@@ -37,12 +37,14 @@ export function ListingCard({
         .join(" ")}
       {...rest}
     >
-      <div className="relative aspect-[3/4] w-full shrink-0 overflow-hidden bg-[var(--rw-bg-warm)]">
+      {/* Tighter crop on phones; taller card art on tablet/desktop */}
+      <div className="relative aspect-[4/5] w-full shrink-0 overflow-hidden bg-[var(--rw-bg-warm)] sm:aspect-[3/4]">
         {imageSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={imageSrc}
             alt={imageAlt ?? title}
+            sizes="(max-width: 640px) 42vw, (max-width: 1024px) 10rem, 12rem"
             className="absolute inset-0 h-full w-full object-cover"
             onError={onImageError}
           />

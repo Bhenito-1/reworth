@@ -82,6 +82,8 @@ export type OfferDto = {
   expiresAt: string;
   createdAt: string;
   updatedAt: string;
+  orderIntentId?: string | null;
+  proposedByUserId?: string | null;
 };
 
 export type AcceptOfferResponse = {
@@ -370,6 +372,64 @@ export function withdrawOffer(
     method: "DELETE",
     token,
   });
+}
+
+export type OrderIntentPreview = {
+  id: string;
+  listingId: string;
+  offerId: string | null;
+  amountKobo: number;
+  reservedUntil: string;
+};
+
+export function getOrderIntent(
+  token: string,
+  orderIntentId: string,
+): Promise<OrderIntentPreview> {
+  return apiFetch<OrderIntentPreview>(`/order-intents/${orderIntentId}`, {
+    token,
+  });
+}
+
+export type OfferCheckoutPayload = {
+  v: 1;
+  kind: "OFFER_CHECKOUT";
+  offerId: string;
+  orderIntentId: string;
+  listingId: string;
+  amountKobo: number;
+  buyerId: string;
+};
+
+export function parseOfferCheckout(
+  body: string | null | undefined,
+): OfferCheckoutPayload | null {
+  if (!body?.trim().startsWith("{")) return null;
+  try {
+    const raw = JSON.parse(body) as Partial<OfferCheckoutPayload>;
+    if (raw?.kind !== "OFFER_CHECKOUT" || raw.v !== 1) return null;
+    if (
+      typeof raw.offerId !== "string" ||
+      typeof raw.orderIntentId !== "string" ||
+      typeof raw.listingId !== "string" ||
+      typeof raw.buyerId !== "string" ||
+      typeof raw.amountKobo !== "number" ||
+      !Number.isFinite(raw.amountKobo)
+    ) {
+      return null;
+    }
+    return {
+      v: 1,
+      kind: "OFFER_CHECKOUT",
+      offerId: raw.offerId,
+      orderIntentId: raw.orderIntentId,
+      listingId: raw.listingId,
+      amountKobo: Math.floor(raw.amountKobo),
+      buyerId: raw.buyerId,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function clientMsgId(): string {

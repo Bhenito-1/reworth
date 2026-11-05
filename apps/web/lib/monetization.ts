@@ -1,6 +1,6 @@
 /**
  * Monetization companion (Boost / Featured / Seller Plus) — web.
- * Mirrors apps/mobile/lib/monetization.ts
+ * Web monetization helpers (Pro / boosts / referrals).
  */
 
 import { apiFetch } from "./api";

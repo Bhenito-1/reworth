@@ -51,13 +51,29 @@ export class CreateOrderDto {
   @IsUUID()
   meetPointId?: string;
 
-  /** Units to buy. Price on the listing is per unit. Ignored for offers (always 1). */
+  /** Units to buy. Per-unit price applies; negotiated (offer) checkouts use agreed unit price × quantity. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(999)
   quantity?: number;
+
+  /** Buyer-confirmed delivery address snapshot (DELIVERY). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  deliveryAddress?: string;
+
+  /**
+   * When set (e.g. multi-item cart checkout), use this fee instead of recomputing.
+   * Second+ orders from the same seller in one checkout should pass 0.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  deliveryFeeKobo?: number;
 }
 
 export class ConfirmOrderDto {

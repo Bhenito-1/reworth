@@ -6,9 +6,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { FulfilmentMethod, ListingStatus } from '@prisma/client';
+import { computeProtectionFeeKobo } from '../orders/order-fees';
 import { OrdersService } from '../orders/orders.service';
+import { computeDeliveryFeeKobo } from '../providers/delivery.provider';
+import { haversineKm } from '../providers/search.provider';
 import { PrismaService } from '../prisma/prisma.service';
-import type { CheckoutCartDto, UpsertCartItemDto } from './dto/cart.dto';
+import type { CartQuoteDto, CheckoutCartDto, UpsertCartItemDto } from './dto/cart.dto';
 
 const cartListingSelect = {
   id: true,
@@ -17,6 +20,8 @@ const cartListingSelect = {
   status: true,
   sellingMode: true,
   sellerId: true,
+  geoLat: true,
+  geoLng: true,
   quantityAvailable: true,
   quantityTotal: true,
   images: {
@@ -25,6 +30,20 @@ const cartListingSelect = {
     select: { id: true, variants: true },
   },
 } as const;
+
+type CartRow = {
+  id: string;
+  quantity: number;
+  listingId: string;
+  listing: {
+    id: string;
+    title: string;
+    priceKobo: number;
+    sellerId: string;
+    geoLat: number | null;
+    geoLng: number | null;
+  };
+};
 
 @Injectable()
 export class CartService {
@@ -99,24 +118,34 @@ export class CartService {
     return { removed: true };
   }
 
+  async quote(userId: string, dto: CartQuoteDto) {
+    const rows = await this.loadCheckoutRows(userId, dto.listingIds);
+    const deliveryByListing = this.deliveryFeesByListing(rows, dto.toLat, dto.toLng);
+    return this.buildQuotePayload(rows, deliveryByListing, dto.toLat, dto.toLng);
+  }
+
   /**
-   * Each cart line becomes its own order. Sellers differ, and escrow is per order.
-   * Stock is reserved by order creation — not by sitting in the cart.
+   * Each cart line becomes its own order. Delivery is charged once per seller
+   * (pickup location → buyer address). Stock is reserved by order creation.
    */
   async checkout(userId: string, dto: CheckoutCartDto) {
-    const rows = await this.prisma.cartItem.findMany({
-      where: {
-        userId,
-        ...(dto.listingIds?.length
-          ? { listingId: { in: dto.listingIds } }
-          : {}),
-      },
-      include: { listing: { select: { id: true, title: true } } },
-      orderBy: { createdAt: 'asc' },
-    });
-    if (rows.length === 0) {
-      throw new BadRequestException('Your cart is empty');
+    if (dto.fulfilmentMethod !== FulfilmentMethod.DELIVERY) {
+      throw new BadRequestException('Cart checkout is delivery only');
     }
+    if (dto.toLat == null || dto.toLng == null) {
+      throw new BadRequestException('Delivery destination is required');
+    }
+    const deliveryAddress = dto.deliveryAddress?.trim() ?? '';
+    if (!deliveryAddress) {
+      throw new BadRequestException('Delivery address is required');
+    }
+
+    const rows = await this.loadCheckoutRows(userId, dto.listingIds);
+    const deliveryByListing = this.deliveryFeesByListing(
+      rows,
+      dto.toLat,
+      dto.toLng,
+    );
 
     const checkoutId = randomUUID();
     const orders = [];
@@ -137,6 +166,10 @@ export class CartService {
             quantity: row.quantity,
             buyNow: true,
             fulfilmentMethod: FulfilmentMethod.DELIVERY,
+            toLat: dto.toLat,
+            toLng: dto.toLng,
+            deliveryAddress,
+            deliveryFeeKobo: deliveryByListing.get(row.listingId) ?? 0,
           },
           { skipEmail: true, checkoutId },
         );
@@ -162,7 +195,142 @@ export class CartService {
         `${failed.title}: ${failed.message}. ${orders.length} other item(s) were ordered.`,
       );
     }
-    return { orders };
+    return {
+      checkoutId,
+      orders,
+      quote: this.buildQuotePayload(
+        rows,
+        deliveryByListing,
+        dto.toLat,
+        dto.toLng,
+      ),
+    };
+  }
+
+  private async loadCheckoutRows(
+    userId: string,
+    listingIds?: string[],
+  ): Promise<
+    (CartRow & {
+      createdAt: Date;
+      listing: CartRow['listing'] & { status: ListingStatus; sellingMode: string };
+    })[]
+  > {
+    const rows = await this.prisma.cartItem.findMany({
+      where: {
+        userId,
+        ...(listingIds?.length ? { listingId: { in: listingIds } } : {}),
+      },
+      include: { listing: { select: cartListingSelect } },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (rows.length === 0) {
+      throw new BadRequestException('Your cart is empty');
+    }
+    for (const row of rows) {
+      if (row.listing.status !== ListingStatus.LIVE) {
+        throw new ConflictException(
+          `"${row.listing.title || 'Item'}" is no longer available`,
+        );
+      }
+      if (row.listing.geoLat == null || row.listing.geoLng == null) {
+        throw new BadRequestException(
+          `"${row.listing.title || 'Item'}" cannot be delivered — seller pickup location is missing.`,
+        );
+      }
+    }
+    return rows;
+  }
+
+  /** First line per seller pays delivery; additional lines from same seller pay 0. */
+  private deliveryFeesByListing(
+    rows: CartRow[],
+    toLat: number,
+    toLng: number,
+  ): Map<string, number> {
+    const chargedSeller = new Set<string>();
+    const fees = new Map<string, number>();
+    for (const row of rows) {
+      const sellerId = row.listing.sellerId;
+      if (chargedSeller.has(sellerId)) {
+        fees.set(row.listingId, 0);
+        continue;
+      }
+      const fromLat = row.listing.geoLat ?? 6.5244;
+      const fromLng = row.listing.geoLng ?? 3.3792;
+      const distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
+      fees.set(row.listingId, computeDeliveryFeeKobo(distanceKm));
+      chargedSeller.add(sellerId);
+    }
+    return fees;
+  }
+
+  private buildQuotePayload(
+    rows: CartRow[],
+    deliveryByListing: Map<string, number>,
+    toLat?: number,
+    toLng?: number,
+  ) {
+    const sellerDelivery = new Map<
+      string,
+      { deliveryFeeKobo: number; distanceKm: number | null }
+    >();
+    const lines = rows.map((row) => {
+      const itemSubtotalKobo = row.listing.priceKobo * row.quantity;
+      const deliveryFeeKobo = deliveryByListing.get(row.listingId) ?? 0;
+      const protectionFeeKobo = computeProtectionFeeKobo(itemSubtotalKobo);
+      const lineTotalKobo =
+        itemSubtotalKobo + protectionFeeKobo + deliveryFeeKobo;
+      if (deliveryFeeKobo > 0 && !sellerDelivery.has(row.listing.sellerId)) {
+        let distanceKm: number | null = null;
+        if (toLat != null && toLng != null) {
+          const fromLat = row.listing.geoLat ?? 6.5244;
+          const fromLng = row.listing.geoLng ?? 3.3792;
+          distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
+        }
+        sellerDelivery.set(row.listing.sellerId, {
+          deliveryFeeKobo,
+          distanceKm,
+        });
+      }
+      return {
+        listingId: row.listingId,
+        sellerId: row.listing.sellerId,
+        title: row.listing.title,
+        quantity: row.quantity,
+        unitPriceKobo: row.listing.priceKobo,
+        itemSubtotalKobo,
+        deliveryFeeKobo,
+        protectionFeeKobo,
+        lineTotalKobo,
+      };
+    });
+
+    const itemsSubtotalKobo = lines.reduce((s, l) => s + l.itemSubtotalKobo, 0);
+    const deliveryTotalKobo = lines.reduce((s, l) => s + l.deliveryFeeKobo, 0);
+    const protectionTotalKobo = lines.reduce(
+      (s, l) => s + l.protectionFeeKobo,
+      0,
+    );
+    const grandTotalKobo =
+      itemsSubtotalKobo + deliveryTotalKobo + protectionTotalKobo;
+
+    const deliveryBySeller = [...sellerDelivery.entries()].map(
+      ([sellerId, v]) => ({
+        sellerId,
+        deliveryFeeKobo: v.deliveryFeeKobo,
+        distanceKm: v.distanceKm,
+      }),
+    );
+
+    return {
+      lines,
+      deliveryBySeller,
+      itemsSubtotalKobo,
+      deliveryTotalKobo,
+      protectionTotalKobo,
+      grandTotalKobo,
+    };
   }
 
   private toDto(row: {
@@ -177,6 +345,8 @@ export class CartService {
       status: ListingStatus;
       sellingMode: string;
       sellerId: string;
+      geoLat: number | null;
+      geoLng: number | null;
       quantityAvailable: number;
       quantityTotal: number;
       images: { id: string; variants: unknown }[];
@@ -195,6 +365,9 @@ export class CartService {
         priceKobo: row.listing.priceKobo,
         status: row.listing.status,
         sellingMode: row.listing.sellingMode,
+        sellerId: row.listing.sellerId,
+        geoLat: row.listing.geoLat,
+        geoLng: row.listing.geoLng,
         quantityAvailable: available,
         quantityTotal: row.listing.quantityTotal,
         images: row.listing.images.map((img) => ({
