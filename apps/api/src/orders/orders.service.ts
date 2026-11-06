@@ -30,6 +30,7 @@ import { AdminAlertsService } from '../admin/admin-alerts.service';
 import { SUPPORT } from '../admin/admin-roles';
 import { DeliveryService } from '../delivery/delivery.service';
 import { ListingStateMachine } from '../listings/listing-state.machine';
+import { newOrderReference } from '../common/transaction-reference';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -106,12 +107,19 @@ function orderMailLine(order: PlacedOrderMail): string {
 
 export type OrderDto = {
   id: string;
+  reference: string;
   listingId: string;
   listingTitle?: string | null;
   buyerId: string;
   sellerId: string;
+  /** Payer user id (buyer on standard sales). */
+  payerId: string;
+  /** Payee user id (seller on standard sales). */
+  payeeId: string;
   offerId: string | null;
   orderIntentId: string | null;
+  paymentId: string | null;
+  paymentReference: string | null;
   amountKobo: number;
   protectionFeeKobo: number;
     deliveryFeeKobo: number;
@@ -159,6 +167,9 @@ export type OrderDto = {
 
 function toOrderDto(
   o: Order & {
+    reference?: string;
+    paymentId?: string | null;
+    payment?: { reference: string } | null;
     meetPoint?: MeetPointSummaryDto | null;
     addressDisclosure?: {
       id: string;
@@ -169,11 +180,16 @@ function toOrderDto(
 ): OrderDto {
   return {
     id: o.id,
+    reference: o.reference,
     listingId: o.listingId,
     buyerId: o.buyerId,
     sellerId: o.sellerId,
+    payerId: o.buyerId,
+    payeeId: o.sellerId,
     offerId: o.offerId,
     orderIntentId: o.orderIntentId,
+    paymentId: o.paymentId ?? null,
+    paymentReference: o.payment?.reference ?? null,
     amountKobo: o.amountKobo,
     protectionFeeKobo: o.protectionFeeKobo,
     deliveryFeeKobo: o.deliveryFeeKobo,
@@ -332,15 +348,15 @@ export class OrdersService {
     }
 
     const negotiated = Boolean(dto.offerId || dto.orderIntentId);
-    const quantity = negotiated
-      ? 1
-      : Math.min(999, Math.max(1, dto.quantity ?? 1));
+    const quantity = Math.min(
+      999,
+      Math.max(1, dto.quantity ?? 1),
+    );
     const unitPriceKobo = amountKobo;
     if (!negotiated && listing.sellingMode !== 'SELL') {
       throw new BadRequestException('This listing is not sold by the unit');
     }
     if (
-      !negotiated &&
       typeof listing.quantityAvailable === 'number' &&
       listing.quantityAvailable < quantity
     ) {
@@ -356,7 +372,7 @@ export class OrdersService {
       this.feeCap(),
     );
 
-    // Every order ships with ReWorth delivery. Pickup and meet-up are not offered.
+    // Every order ships with ReWorth delivery. Fee is from seller pickup (listing geo) to buyer.
     const fromLat = listing.geoLat ?? 6.5244;
     const fromLng = listing.geoLng ?? 3.3792;
     const toLat = dto.toLat ?? fromLat + 0.02;
@@ -378,6 +394,7 @@ export class OrdersService {
     const order = await this.prisma.$transaction(async (tx) => {
       const created = await tx.order.create({
         data: {
+          reference: newOrderReference(),
           listingId: dto.listingId,
           buyerId,
           sellerId: listing.sellerId,
@@ -1083,6 +1100,34 @@ export class OrdersService {
       meta: { orderId, paymentReference },
     });
 
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: order.listingId },
+      select: { title: true },
+    });
+    const title = listing?.title?.trim() || 'Your item';
+    const qty = order.quantity ?? 1;
+    const receiptLines = [
+      `Order reference (give this to your courier): ${order.reference}`,
+      '',
+      `${qty} × ${title}`,
+      `Items (${formatNaira(order.unitPriceKobo || Math.round(order.amountKobo / qty))} per unit): ${formatNaira(order.amountKobo)}`,
+      `Buyer protection: ${formatNaira(order.protectionFeeKobo)}`,
+      `Delivery: ${formatNaira(order.deliveryFeeKobo)}`,
+      `Total paid: ${formatNaira(order.totalKobo)}`,
+      '',
+      `Payment reference: ${paymentReference}`,
+    ];
+    await this.notifications.notify({
+      userId: order.buyerId,
+      category: NotificationCategory.PAYMENT_RECEIVED,
+      title: `Receipt — ${order.reference}`,
+      body: receiptLines.join('\n'),
+      deepLink: `reworth://orders/${orderId}`,
+      channels: [NotificationChannel.EMAIL],
+      forceDelivery: true,
+      meta: { orderId, paymentReference, orderReference: order.reference },
+    });
+
     if (updated.fulfilmentMethod === FulfilmentMethod.DELIVERY) {
       await this.delivery?.assignAfterFunding(orderId);
     }
@@ -1697,6 +1742,7 @@ export class OrdersService {
       include: {
         meetPoint: true,
         addressDisclosure: true,
+        payment: { select: { id: true, reference: true } },
         payments: { orderBy: { createdAt: 'desc' }, take: 1 },
         payouts: { orderBy: { createdAt: 'desc' }, take: 1 },
         deliveryShipment: { select: { status: true } },
@@ -1706,7 +1752,19 @@ export class OrdersService {
     const paymentStatus = order.payments?.[0]?.status ?? null;
     const payoutStatus = order.payouts?.[0] ? 'RELEASED' : null;
     const deliveryStatus = order.deliveryShipment?.status ?? null;
-    const base = toOrderDto(order);
+    const linkedPayment = order.payment ?? order.payments?.[0] ?? null;
+    const base = toOrderDto({
+      ...order,
+      payment: linkedPayment
+        ? { reference: linkedPayment.reference }
+        : order.payment,
+    });
+    if (!base.paymentReference && order.payments?.[0]?.reference) {
+      base.paymentReference = order.payments[0].reference;
+    }
+    if (!base.paymentId && linkedPayment?.id) {
+      base.paymentId = linkedPayment.id;
+    }
     return {
       ...base,
       listingTitle: order.listing?.title?.trim() || null,

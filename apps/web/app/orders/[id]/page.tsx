@@ -577,6 +577,9 @@ export default function OrderDetailPage() {
               {order.swap ? "Swap" : isBuyer ? "Buying" : isSeller ? "Selling" : "Order"} ·{" "}
               {fulfilmentLabel(String(order.fulfilmentMethod))}
             </p>
+            <p className="mt-1 font-mono text-xs text-[var(--rw-ink-muted)]">
+              {order.reference}
+            </p>
           </div>
           <Chip selected className="pointer-events-none">
             {orderStatusLabel(String(order.status))}
@@ -630,6 +633,19 @@ export default function OrderDetailPage() {
           </dl>
         )}
         <dl className="mt-3 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <dt className="text-[var(--rw-ink-muted)]">Order reference</dt>
+            <dd className="font-mono text-sm font-semibold">{order.reference}</dd>
+            <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
+              Give this reference to the courier when collecting your item.
+            </p>
+          </div>
+          {order.paymentReference ? (
+            <div>
+              <dt className="text-[var(--rw-ink-muted)]">Payment reference</dt>
+              <dd className="font-mono text-xs font-medium">{order.paymentReference}</dd>
+            </div>
+          ) : null}
           <div>
             <dt className="text-[var(--rw-ink-muted)]">Payment</dt>
             <dd className="font-medium">{paymentStatusFromOrder(order)}</dd>

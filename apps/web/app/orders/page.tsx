@@ -265,7 +265,7 @@ export default function OrdersListPage() {
                               {role} · {fulfilmentLabel(String(o.fulfilmentMethod))}
                             </p>
                             <p className="mt-0.5 text-xs text-[var(--rw-ink-muted)]">
-                              {new Date(o.createdAt).toLocaleString("en-NG")}
+                              {o.reference} · {new Date(o.createdAt).toLocaleString("en-NG")}
                             </p>
                           </div>
                           <Chip selected className="pointer-events-none shrink-0 self-start sm:self-center">

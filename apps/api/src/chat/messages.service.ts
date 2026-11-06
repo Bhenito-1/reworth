@@ -21,6 +21,10 @@ import { NotificationStub } from './notification.stub';
 import { toMessageDto, type MessageDto } from './message.mapper';
 import type { PostMeetupPinDto, PostMessageDto } from './dto/chat.dto';
 import { encodeMeetupPin, meetupPinPreview } from './meetup-pin';
+import {
+  encodeOfferCheckout,
+  offerCheckoutPreview,
+} from './offer-checkout';
 
 function swapKindForStatus(status: string): string | null {
   switch (status) {
@@ -71,6 +75,8 @@ export function chatPreview(
     if (/swapProposalId/i.test(trimmed) || type === 'SWAP_PROPOSAL_CARD') {
       return 'Swap proposal';
     }
+    const checkoutPreview = offerCheckoutPreview(trimmed);
+    if (checkoutPreview) return checkoutPreview;
     if (/offerId/i.test(trimmed) || type === 'OFFER_CARD') return 'Offer';
     if (type === 'LISTING_CARD') return 'Listing';
     return 'New message';
@@ -491,6 +497,124 @@ export class MessagesService {
     return mapped;
   }
 
+  /** Buyer offer card in chat + inbox preview for the seller. */
+  async postOfferCard(input: {
+    conversationId: string;
+    buyerId: string;
+    offerId: string;
+    amountKobo: number;
+  }): Promise<MessageDto> {
+    const conversation = await this.requireParticipant(
+      input.conversationId,
+      input.buyerId,
+    );
+    if (conversation.buyerId !== input.buyerId) {
+      throw new ForbiddenException('Only the buyer can post an offer card');
+    }
+
+    const existing = await this.prisma.message.findUnique({
+      where: {
+        conversationId_clientMsgId: {
+          conversationId: input.conversationId,
+          clientMsgId: `offer-card-${input.offerId}`,
+        },
+      },
+      include: { sender: { include: { profile: true } } },
+    });
+    if (existing) return toMessageDto(existing);
+
+    const created = await this.prisma.message.create({
+      data: {
+        conversationId: input.conversationId,
+        senderId: input.buyerId,
+        type: MessageType.OFFER_CARD,
+        offerId: input.offerId,
+        body: JSON.stringify({ offerId: input.offerId, amountKobo: input.amountKobo }),
+        clientMsgId: `offer-card-${input.offerId}`,
+      },
+      include: { sender: { include: { profile: true } } },
+    });
+
+    await this.prisma.conversation.update({
+      where: { id: input.conversationId },
+      data: { lastMessageAt: created.createdAt },
+    });
+
+    const mapped = toMessageDto(created);
+    this.gateway?.emitToConversation(input.conversationId, 'message.new', mapped);
+    this.gateway?.emitToUsers(
+      [conversation.buyerId, conversation.sellerId],
+      'inbox.updated',
+      {
+        conversationId: input.conversationId,
+        lastMessageAt: created.createdAt.toISOString(),
+        preview: chatPreview(mapped.type, mapped.body),
+        senderId: input.buyerId,
+      },
+    );
+
+    const sellerMuted = await this.isMuted(
+      conversation.sellerId,
+      input.buyerId,
+      input.conversationId,
+    );
+    if (!sellerMuted) {
+      await this.alertNewOffer(
+        conversation.sellerId,
+        mapped,
+        input.amountKobo,
+      ).catch(() => undefined);
+    }
+
+    return mapped;
+  }
+
+  /** Seller alert when buyer withdraws a pending offer. */
+  async alertSellerOfferWithdrawn(input: {
+    sellerId: string;
+    conversationId: string;
+    offerId: string;
+  }): Promise<void> {
+    if (!this.inbox) return;
+    const deepLink = `reworth://chats/${input.conversationId}`;
+    await this.upsertChatNotification({
+      recipientId: input.sellerId,
+      category: NotificationCategory.NEW_OFFER,
+      title: 'Offer withdrawn',
+      body: 'The buyer withdrew their offer. Open chat for details.',
+      deepLink,
+      meta: {
+        conversationId: input.conversationId,
+        offerId: input.offerId,
+      },
+    });
+  }
+
+  private async alertNewOffer(
+    recipientId: string,
+    message: MessageDto,
+    amountKobo: number,
+  ): Promise<void> {
+    if (!this.inbox) return;
+    const amountLabel = new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: 'NGN',
+    }).format(amountKobo / 100);
+    const deepLink = `reworth://chats/${message.conversationId}`;
+    await this.upsertChatNotification({
+      recipientId,
+      category: NotificationCategory.NEW_OFFER,
+      title: 'New offer on your listing',
+      body: `A buyer offered ${amountLabel}. Open chat to respond. If you accept, they can buy multiple units at this price per unit.`,
+      deepLink,
+      meta: {
+        conversationId: message.conversationId,
+        messageId: message.id,
+        offerId: message.offerId,
+      },
+    });
+  }
+
   /** ADR-011 Phase C — share private meetup coordinates in-thread only. */
   async postMeetupPin(
     conversationId: string,
@@ -505,6 +629,29 @@ export class MessagesService {
         label: dto.label,
       }),
       clientMsgId: dto.clientMsgId,
+    });
+  }
+
+  /** Buyer checkout CTA after seller accepts an offer. */
+  async postOfferCheckoutLink(input: {
+    conversationId: string;
+    sellerId: string;
+    offerId: string;
+    orderIntentId: string;
+    listingId: string;
+    amountKobo: number;
+    buyerId: string;
+  }): Promise<MessageDto> {
+    return this.postMessage(input.conversationId, input.sellerId, {
+      type: MessageType.SYSTEM,
+      body: encodeOfferCheckout({
+        offerId: input.offerId,
+        orderIntentId: input.orderIntentId,
+        listingId: input.listingId,
+        amountKobo: input.amountKobo,
+        buyerId: input.buyerId,
+      }),
+      clientMsgId: `offer-checkout-${input.offerId}`,
     });
   }
 
@@ -571,7 +718,13 @@ export class MessagesService {
       await this.prisma.notification.updateMany({
         where: {
           userId,
-          category: NotificationCategory.NEW_MESSAGE,
+          category: {
+            in: [
+              NotificationCategory.NEW_MESSAGE,
+              NotificationCategory.NEW_OFFER,
+              NotificationCategory.COUNTEROFFER,
+            ],
+          },
           channel: NotificationChannel.IN_APP,
           readAt: null,
           deepLink: `reworth://chats/${conversationId}`,
@@ -703,9 +856,49 @@ export class MessagesService {
   }
 
   /**
-   * One unread in-app alert per conversation. A later message refreshes
-   * that row until the recipient opens the chat.
+   * One unread in-app alert per conversation/category. A later event refreshes
+   * that row until the recipient opens the chat. Honors notification prefs via notify().
    */
+  private async upsertChatNotification(input: {
+    recipientId: string;
+    category: (typeof NotificationCategory)[keyof typeof NotificationCategory];
+    title: string;
+    body: string;
+    deepLink: string;
+    meta?: Record<string, unknown>;
+  }): Promise<void> {
+    if (!this.inbox) return;
+    const existing = await this.prisma.notification.findFirst({
+      where: {
+        userId: input.recipientId,
+        category: input.category,
+        channel: NotificationChannel.IN_APP,
+        readAt: null,
+        deepLink: input.deepLink,
+      },
+    });
+    if (existing) {
+      await this.prisma.notification.update({
+        where: { id: existing.id },
+        data: {
+          title: input.title,
+          body: input.body,
+          createdAt: new Date(),
+        },
+      });
+      return;
+    }
+    await this.inbox.notify({
+      userId: input.recipientId,
+      category: input.category,
+      title: input.title,
+      body: input.body,
+      deepLink: input.deepLink,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
+      meta: input.meta,
+    });
+  }
+
   private async alertNewMessage(
     recipientId: string,
     message: MessageDto,
@@ -721,29 +914,12 @@ export class MessagesService {
         : message.listingCardId
           ? 'Sent a listing'
           : 'Sent a message');
-    const existing = await this.prisma.notification.findFirst({
-      where: {
-        userId: recipientId,
-        category: NotificationCategory.NEW_MESSAGE,
-        channel: NotificationChannel.IN_APP,
-        readAt: null,
-        deepLink,
-      },
-    });
-    if (existing) {
-      await this.prisma.notification.update({
-        where: { id: existing.id },
-        data: { title, body, createdAt: new Date() },
-      });
-      return;
-    }
-    await this.inbox.notify({
-      userId: recipientId,
+    await this.upsertChatNotification({
+      recipientId,
       category: NotificationCategory.NEW_MESSAGE,
       title,
       body,
       deepLink,
-      channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
       meta: { conversationId: message.conversationId, messageId: message.id },
     });
   }

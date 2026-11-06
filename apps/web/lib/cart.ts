@@ -6,6 +6,9 @@ export type CartListing = {
   priceKobo: number;
   status: string;
   sellingMode: string;
+  sellerId: string;
+  geoLat: number | null;
+  geoLng: number | null;
   quantityAvailable: number;
   quantityTotal: number;
   images: { id: string; variants: Record<string, unknown> }[];
@@ -18,6 +21,31 @@ export type CartItem = {
   createdAt: string;
   updatedAt: string;
   listing: CartListing;
+};
+
+export type CartQuoteLine = {
+  listingId: string;
+  sellerId: string;
+  title: string;
+  quantity: number;
+  unitPriceKobo: number;
+  itemSubtotalKobo: number;
+  deliveryFeeKobo: number;
+  protectionFeeKobo: number;
+  lineTotalKobo: number;
+};
+
+export type CartQuote = {
+  lines: CartQuoteLine[];
+  deliveryBySeller: {
+    sellerId: string;
+    deliveryFeeKobo: number;
+    distanceKm: number | null;
+  }[];
+  itemsSubtotalKobo: number;
+  deliveryTotalKobo: number;
+  protectionTotalKobo: number;
+  grandTotalKobo: number;
 };
 
 export function listCart(token: string): Promise<CartItem[]> {
@@ -55,9 +83,26 @@ export function removeFromCart(
   return apiFetch(`/cart/items/${listingId}`, { method: "DELETE", token });
 }
 
+export function quoteCart(
+  token: string,
+  body: { toLat: number; toLng: number; listingIds?: string[] },
+): Promise<CartQuote> {
+  return apiFetch<CartQuote>("/cart/quote", { method: "POST", token, body });
+}
+
 export function checkoutCart(
   token: string,
-  body: { fulfilmentMethod: "PICKUP" | "MEET_POINT" | "DELIVERY"; listingIds?: string[] },
-): Promise<{ orders: { id: string }[] }> {
+  body: {
+    fulfilmentMethod: "DELIVERY";
+    toLat: number;
+    toLng: number;
+    deliveryAddress: string;
+    listingIds?: string[];
+  },
+): Promise<{
+  checkoutId: string;
+  orders: { id: string }[];
+  quote: CartQuote;
+}> {
   return apiFetch("/cart/checkout", { method: "POST", token, body });
 }

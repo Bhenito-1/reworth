@@ -61,12 +61,17 @@ export type MeetPointSummary = {
 
 export type OrderDto = {
   id: string;
+  reference: string;
   listingId: string;
   listingTitle?: string | null;
   buyerId: string;
   sellerId: string;
+  payerId: string;
+  payeeId: string;
   offerId: string | null;
   orderIntentId: string | null;
+  paymentId: string | null;
+  paymentReference: string | null;
   amountKobo: number;
   protectionFeeKobo: number;
   deliveryFeeKobo: number;
@@ -117,6 +122,8 @@ export type OrderDetail = OrderDto & { events: OrderEvent[] };
 export type PaymentDto = {
   id: string;
   orderId: string;
+  payerId: string;
+  payeeId: string;
   provider: string;
   reference: string;
   amountKobo: number;
@@ -378,6 +385,7 @@ export function createOrder(
     meetPointId?: string;
     toLat?: number;
     toLng?: number;
+    deliveryAddress?: string;
   },
 ): Promise<OrderDto> {
   return apiFetch<OrderDto>("/orders", { method: "POST", token, body });

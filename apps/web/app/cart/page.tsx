@@ -8,7 +8,6 @@ import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
-  checkoutCart,
   listCart,
   removeFromCart,
   updateCartQuantity,
@@ -22,7 +21,6 @@ export default function CartPage() {
   const [items, setItems] = useState<CartItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [checkingOut, setCheckingOut] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -193,7 +191,15 @@ export default function CartPage() {
                     >
                       Remove
                     </button>
-                    <p className="ml-auto text-sm font-semibold">
+                    {!item.unavailable ? (
+                      <Link
+                        href={checkoutHref(item)}
+                        className="ml-auto text-sm font-semibold text-[var(--rw-accent)] hover:underline"
+                      >
+                        Checkout
+                      </Link>
+                    ) : null}
+                    <p className="w-full text-sm font-semibold sm:ml-auto sm:w-auto">
                       {formatNgn({ amountKobo: item.listing.priceKobo * item.quantity })}
                     </p>
                   </div>
@@ -209,9 +215,15 @@ export default function CartPage() {
               {ready.length} item{ready.length === 1 ? "" : "s"} ·{" "}
               {formatNgn({ amountKobo: totalKobo })} before fees
             </p>
-            <Button variant="primary" disabled={checkingOut} onClick={() => void checkout()}>
-              {checkingOut ? "Placing orders…" : "Place orders"}
-            </Button>
+            {ready.length === 1 ? (
+              <Link href={checkoutHref(ready[0]!)}>
+                <Button variant="primary">Proceed to checkout</Button>
+              </Link>
+            ) : (
+              <Link href="/checkout/cart">
+                <Button variant="primary">Proceed to checkout</Button>
+              </Link>
+            )}
           </div>
         ) : null}
       </div>

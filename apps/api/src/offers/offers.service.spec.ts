@@ -31,6 +31,20 @@ describe('OffersService lifecycle', () => {
           : undefined,
   } as unknown as ConfigService;
   const notifications = new NotificationStub();
+  const messages = {
+    postOfferCard: jest.fn().mockResolvedValue({}),
+    postOfferCheckoutLink: jest.fn().mockResolvedValue({}),
+    createOrGetConversation: jest.fn(),
+  };
+
+  function service(prisma: unknown) {
+    return new OffersService(
+      prisma as never,
+      config,
+      notifications,
+      messages as never,
+    );
+  }
 
   function makeAcceptTx(getOffer: () => ReturnType<typeof baseOffer>) {
     return {
@@ -71,12 +85,15 @@ describe('OffersService lifecycle', () => {
   it('accept transitions listing to RESERVED and creates OrderIntent', async () => {
     const offer = baseOffer();
     const prisma = {
+      offer: { findUnique: jest.fn().mockResolvedValue(offer) },
+      offerEvent: {
+        findFirst: jest.fn().mockResolvedValue({ actorUserId: 'buyer-1' }),
+      },
       $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
         fn(makeAcceptTx(() => offer)),
       ),
     };
-    const service = new OffersService(prisma as never, config, notifications);
-    const result = await service.accept('offer-1', 'seller-1');
+    const result = await service(prisma).accept('offer-1', 'seller-1');
     expect(result.offer.status).toBe('ACCEPTED');
     expect(result.orderIntent.id).toBe('oi-1');
   });
@@ -92,6 +109,9 @@ describe('OffersService lifecycle', () => {
       offer: {
         findUnique: jest.fn().mockResolvedValue(parent),
       },
+      offerEvent: {
+        findFirst: jest.fn().mockResolvedValue({ actorUserId: 'buyer-1' }),
+      },
       $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
         const tx = {
           offer: {
@@ -105,8 +125,7 @@ describe('OffersService lifecycle', () => {
         return fn(tx);
       }),
     };
-    const service = new OffersService(prisma as never, config, notifications);
-    const result = await service.counter('offer-1', 'seller-1', {
+    const result = await service(prisma).counter('offer-1', 'seller-1', {
       amountKobo: 45_000_00,
     });
     expect(result.id).toBe('offer-2');
@@ -114,26 +133,47 @@ describe('OffersService lifecycle', () => {
     expect(result.status).toBe('PENDING');
   });
 
-  it('rejects a buyer countering their own offer', async () => {
+  it('rejects countering your own offer', async () => {
     const prisma = {
       offer: { findUnique: jest.fn().mockResolvedValue(baseOffer()) },
+      offerEvent: {
+        findFirst: jest.fn().mockResolvedValue({ actorUserId: 'buyer-1' }),
+      },
     };
-    const service = new OffersService(prisma as never, config, notifications);
     await expect(
-      service.counter('offer-1', 'buyer-1', { amountKobo: 45_000_00 }),
+      service(prisma).counter('offer-1', 'buyer-1', { amountKobo: 45_000_00 }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('rejects buyer countering a seller counter', async () => {
+    const sellerCounter = baseOffer({
+      id: 'offer-2',
+      parentOfferId: 'offer-1',
+    });
+    const prisma = {
+      offer: { findUnique: jest.fn().mockResolvedValue(sellerCounter) },
+      offerEvent: {
+        findFirst: jest.fn().mockResolvedValue({ actorUserId: 'seller-1' }),
+      },
+    };
+    await expect(
+      service(prisma).counter('offer-2', 'buyer-1', { amountKobo: 40_000_00 }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('double-accept race → second call 409', async () => {
     const offer = baseOffer();
     const prisma = {
+      offer: { findUnique: jest.fn().mockResolvedValue(offer) },
+      offerEvent: {
+        findFirst: jest.fn().mockResolvedValue({ actorUserId: 'buyer-1' }),
+      },
       $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
         fn(makeAcceptTx(() => offer)),
       ),
     };
-    const service = new OffersService(prisma as never, config, notifications);
-    await service.accept('offer-1', 'seller-1');
-    await expect(service.accept('offer-1', 'seller-1')).rejects.toBeInstanceOf(
+    await service(prisma).accept('offer-1', 'seller-1');
+    await expect(service(prisma).accept('offer-1', 'seller-1')).rejects.toBeInstanceOf(
       ConflictException,
     );
   });
@@ -146,8 +186,7 @@ describe('OffersService lifecycle', () => {
       },
       offerEvent: { create: jest.fn().mockResolvedValue({}) },
     };
-    const service = new OffersService(prisma as never, config, notifications);
-    const count = await service.expireDueOffers(new Date());
+    const count = await service(prisma).expireDueOffers(new Date());
     expect(count).toBe(1);
     expect(prisma.offer.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ['offer-old'] } },

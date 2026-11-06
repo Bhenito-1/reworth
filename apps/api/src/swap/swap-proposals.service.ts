@@ -7,6 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { newOrderReference } from '../common/transaction-reference';
 import {
   FulfilmentMethod,
   MessageType,
@@ -150,6 +151,7 @@ export class SwapProposalsService {
   ) {
     const order = await tx.order.create({
       data: {
+        reference: newOrderReference(),
         listingId: input.listingId,
         buyerId: input.buyerId,
         sellerId: input.sellerId,
