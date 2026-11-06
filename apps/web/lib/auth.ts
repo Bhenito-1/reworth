@@ -194,6 +194,9 @@ async function anotherTabIsRefreshing(): Promise<boolean> {
 export function isPublicAuthPath(pathname: string): boolean {
   if (pathname === "/" || pathname === "") return true;
   if (pathname === "/login" || pathname.startsWith("/login/")) return true;
+  if (pathname === "/forgot-password" || pathname.startsWith("/forgot-password/")) {
+    return true;
+  }
   if (pathname === "/onboarding" || pathname.startsWith("/onboarding/")) {
     return true;
   }

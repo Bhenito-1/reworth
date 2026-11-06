@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CartService } from './cart.service';
 import {
   CheckoutCartDto,
+  CartQuoteDto,
   UpdateCartItemDto,
   UpsertCartItemDto,
 } from './dto/cart.dto';
@@ -47,6 +48,11 @@ export class CartController {
   @Delete('items/:listingId')
   remove(@CurrentUser() user: AuthUser, @Param('listingId') listingId: string) {
     return this.cart.remove(user.id, listingId);
+  }
+
+  @Post('quote')
+  quote(@CurrentUser() user: AuthUser, @Body() dto: CartQuoteDto) {
+    return this.cart.quote(user.id, dto);
   }
 
   @Post('checkout')

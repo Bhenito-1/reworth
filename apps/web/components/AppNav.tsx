@@ -299,12 +299,14 @@ function AccountMenu({
 function NavLinks({
   pathname,
   onNavigate,
+  className,
 }: {
   pathname: string;
   onNavigate?: () => void;
+  className?: string;
 }) {
   return (
-    <ul className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-4">
+    <ul className={["flex flex-col gap-1 px-3", className].filter(Boolean).join(" ")}>
       {ITEMS.map((item) => {
         const active = item.match(pathname);
         return (
@@ -335,6 +337,15 @@ export function AppNav() {
   const [open, setOpen] = useState(false);
   const [maskHeight, setMaskHeight] = useState(0);
   const unreadNotifications = useUnreadNotificationCount();
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
 
   useEffect(() => {
     let frame = 0;
@@ -387,7 +398,7 @@ export function AppNav() {
   }
 
   const panel = (opts?: { onClose?: () => void; onNavigate?: () => void }) => (
-    <div className="flex h-full flex-col bg-[var(--rw-bg-elevated)]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--rw-bg-elevated)]">
       <div className="flex items-center justify-between px-5 pb-2 pt-5">
         <div>
           <p className="text-lg font-semibold tracking-tight text-[var(--rw-ink)]">
@@ -416,9 +427,10 @@ export function AppNav() {
           </button>
         ) : null}
       </div>
-      <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col">
-        <NavLinks pathname={pathname} onNavigate={opts?.onNavigate} />
-        <div className="flex flex-col gap-1 px-3 pb-4">
+      <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-2 [-webkit-overflow-scrolling:touch]">
+          <NavLinks pathname={pathname} onNavigate={opts?.onNavigate} />
+          <div className="flex flex-col gap-1 px-3 pb-2 pt-1">
           <a
             href="/#how"
             onClick={opts?.onNavigate}
@@ -447,6 +459,7 @@ export function AppNav() {
           >
             Sustainability
           </a>
+          </div>
         </div>
       </nav>
       <div className="border-t border-[var(--rw-border)] p-3">
@@ -585,7 +598,7 @@ export function AppNav() {
             className="absolute inset-0 bg-black/40"
             onClick={() => setOpen(false)}
           />
-          <aside className="absolute inset-y-0 left-0 w-72 max-w-[85vw] shadow-xl">
+          <aside className="absolute inset-y-0 left-0 flex h-full w-72 max-w-[85vw] flex-col overflow-hidden shadow-xl">
             {panel({
               onClose: () => setOpen(false),
               onNavigate: () => setOpen(false),

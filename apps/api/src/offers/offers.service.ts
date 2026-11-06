@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -10,6 +11,7 @@ import { OfferStatus } from '@prisma/client';
 import { ListingStateMachine } from '../listings/listing-state.machine';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChatGateway } from '../chat/chat.gateway';
+import { MessagesService } from '../chat/messages.service';
 import { NotificationStub } from '../chat/notification.stub';
 import { FeatureStoreService } from '../intelligence/feature-store.service';
 import type { CounterOfferDto, CreateOfferDto } from './dto/offers.dto';
@@ -27,6 +29,10 @@ export type OfferDto = {
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
+  /** Pending checkout intent after seller accepts (buyer completes payment). */
+  orderIntentId?: string | null;
+  /** User who created this offer row (buyer opening bid or counter author). */
+  proposedByUserId?: string | null;
 };
 
 export function toOfferDto(o: {
@@ -61,10 +67,13 @@ export function toOfferDto(o: {
 
 @Injectable()
 export class OffersService {
+  private readonly logger = new Logger(OffersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly notifications: NotificationStub,
+    private readonly messages: MessagesService,
     @Optional() private readonly gateway?: ChatGateway,
     @Optional() private readonly features?: FeatureStoreService,
   ) {}
@@ -75,6 +84,42 @@ export class OffersService {
 
   private reserveHours(): number {
     return Number(this.config.get('LISTING_RESERVE_HOURS') ?? 1);
+  }
+
+  private offerRecipient(
+    offer: { buyerId: string; sellerId: string },
+    proposerId: string,
+  ): string {
+    return proposerId === offer.buyerId ? offer.sellerId : offer.buyerId;
+  }
+
+  private async proposedByUserId(offerId: string): Promise<string> {
+    const row = await this.prisma.offerEvent.findFirst({
+      where: { offerId, type: 'CREATED' },
+      select: { actorUserId: true },
+    });
+    if (!row?.actorUserId) {
+      throw new ConflictException('Offer history incomplete');
+    }
+    return row.actorUserId;
+  }
+
+  private async attachProposers(offers: OfferDto[]): Promise<OfferDto[]> {
+    if (offers.length === 0) return offers;
+    const rows = await this.prisma.offerEvent.findMany({
+      where: {
+        offerId: { in: offers.map((o) => o.id) },
+        type: 'CREATED',
+      },
+      select: { offerId: true, actorUserId: true },
+    });
+    const byOffer = new Map(
+      rows.map((r) => [r.offerId, r.actorUserId ?? null] as const),
+    );
+    return offers.map((o) => ({
+      ...o,
+      proposedByUserId: byOffer.get(o.id) ?? null,
+    }));
   }
 
   async create(
@@ -142,8 +187,39 @@ export class OffersService {
       },
     });
 
-    const mapped = toOfferDto(offer);
-    this.gateway?.emitOfferUpdated(offer.conversationId, mapped);
+    const conversation =
+      dto.conversationId != null
+        ? await this.prisma.conversation.findUnique({
+            where: { id: dto.conversationId },
+          })
+        : await this.messages.createOrGetConversation(buyerId, listingId);
+
+    let linked = offer;
+    if (conversation && conversation.id !== offer.conversationId) {
+      linked = await this.prisma.offer.update({
+        where: { id: offer.id },
+        data: { conversationId: conversation.id },
+      });
+    }
+
+    if (conversation) {
+      await this.messages
+        .postOfferCard({
+          conversationId: conversation.id,
+          buyerId,
+          offerId: linked.id,
+          amountKobo: dto.amountKobo,
+        })
+        .catch((err: unknown) => {
+          this.logger.warn(
+            { offerId: linked.id, conversationId: conversation.id, err },
+            'postOfferCard failed after offer create',
+          );
+        });
+    }
+
+    const mapped = toOfferDto(linked);
+    this.gateway?.emitOfferUpdated(linked.conversationId, mapped);
     if (this.features) {
       void this.features
         .recordUserEvent({
@@ -164,7 +240,7 @@ export class OffersService {
         })
         .catch(() => undefined);
     }
-    return mapped;
+    return { ...mapped, proposedByUserId: buyerId };
   }
 
   async listForListing(listingId: string, userId: string): Promise<OfferDto[]> {
@@ -199,19 +275,71 @@ export class OffersService {
       }
     }
 
-    return offers.map(toOfferDto);
+    const mapped = offers.map(toOfferDto);
+    const withIntents = await this.attachOrderIntentIds(mapped);
+    return this.attachProposers(withIntents);
   }
 
-  async accept(offerId: string, sellerId: string): Promise<{
+  private async attachOrderIntentIds(offers: OfferDto[]): Promise<OfferDto[]> {
+    const acceptedIds = offers
+      .filter((o) => o.status === 'ACCEPTED')
+      .map((o) => o.id);
+    if (acceptedIds.length === 0) return offers;
+    const intents = await this.prisma.orderIntent.findMany({
+      where: {
+        offerId: { in: acceptedIds },
+        status: 'PENDING',
+      },
+      select: { id: true, offerId: true },
+    });
+    const byOffer = new Map(
+      intents
+        .filter((i) => i.offerId)
+        .map((i) => [i.offerId as string, i.id]),
+    );
+    return offers.map((o) => ({
+      ...o,
+      orderIntentId: byOffer.get(o.id) ?? null,
+    }));
+  }
+
+  async getOrderIntent(intentId: string, userId: string) {
+    const intent = await this.prisma.orderIntent.findUnique({
+      where: { id: intentId },
+    });
+    if (!intent) throw new NotFoundException('Checkout session not found');
+    if (intent.buyerId !== userId && intent.sellerId !== userId) {
+      throw new ForbiddenException('Not your checkout session');
+    }
+    if (intent.status !== 'PENDING') {
+      throw new ConflictException('Checkout session is no longer available');
+    }
+    if (intent.reservedUntil.getTime() < Date.now()) {
+      throw new ConflictException('Checkout reservation expired');
+    }
+    return {
+      id: intent.id,
+      listingId: intent.listingId,
+      offerId: intent.offerId,
+      amountKobo: intent.amountKobo,
+      reservedUntil: intent.reservedUntil,
+    };
+  }
+
+  async accept(offerId: string, userId: string): Promise<{
     offer: OfferDto;
     orderIntent: { id: string; reservedUntil: Date; amountKobo: number };
   }> {
+    const head = await this.prisma.offer.findUnique({ where: { id: offerId } });
+    if (!head) throw new NotFoundException('Offer not found');
+    const proposer = await this.proposedByUserId(offerId);
+    if (this.offerRecipient(head, proposer) !== userId) {
+      throw new ForbiddenException('Only the other party can accept this offer');
+    }
+
     return this.prisma.$transaction(async (tx) => {
       const offer = await tx.offer.findUnique({ where: { id: offerId } });
       if (!offer) throw new NotFoundException('Offer not found');
-      if (offer.sellerId !== sellerId) {
-        throw new ForbiddenException('Only the seller can accept');
-      }
       if (offer.status === 'ACCEPTED') {
         throw new ConflictException('Offer already accepted');
       }
@@ -246,7 +374,7 @@ export class OffersService {
         data: {
           offerId,
           type: 'ACCEPTED',
-          actorUserId: sellerId,
+          actorUserId: userId,
         },
       });
 
@@ -268,7 +396,7 @@ export class OffersService {
         data: {
           listingId: offer.listingId,
           type: 'STATUS_CHANGED',
-          actorUserId: sellerId,
+          actorUserId: userId,
           payload: {
             from: listing.status,
             to: 'RESERVED',
@@ -291,14 +419,18 @@ export class OffersService {
       });
 
       return {
-        offer: toOfferDto(updated),
+        offer: {
+          ...toOfferDto(updated),
+          orderIntentId: orderIntent.id,
+          proposedByUserId: proposer,
+        },
         orderIntent: {
           id: orderIntent.id,
           reservedUntil: orderIntent.reservedUntil,
           amountKobo: orderIntent.amountKobo,
         },
       };
-    }).then((result) => {
+    }).then(async (result) => {
       this.notifications.log('offer.accepted', {
         offerId,
         buyerId: result.offer.buyerId,
@@ -318,15 +450,29 @@ export class OffersService {
         result.offer.conversationId,
         result.offer,
       );
+      if (result.offer.conversationId) {
+        await this.messages
+          .postOfferCheckoutLink({
+            conversationId: result.offer.conversationId,
+            sellerId: result.offer.sellerId,
+            offerId: result.offer.id,
+            orderIntentId: result.orderIntent.id,
+            listingId: result.offer.listingId,
+            amountKobo: result.orderIntent.amountKobo,
+            buyerId: result.offer.buyerId,
+          })
+          .catch(() => undefined);
+      }
       return result;
     });
   }
 
-  async reject(offerId: string, sellerId: string): Promise<OfferDto> {
+  async reject(offerId: string, userId: string): Promise<OfferDto> {
     const offer = await this.prisma.offer.findUnique({ where: { id: offerId } });
     if (!offer) throw new NotFoundException('Offer not found');
-    if (offer.sellerId !== sellerId) {
-      throw new ForbiddenException('Only the seller can reject');
+    const proposer = await this.proposedByUserId(offerId);
+    if (this.offerRecipient(offer, proposer) !== userId) {
+      throw new ForbiddenException('Only the other party can reject this offer');
     }
     if (offer.status !== 'PENDING') {
       throw new ConflictException(`Offer is ${offer.status}`);
@@ -339,10 +485,13 @@ export class OffersService {
       data: {
         offerId,
         type: 'REJECTED',
-        actorUserId: sellerId,
+        actorUserId: userId,
       },
     });
-    const mapped = toOfferDto(updated);
+    const mapped = {
+      ...toOfferDto(updated),
+      proposedByUserId: proposer,
+    };
     this.gateway?.emitOfferUpdated(updated.conversationId, mapped);
     return mapped;
   }
@@ -359,8 +508,22 @@ export class OffersService {
     if (parent.status !== 'PENDING') {
       throw new ConflictException(`Offer is ${parent.status}`);
     }
-    if (actorId !== parent.sellerId) {
-      throw new ForbiddenException('Only the seller can counter an offer');
+    const proposer = await this.proposedByUserId(parent.id);
+    if (actorId === proposer) {
+      throw new ForbiddenException(
+        'You cannot counter your own offer. Wait for the other party to respond.',
+      );
+    }
+    if (actorId !== parent.buyerId && actorId !== parent.sellerId) {
+      throw new ForbiddenException('Not a participant on this offer');
+    }
+    if (proposer === parent.sellerId) {
+      throw new ForbiddenException(
+        'The buyer can only accept or reject this counter',
+      );
+    }
+    if (proposer === parent.buyerId && actorId !== parent.sellerId) {
+      throw new ForbiddenException('Only the seller can counter a buyer offer');
     }
 
     // The original buyer and seller stay on the new offer.
@@ -405,7 +568,7 @@ export class OffersService {
       return child;
     });
 
-    const mapped = toOfferDto(result);
+    const mapped = { ...toOfferDto(result), proposedByUserId: actorId };
     this.gateway?.emitOfferUpdated(result.conversationId, mapped);
     return mapped;
   }
@@ -415,6 +578,15 @@ export class OffersService {
     if (!offer) throw new NotFoundException('Offer not found');
     if (offer.buyerId !== buyerId) {
       throw new ForbiddenException('Only the buyer can withdraw');
+    }
+    if (offer.parentOfferId != null) {
+      throw new ConflictException(
+        'Only your original offer can be withdrawn, not a counter',
+      );
+    }
+    const proposer = await this.proposedByUserId(offerId);
+    if (proposer !== buyerId) {
+      throw new ForbiddenException('Only your original offer can be withdrawn');
     }
     if (offer.status !== 'PENDING') {
       throw new ConflictException(`Offer is ${offer.status}`);
@@ -430,8 +602,25 @@ export class OffersService {
         actorUserId: buyerId,
       },
     });
-    const mapped = toOfferDto(updated);
+    const mapped = {
+      ...toOfferDto(updated),
+      proposedByUserId: proposer,
+    };
     this.gateway?.emitOfferUpdated(updated.conversationId, mapped);
+    if (updated.conversationId) {
+      await this.messages
+        .alertSellerOfferWithdrawn({
+          sellerId: updated.sellerId,
+          conversationId: updated.conversationId,
+          offerId: updated.id,
+        })
+        .catch((err: unknown) => {
+          this.logger.warn(
+            { offerId: updated.id, err },
+            'alertSellerOfferWithdrawn failed',
+          );
+        });
+    }
     return mapped;
   }
 

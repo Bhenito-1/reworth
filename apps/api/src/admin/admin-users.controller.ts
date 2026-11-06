@@ -1,5 +1,7 @@
 import {
+  BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Get,
   Header,
@@ -24,11 +26,13 @@ import { AdminOnlyGuard } from '../common/guards/admin-only.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { normalizePhone } from '../auth/crypto.util';
 import { AdminPortalService } from './admin-portal.service';
 import { USERS_READ } from './admin-roles';
 import {
   AssignRoleDto,
   CreateAdminUserDto,
+  CreateDeliveryDriverDto,
   SetDeliveryDriverDto,
 } from './dto/admin-users.dto';
 
@@ -192,5 +196,55 @@ export class AdminUsersController {
       ip: req.ip ?? null,
     });
     return { ok: true, userId: id, isDeliveryDriver: updated.isDeliveryDriver };
+  }
+
+  @Post('drivers')
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.OPERATIONS)
+  async createDriver(
+    @CurrentUser() actor: AuthUser,
+    @Body() dto: CreateDeliveryDriverDto,
+    @Req() req: { ip?: string },
+  ) {
+    const phone = dto.phone?.trim() ? normalizePhone(dto.phone.trim()) : null;
+    if (phone && phone.replace(/\D/g, '').length < 10) {
+      throw new BadRequestException('Enter a full phone number');
+    }
+    if (phone) {
+      const taken = await this.prisma.user.findUnique({ where: { phone } });
+      if (taken) throw new ConflictException('Phone already registered');
+    }
+
+    const user = await this.auth.createUserWithPassword({
+      email: dto.email,
+      password: dto.password,
+      displayName: dto.displayName.trim(),
+    });
+    const driver = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { isDeliveryDriver: true, phone },
+      include: { profile: true },
+    });
+
+    await this.audit.log({
+      actorUserId: actor.id,
+      actorRole: actor.roles[0] ?? null,
+      action: 'DELIVERY_DRIVER_CREATED',
+      entityType: 'User',
+      entityId: driver.id,
+      afterJson: {
+        email: driver.email,
+        isDeliveryDriver: true,
+        phone: driver.phone,
+      },
+      ip: req.ip ?? null,
+    });
+
+    return {
+      id: driver.id,
+      email: driver.email,
+      phone: driver.phone,
+      displayName: driver.profile?.displayName ?? dto.displayName.trim(),
+      isDeliveryDriver: true,
+    };
   }
 }

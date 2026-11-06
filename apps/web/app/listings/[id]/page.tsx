@@ -13,6 +13,7 @@ import {
   Toast,
 } from "@reworth/ui-web";
 import { MakeOfferModal } from "../../../components/chat/MakeOfferModal";
+import { OFFER_MULTI_UNIT_HINT } from "../../../lib/offer-copy";
 import { ListingReviews } from "../../../components/trust/ListingReviews";
 import { SwapProposalModal } from "../../../components/swap/SwapProposalModal";
 import { apiFetch, ApiError } from "../../../lib/api";
@@ -83,7 +84,6 @@ export default function ListingPdpPage() {
     message: string;
     tone?: "info" | "success" | "warn" | "error";
     durationMs?: number;
-    inline?: boolean;
   } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
@@ -276,7 +276,7 @@ export default function ListingPdpPage() {
       sessionStorage.setItem(
         "reworth:offer-notice",
         JSON.stringify({
-          message: `Offer of ${amountLabel} sent for ${item}. The seller can accept, decline, or counter it.`,
+          message: `Offer of ${amountLabel} sent for ${item}. ${OFFER_MULTI_UNIT_HINT}`,
           tone: "success",
           durationMs: 6000,
         }),
@@ -293,7 +293,6 @@ export default function ListingPdpPage() {
           message: `Your offer of ${amountLabel} for ${item} was not sent. ${reason}`,
           tone: "error",
           durationMs: 6000,
-          inline: true,
         });
       });
     } finally {
@@ -532,16 +531,6 @@ export default function ListingPdpPage() {
       />
 
       <div className="relative z-10 mx-auto max-w-3xl px-4 pb-16 pt-6 sm:px-8">
-        {toast?.inline ? (
-          <div className="sticky top-14 z-20 mb-4">
-            <Toast
-              message={toast.message}
-              tone={toast.tone}
-              durationMs={toast.durationMs}
-              onDismiss={() => setToast(null)}
-            />
-          </div>
-        ) : null}
         <header className="mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             {backHref ? (
@@ -1240,7 +1229,7 @@ export default function ListingPdpPage() {
         )}
       </Modal>
 
-      {toast && !toast.inline ? (
+      {toast ? (
         <div className="fixed bottom-6 left-1/2 z-50 w-[min(100%-2rem,24rem)] -translate-x-1/2 lg:left-[calc(50%+var(--rw-sidebar-offset,0px))]">
           <Toast
             message={toast.message}

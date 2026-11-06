@@ -20,6 +20,7 @@ import { quoteGiftDelivery } from './swap-fees';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { newOrderReference } from '../common/transaction-reference';
 import type { CreateGiveawayClaimDto } from './dto/swap.dto';
 
 export type GiveawayClaimDto = {
@@ -211,6 +212,7 @@ export class GiveawayClaimsService {
     });
     const order = await this.prisma.order.create({
       data: {
+        reference: newOrderReference(),
         listingId,
         buyerId: claimantId,
         sellerId: listing.sellerId,

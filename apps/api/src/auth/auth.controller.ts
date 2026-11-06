@@ -7,6 +7,8 @@ import {
   OAuthCallbackDto,
   RefreshDto,
   RegisterDto,
+  RequestPasswordResetDto,
+  ConfirmPasswordResetDto,
   VerifyEmailOtpDto,
 } from './dto/auth.dto';
 
@@ -26,6 +28,19 @@ export class AuthController {
     @Req() req: { ip?: string },
   ) {
     return this.auth.verifyEmailOtp(dto, req.ip);
+  }
+
+  @Post('password-reset/request')
+  requestPasswordReset(@Body() dto: RequestPasswordResetDto) {
+    return this.auth.requestPasswordReset(dto);
+  }
+
+  @Post('password-reset/confirm')
+  confirmPasswordReset(
+    @Body() dto: ConfirmPasswordResetDto,
+    @Req() req: { ip?: string },
+  ) {
+    return this.auth.confirmPasswordReset(dto, req.ip);
   }
 
   @Post('login')
