@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@reworth/ui-web";
-import { adminFetch, downloadCsv } from "../../lib/api";
+import { adminFetch, ApiError, downloadCsv } from "../../lib/api";
 import {
   ActionButton,
   PageHeader,
@@ -38,14 +38,68 @@ export default function UsersPage() {
   const { data, error, loading, reload } = useAdminQuery<UsersRes>(path);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [driverForm, setDriverForm] = useState({
+    displayName: "",
+    email: "",
+    phone: "",
+    password: "",
+  });
+  const [driverError, setDriverError] = useState<string | null>(null);
+  const [driverNotice, setDriverNotice] = useState<string | null>(null);
+  const [driverBusy, setDriverBusy] = useState(false);
+
+  async function createDriver() {
+    setDriverBusy(true);
+    setDriverError(null);
+    setDriverNotice(null);
+    try {
+      const created = await adminFetch<{ email: string; displayName: string }>(
+        "/admin/drivers",
+        {
+          method: "POST",
+          body: {
+            displayName: driverForm.displayName.trim(),
+            email: driverForm.email.trim(),
+            password: driverForm.password,
+            ...(driverForm.phone.trim()
+              ? { phone: driverForm.phone.trim() }
+              : {}),
+          },
+        },
+      );
+      setDriverNotice(
+        `${created.displayName} can sign in on the courier portal with ${created.email}.`,
+      );
+      setDriverForm({ displayName: "", email: "", phone: "", password: "" });
+      setCreating(false);
+      await reload();
+    } catch (err) {
+      setDriverError(
+        err instanceof ApiError ? err.message : "Could not create the driver",
+      );
+    } finally {
+      setDriverBusy(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Users"
-        description="Lookup, suspend, and export."
+        description="Lookup, suspend, export, and add riders for the courier portal."
         actions={
           <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                setCreating((open) => !open);
+                setDriverError(null);
+              }}
+            >
+              New driver
+            </Button>
             <Button
               size="sm"
               variant="secondary"
@@ -56,6 +110,83 @@ export default function UsersPage() {
           </div>
         }
       />
+      {creating ? (
+        <form
+          className="mb-4 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 sm:grid-cols-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void createDriver();
+          }}
+        >
+          <p className="sm:col-span-2 text-sm text-[var(--rw-ink-muted)]">
+            Creates a courier account. They sign in on the rider portal, not here.
+          </p>
+          <label className="flex flex-col gap-1 text-sm">
+            Name
+            <input
+              required
+              minLength={2}
+              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2"
+              value={driverForm.displayName}
+              onChange={(e) =>
+                setDriverForm((prev) => ({ ...prev, displayName: e.target.value }))
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Email
+            <input
+              required
+              type="email"
+              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2"
+              value={driverForm.email}
+              onChange={(e) =>
+                setDriverForm((prev) => ({ ...prev, email: e.target.value }))
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Phone
+            <input
+              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2"
+              placeholder="080…"
+              value={driverForm.phone}
+              onChange={(e) =>
+                setDriverForm((prev) => ({ ...prev, phone: e.target.value }))
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Password
+            <input
+              required
+              minLength={8}
+              type="text"
+              autoComplete="new-password"
+              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2"
+              value={driverForm.password}
+              onChange={(e) =>
+                setDriverForm((prev) => ({ ...prev, password: e.target.value }))
+              }
+            />
+          </label>
+          {driverError ? (
+            <p className="sm:col-span-2 text-sm text-[var(--rw-error)]" role="alert">
+              {driverError}
+            </p>
+          ) : null}
+          <div className="sm:col-span-2">
+            <Button type="submit" size="sm" disabled={driverBusy}>
+              {driverBusy ? "Creating…" : "Create driver"}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+      {driverNotice ? (
+        <p className="mb-4 text-sm text-[var(--rw-success)]" role="status">
+          {driverNotice}
+        </p>
+      ) : null}
       <form
         className="mb-4 flex gap-2"
         onSubmit={(e) => {
@@ -86,12 +217,14 @@ export default function UsersPage() {
             { key: "status", label: "Status" },
             { key: "community", label: "Community" },
             { key: "roles", label: "Roles" },
+            { key: "rider", label: "Rider" },
           ]}
           rows={data.items.map((u) => ({
             ...u,
             status: statusLabel(u.status),
             accountStatus: u.status,
-            roles: u.roles.join(", "),
+            roles: u.roles.join(", ") || "—",
+            rider: u.isDeliveryDriver ? "Rider" : "—",
           }))}
           expandedId={expanded}
           onRowClick={(row) => {
