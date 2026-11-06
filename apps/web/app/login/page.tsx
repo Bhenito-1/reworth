@@ -52,7 +52,11 @@ function LoginForm() {
       });
       router.replace(nextPath.startsWith("/") ? nextPath : "/");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Login failed");
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Could not reach ReWorth. The sign-in request was blocked before it arrived.",
+      );
     } finally {
       setLoading(false);
     }
