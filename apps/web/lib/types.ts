@@ -29,6 +29,7 @@ export type MeResponse = {
   verificationLevels: VerificationLevels;
   identityVerifiedBadge: boolean;
   roles: string[];
+  isDeliveryDriver?: boolean;
   createdAt: string;
 };
 

@@ -809,6 +809,23 @@ async function seedDemoCatalog() {
     where: { brand: DEMO_BRAND, status: ListingStatus.LIVE },
   });
   if (existing >= DEMO_LISTINGS.length) {
+    const deliveryListings = await prisma.listing.findMany({
+      where: {
+        sellerId,
+        fulfilmentDelivery: true,
+        addressPrivate: null,
+        status: ListingStatus.LIVE,
+      },
+      select: { id: true, community: true, city: true },
+    });
+    for (const row of deliveryListings) {
+      await prisma.listing.update({
+        where: { id: row.id },
+        data: {
+          addressPrivate: `${row.community} close, off the main road, ${row.city}`,
+        },
+      });
+    }
     // eslint-disable-next-line no-console
     console.info(
       `[seed] Demo catalog already present (${existing} LIVE) — skipping`,
@@ -860,6 +877,8 @@ async function seedDemoCatalog() {
         fulfilmentPickup: true,
         fulfilmentMeet: true,
         fulfilmentDelivery: i % 3 === 0,
+        addressPrivate:
+          i % 3 === 0 ? `${d.community} close, off the main road, Lagos` : null,
         publishedAt,
         expiresAt: new Date(publishedAt.getTime() + 21 * 86_400_000),
         views: 12 + i * 7,
@@ -889,6 +908,83 @@ async function seedDemoCatalog() {
   );
 }
 
+async function seedDemoRider() {
+  const email = 'demo-driver@reworth.local';
+  const passwordHash = await argon2.hash('DemoDriver!2026', {
+    type: argon2.argon2id,
+    memoryCost: 19456,
+    timeCost: 2,
+    parallelism: 1,
+  });
+  await prisma.user.upsert({
+    where: { email },
+    create: {
+      email,
+      phone: '+2348095550142',
+      emailVerifiedAt: new Date(),
+      phoneVerifiedAt: new Date(),
+      passwordHash,
+      status: 'ACTIVE',
+      isDeliveryDriver: true,
+      profile: {
+        create: {
+          displayName: 'Demo Rider',
+          preferredCommunity: 'Yaba',
+          language: 'en-NG',
+          currency: 'NGN',
+        },
+      },
+    },
+    update: {
+      passwordHash,
+      status: 'ACTIVE',
+      isDeliveryDriver: true,
+      phone: '+2348095550142',
+    },
+  });
+  // eslint-disable-next-line no-console
+  console.info(`[seed] Demo rider ready: ${email}`);
+}
+
+async function seedDemoBuyerDropoff() {
+  const ayo = await prisma.user.findUnique({
+    where: { email: 'ayo@demo.reworth.ng' },
+  });
+  if (!ayo) return;
+  const existing = await prisma.address.findFirst({
+    where: { userId: ayo.id, isDefault: true },
+  });
+  if (existing?.line1) return;
+  if (existing) {
+    await prisma.address.update({
+      where: { id: existing.id },
+      data: {
+        line1: '14 Glover Road',
+        community: 'Ikoyi',
+        city: 'Lagos',
+        geoLat: 6.4549,
+        geoLng: 3.4316,
+      },
+    });
+    return;
+  }
+  await prisma.address.create({
+    data: {
+      userId: ayo.id,
+      label: 'Home',
+      line1: '14 Glover Road',
+      community: 'Ikoyi',
+      city: 'Lagos',
+      country: 'NG',
+      geoLat: 6.4549,
+      geoLng: 3.4316,
+      isDefault: true,
+    },
+  });
+  // eslint-disable-next-line no-console
+  console.info('[seed] Ayo dropoff address ready');
+}
+
 async function main() {
   await seedAdmin();
   await seedCategories();
@@ -897,6 +993,8 @@ async function main() {
   await seedCommunities();
   await seedRiskAndModeration(prisma);
   await seedDemoCatalog();
+  await seedDemoRider();
+  await seedDemoBuyerDropoff();
 }
 
 main()

@@ -48,6 +48,7 @@ pnpm dev
 | --- | --- |
 | Web | http://localhost:3000 |
 | API | http://localhost:3001/api/v1/healthz |
+| API docs | http://localhost:3001/docs |
 | Admin | http://localhost:3002 |
 
 **Demo login:** Ori `ori@demo.reworth.ng` / `DemoOri!2026` — walkthrough in [`docs/DEMO.md`](docs/DEMO.md).

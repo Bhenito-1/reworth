@@ -129,6 +129,7 @@ export class AdminPortalService {
         displayName: u.profile?.displayName ?? null,
         community: u.profile?.preferredCommunity ?? null,
         roles: u.roles.map((r) => r.role),
+        isDeliveryDriver: u.isDeliveryDriver,
         createdAt: u.createdAt,
       })),
       nextCursor,
