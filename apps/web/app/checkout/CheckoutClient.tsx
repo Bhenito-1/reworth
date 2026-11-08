@@ -7,6 +7,7 @@ import { formatNgn } from "@reworth/shared";
 import {
   Button,
   EmptyState,
+  Input,
   Skeleton,
   Toast,
 } from "@reworth/ui-web";
@@ -19,6 +20,7 @@ import {
   privacyBeforePayCopy,
 } from "../../lib/delivery";
 import { getListing, listingImageUrl } from "../../lib/listings";
+import { getOrderIntent, listOffers } from "../../lib/chat";
 import {
   computeOrderTotalKobo,
   computeProtectionFeeKobo,
@@ -41,6 +43,7 @@ export default function CheckoutPage() {
   const qty = Math.max(1, Number(search.get("qty") ?? "1") || 1);
 
   const [listing, setListing] = useState<PublicListing | null>(null);
+  const [agreedUnitKobo, setAgreedUnitKobo] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,10 +52,17 @@ export default function CheckoutPage() {
   const [simulating, setSimulating] = useState(false);
   const [deliveryFeeKobo, setDeliveryFeeKobo] = useState(0);
   const [giftArea, setGiftArea] = useState("");
+  const [purchaseQty, setPurchaseQty] = useState(qty);
+  const [addressLine, setAddressLine] = useState("");
+  const [addressArea, setAddressArea] = useState("");
   const [toast, setToast] = useState<{
     message: string;
     tone?: "info" | "success" | "warn" | "error";
   } | null>(null);
+
+  useEffect(() => {
+    setPurchaseQty(qty);
+  }, [qty]);
 
   const load = useCallback(async () => {
     if (!listingId) {
@@ -62,13 +72,10 @@ export default function CheckoutPage() {
     }
     const token = getAccessToken();
     if (!token) {
-      router.replace(
-        `/onboarding?next=${encodeURIComponent(
-          `/checkout?listingId=${listingId}${
-            orderIntentId ? `&orderIntentId=${orderIntentId}` : ""
-          }${offerId ? `&offerId=${offerId}` : ""}`,
-        )}`,
-      );
+      const next = `/checkout?listingId=${listingId}${
+        orderIntentId ? `&orderIntentId=${orderIntentId}` : ""
+      }${offerId ? `&offerId=${offerId}` : ""}`;
+      router.replace(`/login?next=${encodeURIComponent(next)}`);
       return;
     }
     setLoading(true);
@@ -76,6 +83,21 @@ export default function CheckoutPage() {
     try {
       const data = await getListing(listingId, token);
       setListing(data);
+      let unit = data.priceKobo ?? 0;
+      if (orderIntentId) {
+        const intent = await getOrderIntent(token, orderIntentId);
+        if (intent.listingId !== listingId) {
+          throw new ApiError("Checkout does not match this listing", 400);
+        }
+        unit = intent.amountKobo;
+      } else if (offerId) {
+        const offers = await listOffers(token, listingId);
+        const offer = offers.find((o) => o.id === offerId);
+        if (offer?.status === "ACCEPTED") {
+          unit = offer.amountKobo;
+        }
+      }
+      setAgreedUnitKobo(offerId || orderIntentId ? unit : null);
       if (data.sellingMode === "GIVE_AWAY") {
         const quote = await getGiftDeliveryQuote(token, listingId);
         setDeliveryFeeKobo(quote.deliveryFeeKobo);
@@ -95,8 +117,15 @@ export default function CheckoutPage() {
 
   const isGift = listing?.sellingMode === "GIVE_AWAY";
   const unitKobo = listing?.priceKobo ?? 0;
-  const amountKobo =
-    offerId || orderIntentId ? unitKobo : unitKobo * qty;
+  const negotiatedUnit =
+    agreedUnitKobo != null ? agreedUnitKobo : unitKobo;
+  const hasOfferPrice = Boolean(offerId || orderIntentId);
+  const maxUnits = Math.max(
+    1,
+    listing?.quantityAvailable ?? 1,
+  );
+  const unitForTotal = hasOfferPrice ? negotiatedUnit : unitKobo;
+  const amountKobo = unitForTotal * purchaseQty;
   const protectionFeeKobo = useMemo(
     () => (isGift ? 0 : computeProtectionFeeKobo(amountKobo)),
     [amountKobo, isGift],
@@ -114,8 +143,19 @@ export default function CheckoutPage() {
   async function placeAndPay() {
     const token = getAccessToken();
     if (!token || !listingId) return;
+    if (!isGift && !addressLine.trim()) {
+      setError("Enter your delivery address");
+      return;
+    }
     setBusy(true);
     setError(null);
+    const dest = fallbackDeliveryDestination(
+      (listing as { geoLat?: number | null } | null)?.geoLat,
+      (listing as { geoLng?: number | null } | null)?.geoLng,
+    );
+    const deliveryAddress = [addressLine.trim(), addressArea.trim()]
+      .filter(Boolean)
+      .join(", ");
     try {
       if (listing?.sellingMode === "GIVE_AWAY") {
         const claimed = await createGiveawayClaim(token, listingId);
@@ -132,7 +172,10 @@ export default function CheckoutPage() {
       const order = await createOrder(token, {
         listingId,
         fulfilmentMethod: "DELIVERY",
-        ...(qty > 1 ? { quantity: qty } : {}),
+        quantity: purchaseQty,
+        deliveryAddress: deliveryAddress || undefined,
+        toLat: dest.toLat,
+        toLng: dest.toLng,
         ...(orderIntentId
           ? { orderIntentId }
           : offerId
@@ -150,15 +193,15 @@ export default function CheckoutPage() {
         return;
       }
 
-      const dest = fallbackDeliveryDestination(
+      const destQuote = fallbackDeliveryDestination(
         (listing as { geoLat?: number | null } | null)?.geoLat,
         (listing as { geoLng?: number | null } | null)?.geoLng,
       );
       const quote = await getDeliveryQuote(
         token,
         order.id,
-        dest.toLat,
-        dest.toLng,
+        destQuote.toLat,
+        destQuote.toLng,
       );
       setDeliveryFeeKobo(quote.deliveryFeeKobo ?? quote.feeKobo);
 
@@ -280,20 +323,79 @@ export default function CheckoutPage() {
               {listing.title || "Untitled"}
             </p>
             <p className="mt-1 text-lg font-semibold tracking-tight">
-              {formatNgn({ amountKobo })}
+              {formatNgn({ amountKobo: unitForTotal })}
+              <span className="text-sm font-normal text-[var(--rw-ink-muted)]">
+                {" "}
+                per unit
+              </span>
             </p>
-            {!offerId && !orderIntentId ? (
+            <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
+              {purchaseQty} unit{purchaseQty === 1 ? "" : "s"} ·{" "}
+              {formatNgn({ amountKobo })} subtotal
+            </p>
+            {hasOfferPrice ? (
               <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
-                {qty} × {formatNgn({ amountKobo: unitKobo })} per unit
-              </p>
-            ) : null}
-            {offerId || orderIntentId ? (
-              <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
-                {orderIntentId ? "From accepted offer" : "Offer price at pay"}
+                Agreed offer price per unit
               </p>
             ) : null}
           </div>
         </section>
+
+        {!isGift ? (
+          <section className="mt-6 space-y-3" aria-labelledby="qty-heading">
+            <h2 id="qty-heading" className="text-lg font-semibold">
+              Units
+            </h2>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="h-9 w-9 rounded-full border border-[var(--rw-border)]"
+                disabled={purchaseQty <= 1}
+                onClick={() => setPurchaseQty((n) => Math.max(1, n - 1))}
+                aria-label="Decrease units"
+              >
+                −
+              </button>
+              <span className="min-w-8 text-center text-sm font-semibold">
+                {purchaseQty}
+              </span>
+              <button
+                type="button"
+                className="h-9 w-9 rounded-full border border-[var(--rw-border)]"
+                disabled={purchaseQty >= maxUnits}
+                onClick={() =>
+                  setPurchaseQty((n) => Math.min(maxUnits, n + 1))
+                }
+                aria-label="Increase units"
+              >
+                +
+              </button>
+              <span className="text-sm text-[var(--rw-ink-muted)]">
+                {maxUnits} available
+              </span>
+            </div>
+          </section>
+        ) : null}
+
+        {!isGift ? (
+          <section className="mt-6 space-y-3" aria-labelledby="addr-heading">
+            <h2 id="addr-heading" className="text-lg font-semibold">
+              Delivery address
+            </h2>
+            <Input
+              label="Street / building"
+              value={addressLine}
+              onChange={(e) => setAddressLine(e.target.value)}
+              placeholder="e.g. 12 Admiralty Way, Lekki Phase 1"
+            />
+            <Input
+              label="Area / city"
+              value={addressArea}
+              onChange={(e) => setAddressArea(e.target.value)}
+              placeholder="e.g. Lekki, Lagos"
+            />
+          </section>
+        ) : null}
 
         {isGift ? null : (
         <aside
@@ -335,7 +437,9 @@ export default function CheckoutPage() {
           aria-label="Price breakdown"
         >
           <div className="flex justify-between text-sm">
-            <span className="text-[var(--rw-ink-muted)]">Item</span>
+            <span className="text-[var(--rw-ink-muted)]">
+              Items ({purchaseQty} × {formatNgn({ amountKobo: unitForTotal })})
+            </span>
             <span>{formatNgn({ amountKobo })}</span>
           </div>
           {isGift ? null : (
@@ -358,7 +462,7 @@ export default function CheckoutPage() {
           </div>
           {isGift ? null : (
           <p className="text-xs text-[var(--rw-ink-muted)]">
-            Final total uses offer/intent amount when applicable.
+            Delivery fee is estimated from your address area.
           </p>
           )}
         </section>

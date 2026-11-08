@@ -8,7 +8,6 @@ import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import {
-  checkoutCart,
   listCart,
   removeFromCart,
   updateCartQuantity,
@@ -22,7 +21,6 @@ export default function CartPage() {
   const [items, setItems] = useState<CartItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [checkingOut, setCheckingOut] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -71,25 +69,12 @@ export default function CartPage() {
     }
   }
 
-  async function checkout() {
-    const token = getAccessToken();
-    if (!token) return;
-    setCheckingOut(true);
-    try {
-      const res = await checkoutCart(token, { fulfilmentMethod: "DELIVERY" });
-      const n = res.orders.length;
-      setToast(
-        n === 1
-          ? "Order placed. Pay on the order to send it to a rider."
-          : `${n} orders placed. Pay each order to send it to a rider.`,
-      );
-      router.push(n === 1 ? `/orders/${res.orders[0].id}` : "/orders");
-    } catch (err) {
-      setToast(err instanceof ApiError ? err.message : "Checkout failed");
-      await load();
-    } finally {
-      setCheckingOut(false);
-    }
+  function checkoutHref(item: CartItem): string {
+    const q = new URLSearchParams({
+      listingId: item.listing.id,
+      qty: String(item.quantity),
+    });
+    return `/checkout?${q.toString()}`;
   }
 
   const ready = (items ?? []).filter((item) => !item.unavailable);
@@ -193,7 +178,15 @@ export default function CartPage() {
                     >
                       Remove
                     </button>
-                    <p className="ml-auto text-sm font-semibold">
+                    {!item.unavailable ? (
+                      <Link
+                        href={checkoutHref(item)}
+                        className="ml-auto text-sm font-semibold text-[var(--rw-accent)] hover:underline"
+                      >
+                        Checkout
+                      </Link>
+                    ) : null}
+                    <p className="w-full text-sm font-semibold sm:ml-auto sm:w-auto">
                       {formatNgn({ amountKobo: item.listing.priceKobo * item.quantity })}
                     </p>
                   </div>
@@ -209,9 +202,15 @@ export default function CartPage() {
               {ready.length} item{ready.length === 1 ? "" : "s"} ·{" "}
               {formatNgn({ amountKobo: totalKobo })} before fees
             </p>
-            <Button variant="primary" disabled={checkingOut} onClick={() => void checkout()}>
-              {checkingOut ? "Placing orders…" : "Place orders"}
-            </Button>
+            {ready.length === 1 ? (
+              <Link href={checkoutHref(ready[0]!)}>
+                <Button variant="primary">Proceed to checkout</Button>
+              </Link>
+            ) : (
+              <Link href="/checkout/cart">
+                <Button variant="primary">Proceed to checkout</Button>
+              </Link>
+            )}
           </div>
         ) : null}
       </div>

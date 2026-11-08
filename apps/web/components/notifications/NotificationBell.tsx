@@ -34,6 +34,8 @@ export function useUnreadNotificationCount() {
       ? subscribeChat(token, {
           onInbox: () => load(),
           onRead: () => load(),
+          onMessage: () => load(),
+          onOffer: () => load(),
         })
       : () => undefined;
     const id = window.setInterval(load, 60_000);

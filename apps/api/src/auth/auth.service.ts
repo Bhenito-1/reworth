@@ -32,10 +32,12 @@ import {
 } from './crypto.util';
 import { renderTransactionalEmail, resolvePublicAppUrl } from '../providers/email-templates';
 import type {
+  ConfirmPasswordResetDto,
   DeviceDto,
   LoginDto,
   OAuthCallbackDto,
   RegisterDto,
+  RequestPasswordResetDto,
   VerifyEmailOtpDto,
 } from './dto/auth.dto';
 import { suspendedAccountMessage } from './suspended-account';
@@ -48,6 +50,8 @@ type TokenPair = {
 
 const SIGNUP_OTP_TTL_MS = 10 * 60 * 1000;
 const SIGNUP_OTP_MAX_ATTEMPTS = 5;
+const PASSWORD_RESET_OTP_TTL_MS = 10 * 60 * 1000;
+const PASSWORD_RESET_OTP_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService {
@@ -220,6 +224,118 @@ export class AuthService {
         entityRefId: `welcome-${userId}`,
       },
     });
+  }
+
+  async requestPasswordReset(
+    dto: RequestPasswordResetDto,
+  ): Promise<{ email: string; expiresInSeconds: number }> {
+    const email = dto.email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      include: { profile: true },
+    });
+    if (!user?.passwordHash || user.status !== UserStatus.ACTIVE) {
+      return { email, expiresInSeconds: PASSWORD_RESET_OTP_TTL_MS / 1000 };
+    }
+
+    const code = String(randomInt(100000, 1000000));
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_OTP_TTL_MS);
+    await this.prisma.emailPasswordResetOtp.upsert({
+      where: { email },
+      create: {
+        email,
+        codeHash: hashWithPepper(code, this.otpPepper),
+        attempts: 0,
+        expiresAt,
+      },
+      update: {
+        codeHash: hashWithPepper(code, this.otpPepper),
+        attempts: 0,
+        expiresAt,
+      },
+    });
+
+    const displayName =
+      user.profile?.displayName?.trim() || email.split('@')[0];
+    const message = renderTransactionalEmail({
+      preview: 'Your ReWorth password reset code',
+      title: 'Reset your password',
+      greeting: `Hi ${displayName},`,
+      paragraphs: [
+        `Your password reset code is ${code}. It expires in 10 minutes.`,
+        'If you did not ask for this, you can ignore the email.',
+      ],
+      footerNote: 'Thanks,\nThe ReWorth Team',
+    });
+    await this.email.send({
+      to: email,
+      subject: 'Your ReWorth password reset code',
+      text: message.text,
+      html: message.html,
+      meta: { emailCategory: 'password_reset_otp' },
+    });
+    if (this.email.name === 'mock-email') {
+      this.logger.log(`password reset otp for ${email}: ${code}`);
+    }
+    return { email, expiresInSeconds: PASSWORD_RESET_OTP_TTL_MS / 1000 };
+  }
+
+  async confirmPasswordReset(
+    dto: ConfirmPasswordResetDto,
+    ip?: string,
+  ): Promise<{ ok: true }> {
+    const email = dto.email.trim().toLowerCase();
+    if (dto.password.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters');
+    }
+    const row = await this.prisma.emailPasswordResetOtp.findUnique({
+      where: { email },
+    });
+    if (!row || row.expiresAt.getTime() < Date.now()) {
+      if (row) {
+        await this.prisma.emailPasswordResetOtp.delete({ where: { email } });
+      }
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+    if (row.attempts >= PASSWORD_RESET_OTP_MAX_ATTEMPTS) {
+      throw new UnauthorizedException('Too many attempts. Request a new code.');
+    }
+    const given = Buffer.from(hashWithPepper(dto.code.trim(), this.otpPepper));
+    const expected = Buffer.from(row.codeHash);
+    const match =
+      given.length === expected.length && timingSafeEqual(given, expected);
+    if (!match) {
+      await this.prisma.emailPasswordResetOtp.update({
+        where: { email },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user?.passwordHash || user.status !== UserStatus.ACTIVE) {
+      await this.prisma.emailPasswordResetOtp.delete({ where: { email } });
+      throw new UnauthorizedException('Invalid or expired code');
+    }
+
+    await this.prisma.emailPasswordResetOtp.delete({ where: { email } });
+    const passwordHash = await hashPassword(dto.password);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash },
+    });
+    await this.prisma.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await this.audit.log({
+      actorUserId: user.id,
+      action: 'PASSWORD_RESET',
+      entityType: 'User',
+      entityId: user.id,
+      ip: ip ?? null,
+    });
+    return { ok: true };
   }
 
   async login(dto: LoginDto, ip?: string): Promise<TokenPair & { userId: string }> {
