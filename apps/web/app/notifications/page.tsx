@@ -22,7 +22,6 @@ export default function NotificationsPage() {
   const router = useRouter();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{
@@ -37,8 +36,7 @@ export default function NotificationsPage() {
       return;
     }
     const soft = Boolean(opts?.soft);
-    if (soft) setRefreshing(true);
-    else setLoading(true);
+    if (!soft) setLoading(true);
     setError(null);
     try {
       const rows = await listNotifications(token);
@@ -50,8 +48,7 @@ export default function NotificationsPage() {
       }
       setError(err instanceof ApiError ? err.message : "Could not load");
     } finally {
-      if (soft) setRefreshing(false);
-      else setLoading(false);
+      if (!soft) setLoading(false);
     }
   }, [router]);
 

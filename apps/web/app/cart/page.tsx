@@ -69,25 +69,12 @@ export default function CartPage() {
     }
   }
 
-  async function checkout() {
-    const token = getAccessToken();
-    if (!token) return;
-    setCheckingOut(true);
-    try {
-      const res = await checkoutCart(token, { fulfilmentMethod: "DELIVERY" });
-      const n = res.orders.length;
-      setToast(
-        n === 1
-          ? "Order placed. Pay on the order to send it to a rider."
-          : `${n} orders placed. Pay each order to send it to a rider.`,
-      );
-      router.push(n === 1 ? `/orders/${res.orders[0].id}` : "/orders");
-    } catch (err) {
-      setToast(err instanceof ApiError ? err.message : "Checkout failed");
-      await load();
-    } finally {
-      setCheckingOut(false);
-    }
+  function checkoutHref(item: CartItem): string {
+    const q = new URLSearchParams({
+      listingId: item.listing.id,
+      qty: String(item.quantity),
+    });
+    return `/checkout?${q.toString()}`;
   }
 
   const ready = (items ?? []).filter((item) => !item.unavailable);
