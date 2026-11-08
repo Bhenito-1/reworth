@@ -98,7 +98,6 @@ export default function OrdersListPage() {
   const [meId, setMeId] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderDto[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (opts?: { soft?: boolean }) => {
@@ -108,8 +107,7 @@ export default function OrdersListPage() {
       return;
     }
     const soft = Boolean(opts?.soft);
-    if (soft) setRefreshing(true);
-    else setLoading(true);
+    if (!soft) setLoading(true);
     setError(null);
     try {
       const [me, list] = await Promise.all([
@@ -125,8 +123,7 @@ export default function OrdersListPage() {
       }
       setError(err instanceof ApiError ? err.message : "Could not load orders");
     } finally {
-      if (soft) setRefreshing(false);
-      else setLoading(false);
+      if (!soft) setLoading(false);
     }
   }, [router]);
 
