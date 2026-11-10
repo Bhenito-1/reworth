@@ -605,7 +605,7 @@ export class MessagesService {
       recipientId,
       category: NotificationCategory.NEW_OFFER,
       title: 'New offer on your listing',
-      body: `A buyer offered ${amountLabel}. Open chat to respond. If you accept, they can buy multiple units at this price per unit.`,
+      body: `A buyer offered ${amountLabel}. Open chat to respond.`,
       deepLink,
       meta: {
         conversationId: message.conversationId,

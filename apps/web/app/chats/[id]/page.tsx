@@ -19,7 +19,7 @@ import {
 } from "@reworth/ui-web";
 import { OfferCard } from "../../../components/chat/OfferCard";
 import { MakeOfferModal } from "../../../components/chat/MakeOfferModal";
-import { OFFER_MULTI_UNIT_HINT } from "../../../lib/offer-copy";
+import { OFFER_MULTI_UNIT_HINT_BUYER } from "../../../lib/offer-copy";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 import {
@@ -483,7 +483,7 @@ export default function ChatThreadPage() {
       );
       setOfferOpen(false);
       setToast({
-        message: `Offer of ${amountLabel} sent for ${item}. ${OFFER_MULTI_UNIT_HINT}`,
+        message: `Offer of ${amountLabel} sent for ${item}. ${OFFER_MULTI_UNIT_HINT_BUYER}`,
         tone: "success",
       });
       await refresh();

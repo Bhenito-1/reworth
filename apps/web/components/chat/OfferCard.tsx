@@ -12,6 +12,7 @@ import {
   offerStatusLabel,
   type OfferDto,
 } from "../../lib/chat";
+import { OFFER_MULTI_UNIT_HINT_SELLER } from "../../lib/offer-copy";
 
 type Props = {
   offer: OfferDto;
@@ -41,6 +42,8 @@ export function OfferCard({
   const showRespond = canAcceptOrRejectOffer(offer, meId);
   const showCounter = canCounterOffer(offer, meId);
   const showWithdraw = canWithdrawOffer(offer, meId);
+  const showSellerMultiUnitNote =
+    !isBuyer && pending && showRespond && proposerId === offer.buyerId;
 
   return (
     <article
@@ -62,6 +65,11 @@ export function OfferCard({
       </div>
       {offer.note ? (
         <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">{offer.note}</p>
+      ) : null}
+      {showSellerMultiUnitNote ? (
+        <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+          {OFFER_MULTI_UNIT_HINT_SELLER}
+        </p>
       ) : null}
       {pending ? (
         <div className="mt-4 flex flex-wrap gap-2">
