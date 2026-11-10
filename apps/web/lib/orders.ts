@@ -192,6 +192,34 @@ export function computeOrderTotalKobo(input: {
   );
 }
 
+export function isSwapOrder(
+  order: Pick<OrderDto, "swap" | "transactionType">,
+): boolean {
+  return Boolean(order.swap) || order.transactionType === "SWAP";
+}
+
+/** Standard sale viewed by the listing seller — buyer-paid fees are hidden. */
+export function isSellerStandardSale(
+  order: OrderDto,
+  meId: string | null,
+): boolean {
+  if (!meId || meId !== order.sellerId) return false;
+  return !isSwapOrder(order);
+}
+
+export function orderDisplayTotalKobo(
+  order: OrderDto,
+  meId: string | null,
+): number {
+  if (order.swap) {
+    return order.deliveryFeeKobo + SWAP_FEE_KOBO;
+  }
+  if (isSellerStandardSale(order, meId)) {
+    return order.amountKobo;
+  }
+  return order.totalKobo;
+}
+
 export function newIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();

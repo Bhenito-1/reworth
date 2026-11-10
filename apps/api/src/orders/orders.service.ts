@@ -82,6 +82,7 @@ export type PlacedOrderMail = {
   id: string;
   sellerId: string;
   quantity: number;
+  amountKobo: number;
   totalKobo: number;
   title: string;
 };
@@ -98,9 +99,34 @@ function formatNaira(kobo: number): string {
   }).format(kobo / 100);
 }
 
-function orderMailLine(order: PlacedOrderMail): string {
+function orderMailLineForBuyer(order: PlacedOrderMail): string {
   const title = order.title.trim() || 'Item';
   return `${order.quantity} × ${title} — ${formatNaira(order.totalKobo)}`;
+}
+
+function orderMailLineForSeller(order: PlacedOrderMail): string {
+  const title = order.title.trim() || 'Item';
+  return `${order.quantity} × ${title} — ${formatNaira(order.amountKobo)}`;
+}
+
+/** Sellers on standard sales do not see buyer-paid delivery or protection fees. */
+function redactOrderFeesForViewer(
+  dto: OrderDto,
+  viewerId?: string,
+): OrderDto {
+  if (!viewerId || viewerId === dto.buyerId) return dto;
+  const isSwap = dto.transactionType === 'SWAP' || dto.swap != null;
+  if (viewerId === dto.sellerId && !isSwap) {
+    return {
+      ...dto,
+      deliveryFeeKobo: 0,
+      protectionFeeKobo: 0,
+      totalKobo: dto.amountKobo,
+      paymentReference: null,
+      paymentId: null,
+    };
+  }
+  return dto;
 }
 
 export type OrderDto = {
@@ -522,7 +548,7 @@ export class OrdersService {
         title: 'Orders placed',
         body: [
           `You placed ${orders.length} orders. Each seller will accept or reject their order. You can pay after they accept.`,
-          ...orders.map(orderMailLine),
+          ...orders.map(orderMailLineForBuyer),
           `Total ${formatNaira(total)}.`,
         ].join('\n\n'),
         deepLink: 'reworth://orders',
@@ -551,7 +577,7 @@ export class OrdersService {
           title: 'New orders to accept',
           body: [
             `A buyer placed ${sellerOrders.length} orders with you. Open them to accept or reject. Those units stay reserved until you respond.`,
-            ...sellerOrders.map(orderMailLine),
+            ...sellerOrders.map(orderMailLineForSeller),
           ].join('\n\n'),
           deepLink: 'reworth://orders',
           channels: [NotificationChannel.EMAIL],
@@ -1762,22 +1788,25 @@ export class OrdersService {
     if (!base.paymentId && linkedPayment?.id) {
       base.paymentId = linkedPayment.id;
     }
-    return {
-      ...base,
-      listingTitle: order.listing?.title?.trim() || null,
-      deliveryStatus,
-      lifecycle: buildOrderLifecycle({
-        status: order.status,
-        fulfilmentMethod: order.fulfilmentMethod,
+    return redactOrderFeesForViewer(
+      {
+        ...base,
+        listingTitle: order.listing?.title?.trim() || null,
         deliveryStatus,
-      }),
-      escrow: buildEscrowSnapshot({
-        orderStatus: order.status,
-        paymentStatus,
-        payoutStatus,
-      }),
-      swap: await this.swapPairForOrder(order, viewerId),
-    };
+        lifecycle: buildOrderLifecycle({
+          status: order.status,
+          fulfilmentMethod: order.fulfilmentMethod,
+          deliveryStatus,
+        }),
+        escrow: buildEscrowSnapshot({
+          orderStatus: order.status,
+          paymentStatus,
+          payoutStatus,
+        }),
+        swap: await this.swapPairForOrder(order, viewerId),
+      },
+      viewerId,
+    );
   }
 
   /** Both items on a swap order: what this payer sends and what they receive. */

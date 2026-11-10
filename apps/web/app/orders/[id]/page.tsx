@@ -32,6 +32,8 @@ import {
   disputeIdFromEvents,
   fulfilmentLabel,
   getOrder,
+  isSellerStandardSale,
+  orderDisplayTotalKobo,
   SWAP_FEE_KOBO,
   initiatePayment,
   isMockPsp,
@@ -419,6 +421,7 @@ export default function OrderDetailPage() {
 
   const isBuyer = meId === order.buyerId;
   const isSeller = meId === order.sellerId;
+  const sellerStandardSale = isSellerStandardSale(order, meId);
   const disputeId = disputeIdFromEvents(order.events);
   const swapOpen =
     Boolean(order.swap) &&
@@ -516,9 +519,7 @@ export default function OrderDetailPage() {
             ) : null}
             <p className="mt-1 text-lg font-semibold">
               {formatNgn({
-                amountKobo: order.swap
-                  ? order.deliveryFeeKobo + SWAP_FEE_KOBO
-                  : order.totalKobo,
+                amountKobo: orderDisplayTotalKobo(order, meId),
               })}
             </p>
             <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
@@ -557,6 +558,22 @@ export default function OrderDetailPage() {
               </dd>
             </div>
           </dl>
+        ) : sellerStandardSale ? (
+          <dl className="mt-6 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-[var(--rw-ink-muted)]">Item</dt>
+              <dd className="font-medium">
+                {order.listingTitle?.trim() || "Listing"}
+                {order.quantity && order.quantity > 1 ? ` · ${order.quantity} units` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--rw-ink-muted)]">Sale total</dt>
+              <dd className="font-medium">
+                {formatNgn({ amountKobo: order.amountKobo })}
+              </dd>
+            </div>
+          </dl>
         ) : (
           <dl className="mt-6 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm sm:grid-cols-2">
             <div>
@@ -585,23 +602,31 @@ export default function OrderDetailPage() {
             <dt className="text-[var(--rw-ink-muted)]">Order reference</dt>
             <dd className="font-mono text-sm font-semibold">{order.reference}</dd>
             <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
-              Give this reference to the courier when collecting your item.
+              {isSeller
+                ? "Give this reference to the courier when dispatching your item."
+                : "Give this reference to the courier when collecting your item."}
             </p>
           </div>
-          {order.paymentReference ? (
-            <div>
-              <dt className="text-[var(--rw-ink-muted)]">Payment reference</dt>
-              <dd className="font-mono text-xs font-medium">{order.paymentReference}</dd>
-            </div>
+          {isBuyer ? (
+            <>
+              {order.paymentReference ? (
+                <div>
+                  <dt className="text-[var(--rw-ink-muted)]">Payment reference</dt>
+                  <dd className="font-mono text-xs font-medium">
+                    {order.paymentReference}
+                  </dd>
+                </div>
+              ) : null}
+              <div>
+                <dt className="text-[var(--rw-ink-muted)]">Payment</dt>
+                <dd className="font-medium">{paymentStatusFromOrder(order)}</dd>
+              </div>
+              <div>
+                <dt className="text-[var(--rw-ink-muted)]">Refund</dt>
+                <dd className="font-medium">{refundStatusFromOrder(order)}</dd>
+              </div>
+            </>
           ) : null}
-          <div>
-            <dt className="text-[var(--rw-ink-muted)]">Payment</dt>
-            <dd className="font-medium">{paymentStatusFromOrder(order)}</dd>
-          </div>
-          <div>
-            <dt className="text-[var(--rw-ink-muted)]">Refund</dt>
-            <dd className="font-medium">{refundStatusFromOrder(order)}</dd>
-          </div>
         </dl>
 
         {order.confirmationStatus === "PENDING" && order.status === "CREATED" ? (

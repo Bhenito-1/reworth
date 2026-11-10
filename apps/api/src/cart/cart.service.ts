@@ -153,6 +153,7 @@ export class CartService {
       id: string;
       sellerId: string;
       quantity: number;
+      amountKobo: number;
       totalKobo: number;
       title: string;
     }[] = [];
@@ -179,6 +180,7 @@ export class CartService {
           id: order.id,
           sellerId: order.sellerId,
           quantity: order.quantity,
+          amountKobo: order.amountKobo,
           totalKobo: order.totalKobo,
           title: row.listing.title,
         });

@@ -18,6 +18,7 @@ import {
   isCancelledOrder,
   isDeliveredOrder,
   listOrders,
+  orderDisplayTotalKobo,
   orderStatusLabel,
   sortMyOrders,
   type OrderDto,
@@ -259,7 +260,9 @@ export default function OrdersListPage() {
                             </p>
                             <p className="mt-0.5 text-sm">
                               {o.quantity && o.quantity > 1 ? `${o.quantity} × ` : ""}
-                              {formatNgn({ amountKobo: o.totalKobo })}
+                              {formatNgn({
+                                amountKobo: orderDisplayTotalKobo(o, meId),
+                              })}
                             </p>
                             <p className="mt-0.5 text-sm text-[var(--rw-ink-muted)]">
                               {role} · {fulfilmentLabel(String(o.fulfilmentMethod))}

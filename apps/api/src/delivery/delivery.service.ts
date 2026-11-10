@@ -68,6 +68,11 @@ export class DeliveryService {
     toLng: number,
   ) {
     const order = await this.requireParticipant(orderId, userId);
+    if (order.buyerId !== userId) {
+      throw new ForbiddenException(
+        'Only the buyer can request delivery pricing',
+      );
+    }
     if (order.fulfilmentMethod !== FulfilmentMethod.DELIVERY) {
       throw new BadRequestException('Order fulfilment is not DELIVERY');
     }
