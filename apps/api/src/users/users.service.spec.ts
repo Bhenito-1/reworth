@@ -6,6 +6,7 @@ describe('UsersService profile privacy', () => {
       user: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'u1',
+          memberReference: 'RW-MBR-TESTUSER01',
           phone: '+2348012345678',
           email: null,
           status: 'ACTIVE',
@@ -44,6 +45,7 @@ describe('UsersService profile privacy', () => {
       user: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'u1',
+          memberReference: 'RW-MBR-TESTUSER02',
           phone: null,
           email: 'a@b.com',
           status: 'ACTIVE',

@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { ConsentChannel, Prisma } from '@prisma/client';
+import { newMemberReference } from '../common/transaction-reference';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
@@ -39,6 +40,11 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException('User not found');
 
+    const memberReference = await this.ensureMemberReference(
+      user.id,
+      user.memberReference,
+    );
+
     const profile = user.profile
       ? {
           displayName: user.profile.displayName,
@@ -70,6 +76,7 @@ export class UsersService {
 
     return {
       id: user.id,
+      memberReference,
       phone: user.phone,
       email: user.email,
       status: user.status,
@@ -84,6 +91,27 @@ export class UsersService {
       roles: user.roles.map((r) => r.role),
       createdAt: user.createdAt,
     };
+  }
+
+  /** Assign RW-MBR-* for accounts created before memberReference existed. */
+  private async ensureMemberReference(
+    userId: string,
+    existing: string | null,
+  ): Promise<string> {
+    if (existing) return existing;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const memberReference = newMemberReference();
+      try {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { memberReference },
+        });
+        return memberReference;
+      } catch {
+        // Unique collision — retry.
+      }
+    }
+    return existing ?? userId;
   }
 
   async updateMe(userId: string, dto: UpdateProfileDto) {

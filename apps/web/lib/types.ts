@@ -20,6 +20,7 @@ export type MeProfile = {
 
 export type MeResponse = {
   id: string;
+  memberReference?: string | null;
   phone: string | null;
   email: string | null;
   status: string;

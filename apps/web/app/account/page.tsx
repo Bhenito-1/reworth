@@ -397,6 +397,14 @@ export default function AccountPage() {
                 className="flex flex-col gap-6 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6"
                 noValidate
               >
+                {me.memberReference ? (
+                  <div className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5">
+                    <p className="text-sm font-medium">Member ID</p>
+                    <p className="mt-0.5 font-mono text-sm lowercase">
+                      {me.memberReference}
+                    </p>
+                  </div>
+                ) : null}
                 <Input
                   label="Display name"
                   name="displayName"

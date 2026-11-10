@@ -441,6 +441,8 @@ enum ReviewStatus {
 model User {
   /// Stable unique account id (UUID) — payer/payee on payments, buyer/seller on orders.
   id              String     @id @default(uuid()) @db.Uuid
+  /// Human-readable ReWorth member id (RW-MBR-*). Not NIN/BVN — identity stays in Verification.
+  memberReference String?    @unique
   phone           String?    @unique
   phoneVerifiedAt DateTime?
   email           String?    @unique
