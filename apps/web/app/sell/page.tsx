@@ -1133,23 +1133,11 @@ export default function SellPage() {
                 id="sell-loc-title"
                 className="text-3xl font-semibold tracking-tight"
               >
-                Where is it?
+                Pickup Address
               </h1>
               <p className="mt-3 text-[var(--rw-ink-muted)]">
-                Choose a state first. Areas in that state show up after you
-                select it. Buyers see the area, never your street address.
-              </p>
-              <Input
-                className="mt-6"
-                label="Pickup address (internal)"
-                value={pickupAddress}
-                onChange={(e) => setPickupAddress(e.target.value)}
-                placeholder="e.g. 12 Admiralty Way, Lekki Phase 1"
-                disabled={busy}
-              />
-              <p className="mt-2 text-xs text-[var(--rw-ink-muted)]">
-                Couriers and delivery quotes use this location. It is never shown
-                on your public listing.
+                Input the address for item pickup. Buyers see the area, never your
+                street address.
               </p>
               <label className="mt-6 block text-sm font-medium">
                 State
@@ -1201,6 +1189,14 @@ export default function SellPage() {
                   Select a state to see areas such as VI and Ikoyi.
                 </p>
               )}
+              <Input
+                className="mt-8"
+                label="Pickup address"
+                value={pickupAddress}
+                onChange={(e) => setPickupAddress(e.target.value)}
+                placeholder="e.g. 12 Admiralty Way, Lekki Phase 1"
+                disabled={busy}
+              />
               {error ? (
                 <p className="mt-4 text-sm text-[var(--rw-error)]" role="alert">
                   {error}
@@ -1236,8 +1232,7 @@ export default function SellPage() {
                 ReWorth delivery
               </h1>
               <p className="mt-3 text-[var(--rw-ink-muted)]">
-                Buyers receive this by ReWorth delivery. The courier fee is quoted
-                at checkout.
+                All listings use ReWorth delivery.
               </p>
               {error ? (
                 <p className="mt-4 text-sm text-[var(--rw-error)]" role="alert">

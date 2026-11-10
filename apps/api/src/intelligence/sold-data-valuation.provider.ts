@@ -135,7 +135,7 @@ export class SoldDataValuationProvider implements ValuationProvider {
         quickSale: percentile(prices, 25),
         maxValue: percentile(prices, 90),
         sampleCount: prices.length,
-        confidenceLabel: 'Estimated from live listings',
+        confidenceLabel: 'From live listings',
         basis: 'live_listings_fallback',
       });
     }
@@ -165,7 +165,7 @@ export class SoldDataValuationProvider implements ValuationProvider {
       quickSale: Math.round(recommended * 0.9),
       maxValue: high,
       sampleCount: soldSampleCount,
-      confidenceLabel: 'Estimated from live listings',
+      confidenceLabel: 'From live listings',
       basis: 'live_listings_fallback',
     });
   }
