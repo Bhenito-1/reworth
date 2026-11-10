@@ -53,6 +53,7 @@ export type DeliveryShipment = {
   etaFrom: string | null;
   etaTo: string | null;
   failureReason: string | null;
+  attemptCount?: number;
   createdAt: string;
   updatedAt: string;
   events: DeliveryEvent[];
@@ -71,20 +72,25 @@ export type MeetPointFulfilmentResult = {
   fulfilmentMethod: string;
 };
 
+/** Customer-facing labels (delivery-journey design). */
 export function shipmentStatusLabel(status: string): string {
   switch (status) {
     case "QUOTED":
-      return "Quoted";
+      return "Delivery quoted";
+    case "OFFERED":
+      return "Waiting for a rider";
     case "ASSIGNED":
-      return "Courier assigned";
+      return "Rider accepted";
     case "PICKED_UP":
-      return "Picked up";
+      return "Collected from seller";
     case "IN_TRANSIT":
-      return "In transit";
+      return "On the way";
+    case "OUT_FOR_DELIVERY":
+      return "Out for delivery";
     case "DELIVERED":
-      return "Delivered";
+      return "Delivered — confirm";
     case "FAILED":
-      return "Failed";
+      return "Needs attention";
     default:
       return status
         .trim()
@@ -92,6 +98,144 @@ export function shipmentStatusLabel(status: string): string {
         .toLowerCase()
         .replace(/^\w/, (letter) => letter.toUpperCase());
   }
+}
+
+export type JourneyStep = {
+  key: string;
+  title: string;
+  buyerHint: string;
+  sellerHint: string;
+};
+
+export const DELIVERY_JOURNEY_STEPS: JourneyStep[] = [
+  {
+    key: "QUOTED",
+    title: "Delivery quoted",
+    buyerHint: "The fee is locked. Pay to offer this run to a rider.",
+    sellerHint: "The buyer has a quote. Nothing is collected until they pay.",
+  },
+  {
+    key: "OFFERED",
+    title: "Waiting for a rider",
+    buyerHint: "Your payment is protected. A rider has been offered this delivery.",
+    sellerHint: "A rider has been asked to collect on the day you confirmed.",
+  },
+  {
+    key: "ASSIGNED",
+    title: "Rider accepted",
+    buyerHint: "Your rider accepted and will collect from the seller.",
+    sellerHint: "The rider accepted. Have the item packed and easy to reach.",
+  },
+  {
+    key: "PICKED_UP",
+    title: "Collected from seller",
+    buyerHint: "The item is with the rider.",
+    sellerHint: "Collected — payout unlocks after the buyer confirms.",
+  },
+  {
+    key: "IN_TRANSIT",
+    title: "On the way",
+    buyerHint: "Heading toward your area.",
+    sellerHint: "In transit to the buyer.",
+  },
+  {
+    key: "OUT_FOR_DELIVERY",
+    title: "Out for delivery",
+    buyerHint: "Be available to receive the item.",
+    sellerHint: "Rider is delivering to the buyer.",
+  },
+  {
+    key: "DELIVERED",
+    title: "Delivered",
+    buyerHint: "Confirm it looks right to release payment.",
+    sellerHint: "Waiting for the buyer to confirm receipt.",
+  },
+];
+
+const JOURNEY_RANK: Record<string, number> = {
+  QUOTED: 0,
+  OFFERED: 1,
+  ASSIGNED: 2,
+  PICKED_UP: 3,
+  IN_TRANSIT: 4,
+  OUT_FOR_DELIVERY: 5,
+  DELIVERED: 6,
+  FAILED: -1,
+};
+
+export function journeyStepIndex(status: string): number {
+  return JOURNEY_RANK[status] ?? 0;
+}
+
+export function deliveryWindowHint(): string {
+  return "Typically next day · WAT";
+}
+
+export function formatDeliveryEta(
+  etaFrom: string | null | undefined,
+  etaTo: string | null | undefined,
+): string {
+  if (!etaFrom && !etaTo) return deliveryWindowHint();
+  try {
+    const from = etaFrom ? new Date(etaFrom) : null;
+    const to = etaTo ? new Date(etaTo) : null;
+    if (from && to && !Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
+      const sameDay = from.toDateString() === to.toDateString();
+      const day = from.toLocaleDateString("en-NG", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      });
+      const t0 = from.toLocaleTimeString("en-NG", {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      const t1 = to.toLocaleTimeString("en-NG", {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      return sameDay ? `${day} · ${t0}–${t1} WAT` : `${day} onward · WAT`;
+    }
+    if (from && !Number.isNaN(from.getTime())) {
+      return `${from.toLocaleString("en-NG")} · WAT`;
+    }
+  } catch {
+    /* fall through */
+  }
+  return deliveryWindowHint();
+}
+
+export function privacyBeforePayCopy(): string {
+  return "Exact address stays private until payment.";
+}
+
+/** Corridor pins for D3 map — community-level only, never exact home. */
+export function buildDeliveryCorridor(input: {
+  listingLat?: number | null;
+  listingLng?: number | null;
+  distanceKm?: number | null;
+  sellerLabel?: string;
+  buyerLabel?: string;
+}): {
+  sellerLat: number;
+  sellerLng: number;
+  sellerLabel: string;
+  buyerLat: number;
+  buyerLng: number;
+  buyerLabel: string;
+} {
+  const sellerLat = input.listingLat ?? 6.45;
+  const sellerLng = input.listingLng ?? 3.4;
+  const km = Math.max(1, input.distanceKm ?? 8);
+  const delta = Math.min(0.12, (km / 111) * 0.85);
+  return {
+    sellerLat,
+    sellerLng,
+    sellerLabel: input.sellerLabel?.trim() || "Seller area",
+    buyerLat: sellerLat + delta * 0.35,
+    buyerLng: sellerLng + delta,
+    buyerLabel: input.buyerLabel?.trim() || "Buyer area",
+  };
 }
 
 export function listMeetPoints(
@@ -148,6 +292,16 @@ export function getOrderShipment(
   orderId: string,
 ): Promise<DeliveryShipment> {
   return apiFetch<DeliveryShipment>(`/orders/${orderId}/shipment`, { token });
+}
+
+export function reattemptDelivery(
+  token: string,
+  orderId: string,
+): Promise<{ orderId: string; status: string; attemptCount: number }> {
+  return apiFetch(`/orders/${orderId}/delivery/reattempt`, {
+    method: "POST",
+    token,
+  });
 }
 
 /** Fallback destination ~1 km east of listing when GPS unavailable. */

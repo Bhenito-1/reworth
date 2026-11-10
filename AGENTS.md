@@ -27,8 +27,8 @@ Functional · UX · PWA behaviour verified on mobile + desktop browsers · secur
 | Last completed (post-launch) | **3.3** (`v2.2-monetization`) |
 | MVP Admin | **`v0.8-admin`** (+ harden) |
 | MVP Risk / Security | **`v0.9-risk-security`** (+ harden) |
-| Status | **Near complete** — web PWA primary; Web Push + VAPID; staging rails / k6 / Termii remain |
-| Next | Execute `docs/STAGING_RAILS.md` (Termii → Paystack test → web-push); staging k6 |
+| Status | **Near complete** · web PWA primary · **delivery-journey** D1–D6 shipped (partner dry-run + driver milestones) · Web Push + VAPID |
+| Next | Execute `docs/STAGING_RAILS.md` (Termii → Paystack test → web-push → delivery partner); staging k6 |
 
 ## MVP / post-launch
 
@@ -44,5 +44,6 @@ Post-launch through `v2.2-monetization`: swap → communities → intelligence �
 - Payments still mock-default in local (Paystack adapter present)
 - Termii live SMS/WhatsApp keys still pending (dual-channel mock verified)
 - Maps: Phase A locate + Phase B map + Phase C chat meetup pins shipped; live track deferred (ADR-011)
+- Delivery journey D1–D6 shipped (incl. driver milestones); live courier needs staging partner keys (`STAGING_RAILS` §4)
 
-See `docs/PHASE_STATUS.md`, `docs/STAGING_RAILS.md`, `docs/NIGERIA_MARKET_LAUNCH.md`, `docs/PRODUCT_ECOSYSTEM_PO_REVIEW.md`, `docs/ReWorth-Product-Deck.html`, `docs/BUYER_JOURNEY_AUDIT.md`, `docs/METRICS.md`, `docs/ADRS/011-maps-locate-me.md`.
+See `docs/PHASE_STATUS.md`, `docs/SPRINT_DELIVERY_JOURNEY.md`, `docs/DELIVERY_JOURNEY_DESIGN.md`, `docs/STAGING_RAILS.md`, `docs/NIGERIA_MARKET_LAUNCH.md`, `docs/PRODUCT_ECOSYSTEM_PO_REVIEW.md`, `docs/ReWorth-Product-Deck.html`, `docs/BUYER_JOURNEY_AUDIT.md`, `docs/METRICS.md`, `docs/ADRS/011-maps-locate-me.md`.

@@ -1,9 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ConflictException } from '@nestjs/common';
 import { NotificationChannel } from '@prisma/client';
-import { computeDeliveryFeeKobo } from '../providers/delivery.provider';
+import { createHmac } from 'crypto';
+import {
+  BULKY_DELIVERY_RATES,
+  computeDeliveryFeeKobo,
+  isBulkyDeliveryCategory,
+} from '../providers/delivery.provider';
 import { haversineKm } from '../providers/search.provider';
 import { MockDeliveryProvider } from '../providers/mock-delivery.provider';
+import { PartnerDeliveryProvider } from '../providers/partner-delivery.provider';
 import { MockEmailProvider } from '../providers/mock-email.provider';
 import { MockPushProvider } from '../providers/mock-push.provider';
 import {
@@ -20,6 +26,11 @@ describe('delivery quote math', () => {
     expect(computeDeliveryFeeKobo(1)).toBe(150_000 + 15_000);
     expect(computeDeliveryFeeKobo(1.01)).toBe(150_000 + 30_000);
     expect(computeDeliveryFeeKobo(5)).toBe(150_000 + 75_000);
+    expect(isBulkyDeliveryCategory('home-furniture')).toBe(true);
+    expect(isBulkyDeliveryCategory('phones-tablets')).toBe(false);
+    expect(computeDeliveryFeeKobo(3.1, BULKY_DELIVERY_RATES)).toBe(
+      1_200_000 + 80_000 * 4,
+    );
   });
 
   it('MockDeliveryProvider quote uses haversine + formula', async () => {
@@ -449,5 +460,258 @@ describe('NotificationsService', () => {
           c.meta?.digest === true,
       ),
     ).toBe(true);
+  });
+});
+
+describe('PartnerDeliveryProvider', () => {
+  it('dry-run createShipment returns partner_dry ref and next-day ETA', async () => {
+    const provider = new PartnerDeliveryProvider({
+      apiUrl: '',
+      apiKey: '',
+      mode: 'dry-run',
+    });
+    const created = await provider.createShipment({
+      orderId: '11111111-2222-3333-4444-555555555555',
+      quoteKobo: 150000,
+      fromLat: 6.45,
+      fromLng: 3.4,
+      toLat: 6.5,
+      toLng: 3.5,
+    });
+    expect(created.providerRef.startsWith('partner_dry_')).toBe(true);
+    expect(created.status).toBe('ASSIGNED');
+    expect(created.etaFrom).toBeInstanceOf(Date);
+    expect(created.etaTo!.getTime()).toBeGreaterThan(created.etaFrom!.getTime());
+  });
+
+  it('verifyWebhookSignature accepts valid HMAC when secret set', () => {
+    const secret = 'test-delivery-webhook';
+    const raw = JSON.stringify({ orderId: 'o1', status: 'DELIVERED' });
+    const sig = createHmac('sha256', secret).update(raw).digest('hex');
+    expect(
+      PartnerDeliveryProvider.verifyWebhookSignature(raw, sig, secret),
+    ).toBe(true);
+    expect(
+      PartnerDeliveryProvider.verifyWebhookSignature(raw, 'bad', secret),
+    ).toBe(false);
+    expect(
+      PartnerDeliveryProvider.verifyWebhookSignature(raw, undefined, undefined),
+    ).toBe(false);
+  });
+});
+
+describe('driver milestones', () => {
+  function makeDriverService(state: {
+    shipment: any;
+    idem?: Map<string, any>;
+    events?: any[];
+  }) {
+    const events = state.events ?? [];
+    const idem = state.idem ?? new Map();
+    const prisma: any = {
+      idempotencyRecord: {
+        findUnique: jest.fn(async ({ where }: any) => idem.get(where.key) ?? null),
+        upsert: jest.fn(async ({ where, create }: any) => {
+          const row = { key: where.key, ...create };
+          idem.set(where.key, row);
+          return row;
+        }),
+      },
+      deliveryShipment: {
+        findUnique: jest.fn(async () => state.shipment),
+        update: jest.fn(async ({ data }: any) => {
+          Object.assign(state.shipment, data, { updatedAt: new Date() });
+          return state.shipment;
+        }),
+      },
+      deliveryEvent: {
+        create: jest.fn(async ({ data }: any) => {
+          const row = { id: `ev-${events.length + 1}`, ...data };
+          events.push(row);
+          return row;
+        }),
+      },
+      order: {
+        findUniqueOrThrow: jest.fn(async () => ({
+          id: state.shipment.orderId,
+          buyerId: 'buyer-1',
+          sellerId: 'seller-1',
+          status: 'FUNDED',
+        })),
+        findUnique: jest.fn(async () => ({
+          id: state.shipment.orderId,
+          buyerId: 'buyer-1',
+          sellerId: 'seller-1',
+          status: 'FUNDED',
+        })),
+        update: jest.fn(async ({ data }: any) => data),
+      },
+      orderEvent: { create: jest.fn(async () => ({})) },
+      supportTicket: { create: jest.fn(async ({ data }: any) => ({ id: 't1', ...data })) },
+      $transaction: jest.fn(async (fn: any) =>
+        fn({
+          deliveryShipment: {
+            update: async ({ data }: any) => {
+              Object.assign(state.shipment, data);
+              return state.shipment;
+            },
+          },
+          deliveryEvent: {
+            create: async ({ data }: any) => {
+              const row = { id: `ev-${events.length + 1}`, ...data };
+              events.push(row);
+              return row;
+            },
+          },
+          order: {
+            update: async ({ data }: any) => data,
+          },
+          orderEvent: {
+            create: async () => ({}),
+          },
+        }),
+      ),
+    };
+    const notifications = {
+      notify: jest.fn(async () => ({ created: [], skipped: [] })),
+    } as unknown as NotificationsService;
+    const provider = new MockDeliveryProvider();
+    const svc = new DeliveryService(prisma, notifications, provider);
+    return { svc, prisma, events, idem, notifications };
+  }
+
+  it('rejects non-assigned driver', async () => {
+    const { svc } = makeDriverService({
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'ASSIGNED',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+      },
+    });
+    await expect(
+      svc.submitDriverMilestone(
+        'driver-B',
+        'order-1',
+        { status: 'PICKED_UP' },
+        'idem-1',
+      ),
+    ).rejects.toThrow(/Not assigned/i);
+  });
+
+  it('advances status and is idempotent on replay', async () => {
+    const { svc, notifications } = makeDriverService({
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'ASSIGNED',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+        etaFrom: null,
+        etaTo: null,
+      },
+    });
+    const first = await svc.submitDriverMilestone(
+      'driver-A',
+      'order-1',
+      { status: 'PICKED_UP' },
+      'idem-pick',
+    );
+    expect(first).toMatchObject({ accepted: true, status: 'PICKED_UP' });
+    expect(notifications.notify).toHaveBeenCalled();
+
+    const replay = await svc.submitDriverMilestone(
+      'driver-A',
+      'order-1',
+      { status: 'PICKED_UP' },
+      'idem-pick',
+    );
+    expect(replay).toMatchObject({ accepted: true, status: 'PICKED_UP' });
+  });
+
+  it('records stale delayed updates without regressing', async () => {
+    const { svc, events } = makeDriverService({
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'IN_TRANSIT',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+      },
+    });
+    const res = await svc.submitDriverMilestone(
+      'driver-A',
+      'order-1',
+      {
+        status: 'PICKED_UP',
+        occurredAt: new Date(Date.now() - 60_000).toISOString(),
+        note: 'offline queue',
+      },
+      'idem-late',
+    );
+    expect(res).toMatchObject({
+      accepted: false,
+      reason: 'stale_or_delayed',
+      currentStatus: 'IN_TRANSIT',
+    });
+    expect(events[0].payload.reason).toBe('stale_or_delayed');
+  });
+
+  it('requires failureReason for FAILED', async () => {
+    const { svc } = makeDriverService({
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'OUT_FOR_DELIVERY',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+      },
+    });
+    await expect(
+      svc.submitDriverMilestone(
+        'driver-A',
+        'order-1',
+        { status: 'FAILED' },
+        'idem-fail',
+      ),
+    ).rejects.toThrow(/failureReason/i);
+  });
+
+  it('rejects a forward skip and hides another rider’s replay', async () => {
+    const idem = new Map<string, any>();
+    const { svc } = makeDriverService({
+      idem,
+      shipment: {
+        id: 'ship-1',
+        orderId: 'order-1',
+        status: 'ASSIGNED',
+        assignedDriverId: 'driver-A',
+        providerRef: 'mock_1',
+      },
+    });
+    await expect(
+      svc.submitDriverMilestone(
+        'driver-A',
+        'order-1',
+        { status: 'DELIVERED' },
+        'idem-skip',
+      ),
+    ).rejects.toThrow(/Cannot skip/i);
+
+    await svc.submitDriverMilestone(
+      'driver-A',
+      'order-1',
+      { status: 'PICKED_UP' },
+      'idem-owned',
+    );
+    await expect(
+      svc.submitDriverMilestone(
+        'driver-B',
+        'order-1',
+        { status: 'PICKED_UP' },
+        'idem-owned',
+      ),
+    ).rejects.toThrow(/Not assigned/i);
   });
 });

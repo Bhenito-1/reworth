@@ -83,6 +83,7 @@ export class UsersService {
       riskLevel: user.riskLevel,
       riskScore: user.riskScore,
       enhancedVerificationRequired: user.enhancedVerificationRequired,
+      isDeliveryDriver: user.isDeliveryDriver,
       phoneVerifiedAt: user.phoneVerifiedAt,
       emailVerifiedAt: user.emailVerifiedAt,
       profile,

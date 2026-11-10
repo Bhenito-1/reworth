@@ -89,6 +89,12 @@ function resolveSpawn(command, commandArgs) {
   return { file: command, args: commandArgs, shell: false };
 }
 
+const args = process.argv.slice(2);
+if (args.length === 0) {
+  console.error('Usage: node scripts/with-root-env.mjs <command> [...args]');
+  process.exit(1);
+}
+
 if (loadEnvFile(rootEnv)) {
   try {
     copyFileSync(rootEnv, apiEnv);
@@ -96,20 +102,21 @@ if (loadEnvFile(rootEnv)) {
     console.warn(`[with-root-env] Could not mirror .env to apps/api: ${err.message}`);
   }
 } else if (!process.env.DATABASE_URL) {
-  console.error(
-    `[with-root-env] Missing ${rootEnv}\nCopy .env.example → .env at the monorepo root (reworth/).`,
-  );
-  process.exit(1);
+  if (args.includes('generate')) {
+    process.env.DATABASE_URL = 'postgresql://dummy:dummy@localhost:5432/dummy';
+    console.warn(
+      '[with-root-env] No root .env or DATABASE_URL found; using placeholder URL for prisma generate.',
+    );
+  } else {
+    console.error(
+      `[with-root-env] Missing ${rootEnv}\nCopy .env.example → .env at the monorepo root (reworth/).`,
+    );
+    process.exit(1);
+  }
 } else {
   console.log(
     '[with-root-env] No root .env file; using environment variables already set.',
   );
-}
-
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.error('Usage: node scripts/with-root-env.mjs <command> [...args]');
-  process.exit(1);
 }
 
 const [command, ...commandArgs] = args;

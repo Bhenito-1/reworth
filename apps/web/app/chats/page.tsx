@@ -22,7 +22,6 @@ export default function ChatsPage() {
   const router = useRouter();
   const [items, setItems] = useState<ConversationListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ConversationListItem | null>(
     null,
@@ -37,8 +36,7 @@ export default function ChatsPage() {
       return;
     }
     const soft = Boolean(opts?.soft);
-    if (soft) setRefreshing(true);
-    else setLoading(true);
+    if (!soft) setLoading(true);
     setError(null);
     try {
       const rows = await listConversations(token);
@@ -56,8 +54,7 @@ export default function ChatsPage() {
             : "Could not load chats",
       );
     } finally {
-      if (soft) setRefreshing(false);
-      else setLoading(false);
+      if (!soft) setLoading(false);
     }
   }, [router]);
 

@@ -56,11 +56,24 @@ export type DeliveryRateParams = {
   perKmKobo: number;
 };
 
-/** Lagos defaults: ₦1,500 base + ₦150/km (ceil), in kobo. */
+/** Lagos parcel: ₦1,500 base + ₦150/km (ceil), in kobo. */
 export const DEFAULT_DELIVERY_RATES: DeliveryRateParams = {
   baseFeeKobo: 150_000,
   perKmKobo: 15_000,
 };
+
+/**
+ * Van / two-person carry for furniture and appliances.
+ * ₦12,000 call-out + ₦800/km. A 3 km sofa is about ₦15,200, not a bike parcel.
+ */
+export const BULKY_DELIVERY_RATES: DeliveryRateParams = {
+  baseFeeKobo: 1_200_000,
+  perKmKobo: 80_000,
+};
+
+export function isBulkyDeliveryCategory(slug?: string | null): boolean {
+  return /(furniture|appliance)/i.test(slug ?? '');
+}
 
 /**
  * feeKobo = baseFeeKobo + perKmKobo * ceil(km)

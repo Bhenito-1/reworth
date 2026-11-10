@@ -1,6 +1,6 @@
 # API reference (`/api/v1`) — `v0.9.0-rc`
 
-> Regenerated for Phase 10 from the Nest route surface. For interactive OpenAPI, run the API and use route inventory below. Full Swagger UI can be enabled later via `@nestjs/swagger` without changing contracts.
+> Regenerated for Phase 10 from the Nest route surface. The interactive list is Swagger UI at `http://localhost:3001/docs` while the API is running (`SWAGGER_ENABLED` defaults on outside production). Machine-readable spec: `http://localhost:3001/docs/openapi.json`.
 
 **Base (local):** `http://localhost:3001/api/v1`  
 **Auth:** `Authorization: Bearer <accessToken>` (user). Admin routes require admin JWT (+ optional TOTP session).

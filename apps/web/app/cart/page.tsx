@@ -96,9 +96,8 @@ export default function CartPage() {
           </Link>
         </div>
         <p className="mb-6 text-sm text-[var(--rw-ink-muted)]">
-          Saving an item here does not place an order or hold the units. Proceed
-          to checkout to confirm delivery and units before the seller confirms
-          your order.
+          Saving an item here does not place an order or hold the units. Checkout
+          reserves the units and takes you straight to payment.
         </p>
 
         {items === null && !error ? (

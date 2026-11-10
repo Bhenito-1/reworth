@@ -43,6 +43,14 @@ export function SessionGate({ children }: { children: ReactNode }) {
       const publicPath = isPublicAuthPath(pathname);
       const authed = isAuthed();
 
+      if (!authed && pathname.startsWith("/driver")) {
+        setAuthed(false);
+        setAllowed(false);
+        setReady(true);
+        window.location.replace("/login?next=/driver");
+        return;
+      }
+
       if (!authed && !publicPath) {
         setAuthed(false);
         setAllowed(false);
@@ -124,7 +132,8 @@ export function SessionGate({ children }: { children: ReactNode }) {
   const hideNav =
     !authed ||
     pathname.startsWith("/login") ||
-    pathname.startsWith("/onboarding");
+    pathname.startsWith("/onboarding") ||
+    pathname.startsWith("/driver");
 
   return (
     <>
