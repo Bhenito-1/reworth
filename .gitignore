@@ -7,6 +7,7 @@ node_modules/
 .env.*
 !.env.example
 !.env.staging.example
+!.env.production.example
 
 # Builds
 dist/

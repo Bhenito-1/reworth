@@ -73,6 +73,23 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
+## Staging and production from the laptop
+
+`pnpm dev` keeps using `.env` and Docker. These commands boot the same web, API, and admin apps, load `.env` first, then override it for that process only.
+
+```bash
+cp .env.staging.example .env.staging
+cp .env.production.example .env.production
+# Fill DATABASE_URL with the external database URL (not an internal host).
+
+pnpm staging
+pnpm production
+```
+
+`.env.staging` and `.env.production` are gitignored. The apps stay on the local URLs above. Leave `NEXT_PUBLIC_API_URL` unset so the website calls the local API, which uses the remote database. Set it to the deployed API only when the browser should call that host directly. That host's `WEB_ORIGIN` must include `http://localhost:3000`.
+
+`pnpm production` writes to the live database. Use it to inspect production, not to seed it.
+
 ## Stack
 
 Next.js 15 PWA · NestJS · PostgreSQL/Prisma · Redis/BullMQ · adobe/s3mock · OpenSearch · Paystack · OpenAI — see ADR-001 / ADR-010.
