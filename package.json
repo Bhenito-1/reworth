@@ -4,6 +4,7 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "turbo run dev --filter=@reworth/api --filter=@reworth/web --filter=@reworth/admin",
+    "staging": "node scripts/with-staging-env.mjs turbo run dev --filter=@reworth/api --filter=@reworth/web --filter=@reworth/admin",
     "db:deploy:staging": "dotenv -e .env.staging -- pnpm db:deploy",
     "db:deploy:prod": "dotenv -e .env.production -- pnpm db:deploy",
     "build:staging": "dotenv -e .env.staging -- turbo run build",
