@@ -18,6 +18,7 @@ Lagos-first consumer recommerce marketplace — **buy · sell · swap · give aw
 | [`docs/LAUNCH.md`](docs/LAUNCH.md) | Launch checklist |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Incident playbooks |
 | [`docs/API.md`](docs/API.md) | REST `/api/v1` |
+| [`docs/ENVIRONMENTS.md`](docs/ENVIRONMENTS.md) | Local, staging, and production env vars |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release notes |
 
 ## 10-minute local run
