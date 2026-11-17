@@ -5,6 +5,8 @@ export type InitiatePaymentInput = {
   email: string;
   metadata?: Record<string, string>;
   idempotencyKey: string;
+  /** Where Paystack sends the buyer after checkout. */
+  callbackUrl?: string;
 };
 
 export type PaymentResult = {
@@ -12,6 +14,8 @@ export type PaymentResult = {
   reference: string;
   status: 'pending' | 'success' | 'failed';
   checkoutUrl?: string;
+  /** Present when the provider reports the captured amount (kobo). */
+  amountKobo?: number;
 };
 
 export type ReleaseInput = {

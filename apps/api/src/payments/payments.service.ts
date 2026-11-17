@@ -87,7 +87,8 @@ export class PaymentsService {
     const buyer = await this.prisma.user.findUnique({
       where: { id: buyerId },
     });
-    const email = buyer?.email ?? `${buyerId}@reworth.local`;
+    const email =
+      buyer?.email?.trim() || `payments+${buyerId}@reworth.ng`;
     const reference = newPaymentReference();
 
     const amountKobo =
@@ -102,6 +103,7 @@ export class PaymentsService {
       email,
       metadata: { orderId: order.id, payerId: buyerId },
       idempotencyKey: dto.idempotencyKey,
+      callbackUrl: this.callbackUrl(),
     });
 
     const payment = await this.prisma.$transaction(async (tx) => {
@@ -153,6 +155,47 @@ export class PaymentsService {
     return this.toDto(payment, payload?.checkoutUrl);
   }
 
+  /**
+   * Buyer landed back from Paystack. Confirms the charge with the provider
+   * so a local callback works before the webhook arrives.
+   */
+  async confirm(userId: string, reference: string): Promise<PaymentDto> {
+    const payment = await this.prisma.payment.findUnique({
+      where: { reference },
+      include: { order: true },
+    });
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.order.buyerId !== userId) {
+      throw new ForbiddenException('Only the buyer can confirm payment');
+    }
+
+    if (!this.isSettled(payment.status)) {
+      const verified = await this.psp.verify(reference);
+      if (verified.status === 'success') {
+        if (
+          this.psp.name === 'paystack' &&
+          verified.amountKobo !== payment.amountKobo
+        ) {
+          throw new ConflictException(
+            'Paystack amount does not match this payment',
+          );
+        }
+        await this.markPaymentSuccess(payment, { verify: verified });
+      } else if (verified.status === 'failed') {
+        await this.prisma.payment.updateMany({
+          where: { id: payment.id, status: 'PENDING' },
+          data: { status: 'FAILED' },
+        });
+      }
+    }
+
+    const fresh = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+    });
+    const payload = fresh.providerPayload as { checkoutUrl?: string } | null;
+    return this.toDto(fresh, payload?.checkoutUrl);
+  }
+
   async handleWebhook(
     rawBody: Buffer | string,
     signature: string | undefined,
@@ -197,47 +240,12 @@ export class PaymentsService {
       return { ok: false };
     }
 
-    // Replay-safe: already SUCCESS / RELEASED / REFUNDED
-    if (
-      payment.status === 'SUCCESS' ||
-      payment.status === 'RELEASED' ||
-      payment.status === 'REFUNDED' ||
-      payment.status === 'PARTIALLY_REFUNDED'
-    ) {
+    if (this.isSettled(payment.status)) {
       return { ok: true, orderId: payment.orderId };
     }
 
     if (parsed.status === 'success') {
-      if (this.psp instanceof MockPsp || this.psp.name === 'mock-psp') {
-        (this.psp as MockPsp).simulateWebhookSuccess(parsed.reference);
-      }
-
-      await this.prisma.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: 'SUCCESS',
-          providerPayload: {
-            ...(payment.providerPayload as object),
-            webhook: parsed,
-          } as Prisma.InputJsonValue,
-        },
-      });
-
-      try {
-        await this.orders.markFunded(payment.orderId, payment.reference);
-      } catch (err) {
-        await this.prisma.payment.update({
-          where: { id: payment.id },
-          data: { status: 'FAILED' },
-        });
-        throw err;
-      }
-      await this.recordOrderRevenue(payment.orderId, payment.reference);
-      this.notifications.log('payment.success', {
-        paymentId: payment.id,
-        orderId: payment.orderId,
-        reference: payment.reference,
-      });
+      await this.markPaymentSuccess(payment, { webhook: parsed });
       return { ok: true, orderId: payment.orderId };
     }
 
@@ -250,6 +258,62 @@ export class PaymentsService {
     }
 
     return { ok: true, orderId: payment.orderId };
+  }
+
+  private callbackUrl(): string | undefined {
+    if (this.psp.name !== 'paystack') return undefined;
+    const origin = (process.env.WEB_ORIGIN ?? 'http://localhost:3000')
+      .split(',')[0]
+      ?.trim()
+      .replace(/\/$/, '');
+    return origin ? `${origin}/pay/return` : undefined;
+  }
+
+  private isSettled(status: string): boolean {
+    return (
+      status === 'SUCCESS' ||
+      status === 'RELEASED' ||
+      status === 'REFUNDED' ||
+      status === 'PARTIALLY_REFUNDED'
+    );
+  }
+
+  /** First writer wins. Webhook and the buyer return can arrive together. */
+  private async markPaymentSuccess(
+    payment: Payment,
+    extra: Record<string, unknown>,
+  ): Promise<void> {
+    if (this.psp instanceof MockPsp || this.psp.name === 'mock-psp') {
+      (this.psp as MockPsp).simulateWebhookSuccess(payment.reference);
+    }
+
+    const claimed = await this.prisma.payment.updateMany({
+      where: { id: payment.id, status: 'PENDING' },
+      data: {
+        status: 'SUCCESS',
+        providerPayload: {
+          ...(payment.providerPayload as object),
+          ...extra,
+        } as Prisma.InputJsonValue,
+      },
+    });
+    if (claimed.count === 0) return;
+
+    try {
+      await this.orders.markFunded(payment.orderId, payment.reference);
+    } catch (err) {
+      await this.prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'FAILED' },
+      });
+      throw err;
+    }
+    await this.recordOrderRevenue(payment.orderId, payment.reference);
+    this.notifications.log('payment.success', {
+      paymentId: payment.id,
+      orderId: payment.orderId,
+      reference: payment.reference,
+    });
   }
 
   /** One RevenueLine per fee stream on successful capture. */

@@ -504,12 +504,18 @@ export default function CheckoutPage() {
                 {simulating ? "Confirming…" : "Simulate pay"}
               </Button>
             ) : payment.checkoutUrl ? (
-              <a
-                href={payment.checkoutUrl}
-                className="inline-flex w-full items-center justify-center rounded-[var(--rw-radius)] bg-[var(--rw-accent)] px-4 py-3 text-base font-medium text-white"
-              >
-                Continue to Paystack
-              </a>
+              <div className="space-y-2">
+                <p className="text-sm text-[var(--rw-ink-muted)]">
+                  {formatNgn({ amountKobo: payment.amountKobo })} is held by
+                  Paystack until you confirm delivery.
+                </p>
+                <a
+                  href={payment.checkoutUrl}
+                  className="inline-flex w-full items-center justify-center rounded-[var(--rw-radius)] bg-[var(--rw-accent)] px-4 py-3 text-base font-medium text-white"
+                >
+                  Pay {formatNgn({ amountKobo: payment.amountKobo })} with Paystack
+                </a>
+              </div>
             ) : (
               <p className="text-sm text-[var(--rw-ink-muted)]">
                 Complete payment in your PSP window, then open{" "}

@@ -762,8 +762,11 @@ export default function OrderDetailPage() {
                 {paying ? "Starting payment…" : "Simulate payment"}
               </Button>
             ) : payment.checkoutUrl ? (
-              <a href={payment.checkoutUrl} className="text-sm font-medium text-[var(--rw-accent)]">
-                Continue to payment
+              <a
+                href={payment.checkoutUrl}
+                className="inline-flex w-full items-center justify-center rounded-[var(--rw-radius)] bg-[var(--rw-accent)] px-4 py-3 text-base font-medium text-white"
+              >
+                Pay {formatNgn({ amountKobo: payment.amountKobo })} with Paystack
               </a>
             ) : null}
           </div>

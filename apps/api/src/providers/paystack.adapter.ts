@@ -45,6 +45,7 @@ export class PaystackAdapter implements PaymentProvider {
         reference: input.reference,
         email: input.email,
         metadata: input.metadata,
+        ...(input.callbackUrl ? { callback_url: input.callbackUrl } : {}),
       }),
     });
     if (!res.ok) {
@@ -73,7 +74,7 @@ export class PaystackAdapter implements PaymentProvider {
       return { paymentId: 'unknown', reference, status: 'failed' };
     }
     const json = (await res.json()) as {
-      data: { id: number; reference: string; status: string };
+      data: { id: number; reference: string; status: string; amount?: number };
     };
     const status =
       json.data.status === 'success'
@@ -85,6 +86,8 @@ export class PaystackAdapter implements PaymentProvider {
       paymentId: String(json.data.id),
       reference: json.data.reference,
       status,
+      amountKobo:
+        typeof json.data.amount === 'number' ? json.data.amount : undefined,
     };
   }
 

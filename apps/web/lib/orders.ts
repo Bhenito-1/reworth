@@ -465,6 +465,18 @@ export function getPayment(token: string, paymentId: string): Promise<PaymentDto
   return apiFetch<PaymentDto>(`/payments/${paymentId}`, { token });
 }
 
+/** Ask the API to verify a Paystack charge after the buyer returns. */
+export function confirmPayment(
+  token: string,
+  reference: string,
+): Promise<PaymentDto> {
+  return apiFetch<PaymentDto>("/payments/confirm", {
+    method: "POST",
+    token,
+    body: { reference },
+  });
+}
+
 /** Mock PSP only — no auth required by API. */
 export function simulateMockPspCharge(body: {
   reference: string;
