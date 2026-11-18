@@ -204,6 +204,10 @@ export class PaymentsService {
     if (!signature || !this.psp.verifyWebhookSignature(rawBody, signature)) {
       throw new UnauthorizedException('Invalid webhook signature');
     }
+    const event = (payload as { event?: unknown } | null)?.event;
+    if (typeof event === 'string' && event.startsWith('transfer.')) {
+      return this.applyTransferWebhook(payload);
+    }
     return this.applyWebhookPayload(payload);
   }
 
@@ -221,6 +225,71 @@ export class PaymentsService {
       event: body.event ?? 'charge.success',
       data: { reference: body.reference, status: 'success' },
     });
+  }
+
+  /** Paystack transfer events settle the seller payout. They are not card charges. */
+  private async applyTransferWebhook(
+    payload: unknown,
+  ): Promise<{ ok: boolean; orderId?: string }> {
+    const body = payload as {
+      event?: string;
+      data?: { reference?: string; status?: string; reason?: string };
+    };
+    const reference = body.data?.reference?.trim() ?? '';
+    if (!reference) {
+      this.logger.warn('Transfer webhook missing reference');
+      return { ok: false };
+    }
+    const payout = await this.prisma.payout.findFirst({
+      where: { pspReference: reference },
+      include: { order: { select: { id: true, sellerId: true } } },
+    });
+    if (!payout) {
+      this.logger.warn(`Unknown transfer reference ${reference}`);
+      return { ok: false };
+    }
+    const event = body.event ?? '';
+    const failed =
+      event === 'transfer.failed' || event === 'transfer.reversed';
+    const paid = event === 'transfer.success';
+    if (!failed && !paid) {
+      return { ok: true, orderId: payout.orderId };
+    }
+    if (paid) {
+      if (payout.status !== 'PAID') {
+        await this.prisma.payout.update({
+          where: { id: payout.id },
+          data: { status: 'PAID', failureReason: null },
+        });
+      }
+      return { ok: true, orderId: payout.orderId };
+    }
+    if (payout.status !== 'FAILED') {
+      const reason =
+        body.data?.reason?.trim() ||
+        (event === 'transfer.reversed'
+          ? 'Paystack reversed the transfer'
+          : 'Paystack could not complete the transfer');
+      await this.prisma.payout.update({
+        where: { id: payout.id },
+        data: { status: 'FAILED', failureReason: reason },
+      });
+      try {
+        await this.notifications.notify({
+          userId: payout.order.sellerId,
+          category: 'PAYMENT_RELEASED',
+          title: 'Payout failed',
+          body: 'The bank transfer did not complete. Retry it from the order.',
+          deepLink: `reworth://orders/${payout.orderId}`,
+          meta: { orderId: payout.orderId },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Payout failure notice failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    return { ok: true, orderId: payout.orderId };
   }
 
   private async applyWebhookPayload(

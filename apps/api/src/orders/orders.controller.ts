@@ -34,6 +34,11 @@ export class OrdersController {
     return this.orders.listForUser(user.id);
   }
 
+  @Get('wallet')
+  wallet(@CurrentUser() user: AuthUser) {
+    return this.orders.sellerWallet(user.id);
+  }
+
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.orders.getById(id, user.id);
@@ -47,6 +52,11 @@ export class OrdersController {
   @Post(':id/confirm-receipt')
   confirmReceipt(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.orders.confirmReceipt(id, user.id);
+  }
+
+  @Post(':id/retry-payout')
+  retryPayout(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.orders.retryPayout(id, user.id);
   }
 
   @Post(':id/cancel')

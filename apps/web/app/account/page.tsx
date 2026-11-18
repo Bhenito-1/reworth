@@ -32,6 +32,7 @@ const ACCOUNT_LINKS: {
   { href: "/consign", label: "Consign", icon: "actionDelivery" },
   { href: "/account/communities", label: "Communities", icon: "invite" },
   { href: "/sell/analytics", label: "Seller analytics", icon: "actionSell" },
+  { href: "/selling/wallet", label: "Wallet", icon: "securePayment" },
   { href: "/pro", label: "Pro seller", icon: "verifiedSeller" },
   { href: "/corporate", label: "Corporate", icon: "movingSale" },
   { href: "/partner", label: "Partner", icon: "identityChecked" },
@@ -526,6 +527,11 @@ export default function AccountPage() {
               >
                 Bank details
               </h2>
+              <p className="mb-4 text-sm">
+                <Link href="/selling/wallet" className="font-medium text-[var(--rw-accent)]">
+                  View wallet
+                </Link>
+              </p>
               {payout ? (
                 <dl className="grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6 text-sm">
                   <div>

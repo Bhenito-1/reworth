@@ -240,6 +240,22 @@ describe('escrow happy path + webhook replay', () => {
           Object.assign(state.payment, data);
           return { ...state.payment };
         }),
+        updateMany: jest.fn(
+          async ({
+            where,
+            data,
+          }: {
+            where: { id?: string; status?: string };
+            data: Record<string, unknown>;
+          }) => {
+            if (where.id && where.id !== state.payment.id) return { count: 0 };
+            if (where.status && state.payment.status !== where.status) {
+              return { count: 0 };
+            }
+            Object.assign(state.payment, data);
+            return { count: 1 };
+          },
+        ),
       },
       payout: {
         findFirst: jest.fn(async () => state.payouts[0] ?? null),
@@ -247,6 +263,23 @@ describe('escrow happy path + webhook replay', () => {
           state.payouts.push(data);
           return data;
         }),
+      },
+      sellerPayoutAccount: {
+        findUnique: jest.fn(async () => ({
+          id: 'acct-1',
+          userId: 'seller-1',
+          bankCode: '058',
+          accountNumber: '0123456789',
+          firstName: 'Ada',
+          middleName: '',
+          lastName: 'Demo',
+          nibssAccountName: 'Ada Demo',
+          verifiedAt: new Date(),
+          paystackRecipientCode: null,
+          paystackRecipientBankCode: null,
+          paystackRecipientAccountNumber: null,
+        })),
+        update: jest.fn(async () => ({})),
       },
       idempotencyRecord: {
         findUnique: jest.fn(async ({ where }: { where: { key: string } }) =>
@@ -696,6 +729,23 @@ describe('disputes', () => {
           payout = data;
           return data;
         }),
+      },
+      sellerPayoutAccount: {
+        findUnique: jest.fn(async () => ({
+          id: 'acct-1',
+          userId: 'seller-1',
+          bankCode: '058',
+          accountNumber: '0123456789',
+          firstName: 'Ada',
+          middleName: '',
+          lastName: 'Demo',
+          nibssAccountName: 'Ada Demo',
+          verifiedAt: new Date(),
+          paystackRecipientCode: null,
+          paystackRecipientBankCode: null,
+          paystackRecipientAccountNumber: null,
+        })),
+        update: jest.fn(async () => ({})),
       },
       idempotencyRecord: {
         findUnique: jest.fn(async () => null),

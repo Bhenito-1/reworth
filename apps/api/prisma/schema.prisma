@@ -359,6 +359,13 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
+/// Seller bank transfer after escrow release. Existing rows stay PAID.
+enum PayoutTransferStatus {
+  PROCESSING
+  PAID
+  FAILED
+}
+
 enum DisputeStatus {
   OPENED
   AWAITING_SELLER
@@ -567,6 +574,10 @@ model SellerPayoutAccount {
   lastName         String
   nibssAccountName String
   verifiedAt       DateTime
+  /// Paystack transfer recipient. Recreated when the bank or account number changes.
+  paystackRecipientCode          String?
+  paystackRecipientBankCode      String?
+  paystackRecipientAccountNumber String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -1419,17 +1430,20 @@ model Payment {
 }
 
 model Payout {
-  id            String   @id @default(uuid()) @db.Uuid
-  orderId       String   @db.Uuid
+  id            String               @id @default(uuid()) @db.Uuid
+  orderId       String               @db.Uuid
   grossKobo     Int
   feesKobo      Int
   netKobo       Int
+  status        PayoutTransferStatus @default(PAID)
   pspReference  String?
-  createdAt     DateTime @default(now())
+  failureReason String?
+  createdAt     DateTime             @default(now())
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
+  @@index([pspReference])
   @@map("payouts")
 }
 

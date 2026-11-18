@@ -50,7 +50,9 @@ import {
   sentenceCaseLabel,
   paymentStatusFromOrder,
   refundStatusFromOrder,
+  retrySellerPayout,
   rejectOrder,
+  sellerPayoutLabel,
   simulateMockPspCharge,
   type DisputeReason,
   type OrderDetail,
@@ -654,6 +656,52 @@ export default function OrderDetailPage() {
             <dt className="text-[var(--rw-ink-muted)]">Refund</dt>
             <dd className="font-medium">{refundStatusFromOrder(order)}</dd>
           </div>
+          {sellerPayoutLabel(
+            order.escrow?.payoutStatus,
+            isSeller ? "seller" : "buyer",
+          ) ? (
+            <div className="sm:col-span-2">
+              <dt className="text-[var(--rw-ink-muted)]">Seller payout</dt>
+              <dd className="font-medium">
+                {sellerPayoutLabel(
+                  order.escrow?.payoutStatus,
+                  isSeller ? "seller" : "buyer",
+                )}
+              </dd>
+              {isSeller && order.escrow?.payoutStatus === "FAILED" ? (
+                <Button
+                  className="mt-3"
+                  variant="primary"
+                  disabled={busy}
+                  onClick={() => {
+                    const token = getAccessToken();
+                    if (!token || !orderId) return;
+                    setBusy(true);
+                    void retrySellerPayout(token, orderId)
+                      .then(() => load())
+                      .then(() =>
+                        setToast({
+                          message: "Payout sent again",
+                          tone: "success",
+                        }),
+                      )
+                      .catch((err: unknown) =>
+                        setToast({
+                          message:
+                            err instanceof ApiError
+                              ? err.message
+                              : "Could not retry the payout",
+                          tone: "error",
+                        }),
+                      )
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Retry payout
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </dl>
 
         {order.confirmationStatus === "PENDING" && order.status === "CREATED" ? (

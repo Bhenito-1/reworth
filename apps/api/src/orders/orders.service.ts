@@ -16,6 +16,7 @@ import {
   Order,
   OrderConfirmationStatus,
   OrderStatus,
+  PayoutTransferStatus,
   Prisma,
   SwapLegStatus,
   TransactionType,
@@ -92,6 +93,19 @@ const NO_EMAIL: NotificationChannel[] = [
   NotificationChannel.IN_APP,
   NotificationChannel.PUSH,
 ];
+
+/** First transfer is rel_{paymentRef}. A retry uses the next suffix. */
+function nextTransferReference(
+  paymentReference: string,
+  previous: string | null,
+): string {
+  const base = `rel_${paymentReference}`;
+  if (!previous || !previous.startsWith(base)) return base;
+  const suffix = previous.slice(base.length);
+  const current = suffix.startsWith('_') ? Number(suffix.slice(1)) : 1;
+  const next = Number.isFinite(current) && current >= 1 ? current + 1 : 2;
+  return `${base}_${next}`;
+}
 
 function formatNaira(kobo: number): string {
   return new Intl.NumberFormat('en-NG', {
@@ -618,6 +632,108 @@ export class OrdersService {
       orderBy: { createdAt: 'desc' },
     });
     return Promise.all(rows.map((r) => this.toEnrichedOrderDto(r.id, userId)));
+  }
+
+  /**
+   * Seller wallet. Escrow is the item amount still held. Withdrawn is money
+   * Paystack has paid into the seller's bank. Sending and failed stay visible
+   * so a transfer does not disappear between those two.
+   */
+  async sellerWallet(sellerId: string): Promise<{
+    escrowKobo: number;
+    sendingKobo: number;
+    withdrawnKobo: number;
+    failedKobo: number;
+    entries: {
+      orderId: string;
+      reference: string;
+      title: string;
+      amountKobo: number;
+      at: string;
+      state: 'escrow' | 'sending' | 'paid' | 'failed';
+    }[];
+  }> {
+    const held = await this.prisma.order.findMany({
+      where: {
+        sellerId,
+        status: {
+          in: [
+            'FUNDED',
+            'IN_AUTHENTICATION',
+            'SHIPPED',
+            'HANDED_OVER',
+            'DELIVERED',
+            'RECEIVED',
+            'DISPUTE_HOLD',
+            'REFUND_REQUESTED',
+          ],
+        },
+        payments: { some: { status: 'SUCCESS' } },
+      },
+      select: {
+        id: true,
+        reference: true,
+        amountKobo: true,
+        updatedAt: true,
+        listing: { select: { title: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    const payouts = await this.prisma.payout.findMany({
+      where: { order: { sellerId } },
+      select: {
+        netKobo: true,
+        status: true,
+        createdAt: true,
+        order: {
+          select: {
+            id: true,
+            reference: true,
+            listing: { select: { title: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const sumStatus = (status: PayoutTransferStatus) =>
+      payouts
+        .filter((row) => row.status === status)
+        .reduce((total, row) => total + row.netKobo, 0);
+
+    const entries = [
+      ...held.map((order) => ({
+        orderId: order.id,
+        reference: order.reference,
+        title: order.listing?.title?.trim() || 'Item',
+        amountKobo: order.amountKobo,
+        at: order.updatedAt.toISOString(),
+        state: 'escrow' as const,
+      })),
+      ...payouts.map((row) => ({
+        orderId: row.order.id,
+        reference: row.order.reference,
+        title: row.order.listing?.title?.trim() || 'Item',
+        amountKobo: row.netKobo,
+        at: row.createdAt.toISOString(),
+        state:
+          row.status === PayoutTransferStatus.PAID
+            ? ('paid' as const)
+            : row.status === PayoutTransferStatus.FAILED
+              ? ('failed' as const)
+              : ('sending' as const),
+      })),
+    ]
+      .sort((a, b) => (a.at < b.at ? 1 : -1))
+      .slice(0, 20);
+
+    return {
+      escrowKobo: held.reduce((total, order) => total + order.amountKobo, 0),
+      sendingKobo: sumStatus(PayoutTransferStatus.PROCESSING),
+      withdrawnKobo: sumStatus(PayoutTransferStatus.PAID),
+      failedKobo: sumStatus(PayoutTransferStatus.FAILED),
+      entries,
+    };
   }
 
   async getById(
@@ -1199,15 +1315,69 @@ export class OrdersService {
       });
     }
 
-    const releaseResult = await this.psp.release({
-      reference: payment.reference,
-      amountKobo: order.amountKobo,
-      idempotencyKey: idemKey,
+    const account = await this.prisma.sellerPayoutAccount.findUnique({
+      where: { userId: order.sellerId },
     });
+    if (!account?.verifiedAt) {
+      await this.notifyPayoutProblem(
+        order.sellerId,
+        orderId,
+        'Add a bank account to get paid',
+        'The buyer confirmed delivery, but there is no verified bank account to pay.',
+      );
+      throw new ConflictException(
+        'The seller has no verified bank account, so this payout was not sent.',
+      );
+    }
+
+    const bankChanged =
+      account.paystackRecipientCode != null &&
+      (account.paystackRecipientBankCode !== account.bankCode ||
+        account.paystackRecipientAccountNumber !== account.accountNumber);
+    const accountName =
+      account.nibssAccountName.trim() ||
+      [account.firstName, account.middleName, account.lastName]
+        .filter(Boolean)
+        .join(' ');
+
+    let releaseResult;
+    try {
+      releaseResult = await this.psp.release({
+        reference: payment.reference,
+        amountKobo: order.amountKobo,
+        idempotencyKey: idemKey,
+        transferReference: `rel_${payment.reference}`,
+        recipient: {
+          recipientCode: bankChanged
+            ? undefined
+            : (account.paystackRecipientCode ?? undefined),
+          accountName,
+          accountNumber: account.accountNumber,
+          bankCode: account.bankCode,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Payout transfer failed for ${orderId}: ${(err as Error).message}`,
+      );
+      await this.notifyPayoutProblem(
+        order.sellerId,
+        orderId,
+        'Payout was not sent',
+        'Paystack did not accept the transfer. Confirm delivery again after the bank account is checked.',
+      );
+      throw new ConflictException(
+        'Paystack did not accept the seller payout. It was not sent.',
+      );
+    }
 
     const feesKobo = order.protectionFeeKobo;
     const netKobo = order.amountKobo;
     const grossKobo = order.amountKobo + order.protectionFeeKobo;
+    const payoutStatus =
+      this.psp.name === 'mock-psp' || releaseResult.status === 'released'
+        ? PayoutTransferStatus.PAID
+        : PayoutTransferStatus.PROCESSING;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.payment.update({
@@ -1229,7 +1399,22 @@ export class OrdersService {
             grossKobo,
             feesKobo,
             netKobo,
+            status: payoutStatus,
             pspReference: releaseResult.providerRef ?? null,
+          },
+        });
+      }
+
+      if (
+        releaseResult.recipientCode &&
+        releaseResult.recipientCode !== account.paystackRecipientCode
+      ) {
+        await tx.sellerPayoutAccount.update({
+          where: { id: account.id },
+          data: {
+            paystackRecipientCode: releaseResult.recipientCode,
+            paystackRecipientBankCode: account.bankCode,
+            paystackRecipientAccountNumber: account.accountNumber,
           },
         });
       }
@@ -1246,6 +1431,125 @@ export class OrdersService {
     });
 
     return this.finalizeCompleted(orderId, actorUserId, reason);
+  }
+
+  /**
+   * Send a failed seller transfer again. Does not charge the buyer.
+   * Uses a new Paystack reference so the failed one is not reused.
+   */
+  async retryPayout(orderId: string, sellerId: string): Promise<OrderDto> {
+    const order = await this.requireOrder(orderId);
+    if (order.sellerId !== sellerId) {
+      throw new ForbiddenException('Only the seller can retry this payout');
+    }
+    if (order.status !== 'COMPLETED') {
+      throw new ConflictException('Payout retry is only for a completed order');
+    }
+    const payout = await this.prisma.payout.findFirst({
+      where: { orderId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!payout || payout.status !== PayoutTransferStatus.FAILED) {
+      throw new ConflictException('There is no failed payout to retry');
+    }
+    const payment = await this.prisma.payment.findFirst({
+      where: { orderId, status: { in: ['SUCCESS', 'RELEASED'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!payment) {
+      throw new ConflictException('No payment to pay out');
+    }
+    const account = await this.prisma.sellerPayoutAccount.findUnique({
+      where: { userId: sellerId },
+    });
+    if (!account?.verifiedAt) {
+      throw new ConflictException(
+        'Verify a bank account before retrying this payout.',
+      );
+    }
+    const bankChanged =
+      account.paystackRecipientCode != null &&
+      (account.paystackRecipientBankCode !== account.bankCode ||
+        account.paystackRecipientAccountNumber !== account.accountNumber);
+    const accountName =
+      account.nibssAccountName.trim() ||
+      [account.firstName, account.middleName, account.lastName]
+        .filter(Boolean)
+        .join(' ');
+    const transferReference = nextTransferReference(
+      payment.reference,
+      payout.pspReference,
+    );
+    let releaseResult;
+    try {
+      releaseResult = await this.psp.release({
+        reference: payment.reference,
+        amountKobo: payout.netKobo,
+        idempotencyKey: `release-retry:${payout.id}:${transferReference}`,
+        transferReference,
+        recipient: {
+          recipientCode: bankChanged
+            ? undefined
+            : (account.paystackRecipientCode ?? undefined),
+          accountName,
+          accountNumber: account.accountNumber,
+          bankCode: account.bankCode,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Payout retry failed for ${orderId}: ${(err as Error).message}`,
+      );
+      throw new ConflictException('Paystack did not accept the payout retry.');
+    }
+    const status =
+      this.psp.name === 'mock-psp' || releaseResult.status === 'released'
+        ? PayoutTransferStatus.PAID
+        : PayoutTransferStatus.PROCESSING;
+    await this.prisma.payout.update({
+      where: { id: payout.id },
+      data: {
+        status,
+        pspReference: releaseResult.providerRef ?? transferReference,
+        failureReason: null,
+      },
+    });
+    if (
+      releaseResult.recipientCode &&
+      releaseResult.recipientCode !== account.paystackRecipientCode
+    ) {
+      await this.prisma.sellerPayoutAccount.update({
+        where: { id: account.id },
+        data: {
+          paystackRecipientCode: releaseResult.recipientCode,
+          paystackRecipientBankCode: account.bankCode,
+          paystackRecipientAccountNumber: account.accountNumber,
+        },
+      });
+    }
+    return this.toEnrichedOrderDto(orderId, sellerId);
+  }
+
+  private async notifyPayoutProblem(
+    sellerId: string,
+    orderId: string,
+    title: string,
+    body: string,
+  ): Promise<void> {
+    try {
+      await this.notifications.notify({
+        userId: sellerId,
+        category: NotificationCategory.PAYMENT_RELEASED,
+        title,
+        body,
+        deepLink: `reworth://orders/${orderId}`,
+        meta: { orderId },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Payout notice failed for ${orderId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   private async finalizeCompleted(
@@ -1750,7 +2054,7 @@ export class OrdersService {
       },
     });
     const paymentStatus = order.payments?.[0]?.status ?? null;
-    const payoutStatus = order.payouts?.[0] ? 'RELEASED' : null;
+    const payoutStatus = order.payouts?.[0]?.status ?? null;
     const deliveryStatus = order.deliveryShipment?.status ?? null;
     const linkedPayment = order.payment ?? order.payments?.[0] ?? null;
     const base = toOrderDto({

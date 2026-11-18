@@ -18,10 +18,21 @@ export type PaymentResult = {
   amountKobo?: number;
 };
 
+/** Seller bank account used to create or reuse a Paystack transfer recipient. */
+export type ReleaseRecipient = {
+  recipientCode?: string;
+  accountName: string;
+  accountNumber: string;
+  bankCode: string;
+};
+
 export type ReleaseInput = {
   reference: string;
   amountKobo: number;
   idempotencyKey: string;
+  /** Paystack transfer reference. Defaults to rel_{payment reference}. */
+  transferReference?: string;
+  recipient?: ReleaseRecipient;
 };
 
 export type RefundInput = {
@@ -35,6 +46,8 @@ export type MoneyOpResult = {
   amountKobo: number;
   status: 'released' | 'refunded' | 'partially_refunded' | 'pending';
   providerRef?: string;
+  /** Set when a transfer recipient was created or reused. */
+  recipientCode?: string;
 };
 
 export type ParsedWebhook = {

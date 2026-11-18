@@ -106,6 +106,14 @@ export type OrderDto = {
   meetPointId?: string | null;
   meetPoint?: MeetPointSummary | null;
   addressDisclosure?: AddressDisclosureDto | null;
+  escrow?: {
+    held: boolean;
+    released: boolean;
+    refunded: boolean;
+    label: string;
+    paymentStatus: string | null;
+    payoutStatus: string | null;
+  };
 };
 
 export type OrderEvent = {
@@ -349,6 +357,30 @@ export function paymentStatusFromOrder(order: OrderDto): string {
   }
 }
 
+/** Bank transfer copy after delivery is confirmed. */
+export function sellerPayoutLabel(
+  status: string | null | undefined,
+  viewer: "seller" | "buyer",
+): string | null {
+  switch (status) {
+    case "PROCESSING":
+      return viewer === "seller"
+        ? "Sending the item amount to your bank."
+        : "Sending the item amount to the seller.";
+    case "PAID":
+    case "RELEASED":
+      return viewer === "seller"
+        ? "Paid to your bank."
+        : "Paid to the seller.";
+    case "FAILED":
+      return viewer === "seller"
+        ? "The bank transfer failed. Retry it to send the item amount again."
+        : "The seller’s bank transfer failed. They can retry it from this order.";
+    default:
+      return null;
+  }
+}
+
 export function refundStatusFromOrder(order: OrderDto): string {
   if (order.status === "REFUND_ISSUED") return "Issued";
   if (order.status === "REFUND_REQUESTED") return "Requested";
@@ -458,6 +490,16 @@ export function initiatePayment(
     method: "POST",
     token,
     body,
+  });
+}
+
+export function retrySellerPayout(
+  token: string,
+  orderId: string,
+): Promise<OrderDto> {
+  return apiFetch<OrderDto>(`/orders/${orderId}/retry-payout`, {
+    method: "POST",
+    token,
   });
 }
 

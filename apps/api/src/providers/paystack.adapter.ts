@@ -92,7 +92,13 @@ export class PaystackAdapter implements PaymentProvider {
   }
 
   async release(input: ReleaseInput): Promise<MoneyOpResult> {
-    // Paystack transfer / settlement release — product-specific; stub shape for Phase 5
+    const recipient = input.recipient;
+    if (!recipient?.accountNumber || !recipient.bankCode || !recipient.accountName) {
+      throw new Error('Paystack release requires the seller bank account');
+    }
+    const recipientCode = await this.ensureRecipient(recipient);
+    const transferReference =
+      input.transferReference?.trim() || `rel_${input.reference}`;
     const res = await fetch(`${this.baseUrl}/transfer`, {
       method: 'POST',
       headers: {
@@ -103,21 +109,68 @@ export class PaystackAdapter implements PaymentProvider {
       body: JSON.stringify({
         source: 'balance',
         amount: input.amountKobo,
-        reference: `rel_${input.reference}_${input.idempotencyKey}`,
-        reason: 'ReWorth escrow release',
+        recipient: recipientCode,
+        reference: transferReference,
+        reason: 'ReWorth seller payout',
       }),
     });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Paystack release failed: ${res.status} ${text}`);
+    const json = (await res.json().catch(() => null)) as {
+      status?: boolean;
+      message?: string;
+      data?: { reference?: string; status?: string; transfer_code?: string };
+    } | null;
+    if (!res.ok || !json?.status || !json.data) {
+      const detail = json?.message || (await Promise.resolve(''));
+      throw new Error(
+        `Paystack release failed: ${res.status} ${detail}`.trim(),
+      );
     }
-    const json = (await res.json()) as { data: { reference: string } };
+    const raw = (json.data.status ?? 'pending').toLowerCase();
+    if (raw === 'failed' || raw === 'reversed') {
+      throw new Error(`Paystack transfer ${raw}`);
+    }
     return {
       reference: input.reference,
       amountKobo: input.amountKobo,
-      status: 'released',
-      providerRef: json.data.reference,
+      status: raw === 'success' ? 'released' : 'pending',
+      providerRef: json.data.reference || transferReference,
+      recipientCode,
     };
+  }
+
+  private async ensureRecipient(input: {
+    recipientCode?: string;
+    accountName: string;
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<string> {
+    if (input.recipientCode) return input.recipientCode;
+    const res = await fetch(`${this.baseUrl}/transferrecipient`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        type: 'nuban',
+        name: input.accountName,
+        account_number: input.accountNumber,
+        bank_code: input.bankCode,
+        currency: 'NGN',
+      }),
+    });
+    const json = (await res.json().catch(() => null)) as {
+      status?: boolean;
+      message?: string;
+      data?: { recipient_code?: string };
+    } | null;
+    const code = json?.data?.recipient_code;
+    if (!res.ok || !json?.status || !code) {
+      throw new Error(
+        `Paystack recipient failed: ${res.status} ${json?.message ?? ''}`.trim(),
+      );
+    }
+    return code;
   }
 
   async refund(input: RefundInput): Promise<MoneyOpResult> {
