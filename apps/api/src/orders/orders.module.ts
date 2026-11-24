@@ -29,7 +29,7 @@ export function createPaymentProvider(config: ConfigService) {
     );
   }
   return new MockPsp(
-    config.get<string>('PAYSTACK_WEBHOOK_SECRET') ?? 'mock-webhook-secret',
+    config.get<string>('PAYSTACK_WEBHOOK_SECRET')?.trim() || 'mock-webhook-secret',
   );
 }
 

@@ -169,9 +169,10 @@ export function buildEscrowSnapshot(input: {
   const pay = input.paymentStatus ?? null;
   const payout = input.payoutStatus ?? null;
   const released =
-    pay === "RELEASED" ||
-    input.orderStatus === "COMPLETED" ||
-    Boolean(payout);
+    payout !== "FAILED" &&
+    (pay === "RELEASED" ||
+      input.orderStatus === "COMPLETED" ||
+      Boolean(payout));
   const refunded =
     pay === "REFUNDED" ||
     pay === "PARTIALLY_REFUNDED" ||
@@ -185,7 +186,10 @@ export function buildEscrowSnapshot(input: {
       ));
 
   let label = "No payment yet";
-  if (refunded) label = "Refunded to buyer";
+  if (payout === "FAILED") label = "Payout failed";
+  else if (payout === "PROCESSING") label = "Sending to seller";
+  else if (payout === "PAID") label = "Paid to seller";
+  else if (refunded) label = "Refunded to buyer";
   else if (released) label = "Released to seller";
   else if (held) label = "Held in escrow";
   else if (pay === "PENDING") label = "Payment pending";

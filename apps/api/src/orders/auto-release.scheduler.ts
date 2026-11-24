@@ -28,6 +28,18 @@ export class AutoReleaseScheduler implements OnModuleInit, OnModuleDestroy {
       void this.orders.autoReleaseDue().catch((err) =>
         this.logger.warn(`Auto-release failed: ${(err as Error).message}`),
       );
+      // Sellers whose buyer-protection window ended without a dispute.
+      void this.orders.releaseAfterCover().catch((err) =>
+        this.logger.warn(`Release after cover failed: ${(err as Error).message}`),
+      );
+      // Seller transfers still PROCESSING: confirm with Paystack.
+      void this.orders.reconcileProcessingPayouts().catch((err) =>
+        this.logger.warn(`Payout reconcile failed: ${(err as Error).message}`),
+      );
+      // Unpaid orders past their payment window (ORDER_PAYMENT_WINDOW_HOURS).
+      void this.orders.expireUnpaid().catch((err) =>
+        this.logger.warn(`Unpaid expiry failed: ${(err as Error).message}`),
+      );
     }, intervalMs);
     if (typeof this.timer.unref === 'function') this.timer.unref();
   }

@@ -32,6 +32,7 @@ import {
 } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'crypto';
+import { newOrderReference } from '../src/common/transaction-reference';
 
 const prisma = new PrismaClient();
 
@@ -1039,6 +1040,7 @@ async function seedOrdersAndNotifications(opts: {
         await tx.order.create({
           data: {
             id: orderId,
+            reference: newOrderReference(),
             listingId: listing.id,
             buyerId,
             sellerId: listing.sellerId,
@@ -1110,6 +1112,7 @@ async function seedOrdersAndNotifications(opts: {
     await prisma.order.create({
       data: {
         id: demoOrderId,
+        reference: newOrderReference(),
         listingId: oriListing.id,
         buyerId: ayoId,
         sellerId: oriId,
