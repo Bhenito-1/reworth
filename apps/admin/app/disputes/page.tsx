@@ -24,10 +24,10 @@ type DisputeRow = {
 type Res = { items: DisputeRow[] };
 
 const RESOLUTIONS = [
-  { value: "FULL_REFUND", label: "Full refund" },
-  { value: "PARTIAL_REFUND", label: "Partial refund" },
+  { value: "FULL_REFUND", label: "Full refund (no payout)" },
+  { value: "PARTIAL_REFUND", label: "Partial refund (rest paid to seller)" },
   { value: "RELEASE_TO_SELLER", label: "Release to seller" },
-  { value: "CANCEL", label: "Cancel" },
+  { value: "CANCEL", label: "Cancel (full refund, units back on sale)" },
 ] as const;
 
 export default function DisputesPage() {
@@ -146,8 +146,8 @@ export default function DisputesPage() {
                       </select>
                     </label>
                     {resolution === "PARTIAL_REFUND" ? (
-                      <label className="text-xs">
-                        Amount (kobo)
+                      <label className="text-xs" title="Comes out of the seller's share of the item price. ReWorth keeps its fees; the rest goes to the seller straight away.">
+                        Refund amount (kobo, from seller's share)
                         <input
                           type="number"
                           min={1}

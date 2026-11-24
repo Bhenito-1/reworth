@@ -130,7 +130,7 @@ export const DELIVERY_JOURNEY_STEPS: JourneyStep[] = [
     key: "PICKED_UP",
     title: "Collected from seller",
     buyerHint: "The item is with the rider.",
-    sellerHint: "Collected — payout unlocks after the buyer confirms.",
+    sellerHint: "Collected — payout is sent when buyer protection ends after delivery.",
   },
   {
     key: "IN_TRANSIT",

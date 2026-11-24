@@ -1,12 +1,16 @@
 import { createHmac } from 'crypto';
-import type {
-  InitiatePaymentInput,
-  MoneyOpResult,
-  ParsedWebhook,
-  PaymentProvider,
-  PaymentResult,
-  RefundInput,
-  ReleaseInput,
+import { safeEqualHex } from './paystack.adapter';
+import {
+  PspRejectedError,
+  transferReferenceFor,
+  type InitiatePaymentInput,
+  type MoneyOpResult,
+  type ParsedWebhook,
+  type PaymentProvider,
+  type PaymentResult,
+  type RefundInput,
+  type ReleaseInput,
+  type TransferCheck,
 } from './payment.provider';
 
 type StoredPayment = PaymentResult & {
@@ -27,6 +31,8 @@ export class MockPsp implements PaymentProvider {
   private readonly store = new Map<string, StoredPayment>();
   private readonly idempotency = new Map<string, MoneyOpResult | PaymentResult>();
   private readonly webhookSecret: string;
+  /** Seller transfers by transfer reference (verifyTransfer). */
+  private readonly transfers = new Map<string, TransferCheck['status']>();
 
   constructor(webhookSecret = 'mock-webhook-secret') {
     this.webhookSecret = webhookSecret;
@@ -92,15 +98,23 @@ export class MockPsp implements PaymentProvider {
 
     const payment = this.store.get(input.reference);
     if (!payment || payment.status !== 'success') {
-      throw new Error(`Cannot release: payment ${input.reference} not funded`);
+      throw new PspRejectedError(
+        `Cannot release: payment ${input.reference} not funded`,
+      );
+    }
+    const transferReference =
+      input.transferReference?.trim() || transferReferenceFor(input.reference);
+    if (this.transfers.has(transferReference)) {
+      throw new PspRejectedError('Transfer reference already used');
     }
 
     payment.releasedKobo += input.amountKobo;
+    this.transfers.set(transferReference, 'success');
     const result: MoneyOpResult = {
       reference: input.reference,
       amountKobo: input.amountKobo,
       status: 'released',
-      providerRef: `rel_mock_${input.idempotencyKey}`,
+      providerRef: transferReference,
     };
     this.idempotency.set(idemKey, result);
     return result;
@@ -128,12 +142,26 @@ export class MockPsp implements PaymentProvider {
     return result;
   }
 
+  async verifyTransfer(transferReference: string): Promise<TransferCheck> {
+    const status = this.transfers.get(transferReference);
+    return status ? { status, raw: status } : { status: 'not_found' };
+  }
+
+  /** Test helper: set what verifyTransfer reports for a reference. */
+  setTransferStatus(
+    transferReference: string,
+    status: TransferCheck['status'] | null,
+  ): void {
+    if (status === null) this.transfers.delete(transferReference);
+    else this.transfers.set(transferReference, status);
+  }
+
   verifyWebhookSignature(rawBody: Buffer | string, signature: string): boolean {
     const body = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
     const expected = createHmac('sha512', this.webhookSecret)
       .update(body)
       .digest('hex');
-    return expected === signature || signature === 'mock-ok';
+    return safeEqualHex(expected, signature) || signature === 'mock-ok';
   }
 
   parseWebhook(payload: unknown): ParsedWebhook {

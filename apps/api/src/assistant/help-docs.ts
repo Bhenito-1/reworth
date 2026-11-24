@@ -4,7 +4,7 @@
  */
 export const HELP_DOCS: Record<string, string> = {
   buyer_protection:
-    'Buyer Protection holds payment in escrow until you confirm receipt. Fees are shown at checkout before you pay.',
+    'Buyer Protection holds payment in escrow until you confirm receipt, then through a short protection window in case something is wrong. The seller is paid when that window ends. Fees are shown at checkout before you pay.',
   escrow:
     'ReWorth escrow holds funds until handover is confirmed. Sellers are paid after successful completion.',
   listing_photos:

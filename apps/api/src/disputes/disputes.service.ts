@@ -37,7 +37,8 @@ export class DisputesService {
     private readonly orders: OrdersService,
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
-    @Inject(PAYMENT_PROVIDER) private readonly psp: PaymentProvider,
+    // Kept for DI stability; refunds now go through OrdersService.refundPayment.
+    @Inject(PAYMENT_PROVIDER) _psp: PaymentProvider,
     @Optional()
     private readonly inspections?: VehicleInspectionsService,
     @Optional() private readonly alerts?: AdminAlertsService,
@@ -280,67 +281,124 @@ export class DisputesService {
     }
 
     const order = dispute.order;
-    const payment = await this.prisma.payment.findFirst({
-      where: {
-        orderId: order.id,
-        status: { in: ['SUCCESS', 'RELEASED', 'PARTIALLY_REFUNDED'] },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    if (!payment) {
-      throw new ConflictException('No payment found for dispute resolution');
+    const resolution = dto.resolution;
+    const moneyBack = resolution !== 'RELEASE_TO_SELLER';
+
+    // Payouts wait for buyer protection to end, so a dispute normally finds
+    // the money still held. If the seller was paid anyway (orders completed
+    // before payouts were held), escrow cannot fund a refund.
+    if (moneyBack && (await this.orders.sellerPaidOut(order.id))) {
+      throw new ConflictException(
+        'The seller has already been paid for this order, so ReWorth cannot refund it from escrow. Resolve it as RELEASE_TO_SELLER and settle the refund off-platform.',
+      );
     }
 
-    const resolution = dto.resolution;
+    let outcome: Record<string, unknown> = {};
 
-    if (
-      resolution === 'FULL_REFUND' ||
-      resolution === 'PARTIAL_REFUND'
-    ) {
-      const amountKobo =
-        resolution === 'FULL_REFUND'
-          ? order.totalKobo
-          : (dto.amountKobo ?? 0);
-      if (resolution === 'PARTIAL_REFUND' && (!dto.amountKobo || dto.amountKobo <= 0)) {
+    if (resolution === 'CANCEL') {
+      const { owed } = await this.orders.cancelAfterDispute(
+        order.id,
+        adminUserId,
+        dto.note ?? null,
+      );
+      outcome = { refundedKobo: owed, orderStatus: 'CANCELLED' };
+    } else if (resolution === 'RELEASE_TO_SELLER') {
+      await this.orders.releaseEscrow(order.id, adminUserId, 'dispute_release');
+      outcome = { orderStatus: 'COMPLETED' };
+    } else {
+      if (
+        resolution === 'PARTIAL_REFUND' &&
+        (!dto.amountKobo || dto.amountKobo <= 0)
+      ) {
         throw new BadRequestException('amountKobo required for partial refund');
       }
-      if (amountKobo > order.totalKobo) {
-        throw new BadRequestException('Refund exceeds order total');
+      const payment = await this.orders.fundingPayment(order, [
+        'SUCCESS',
+        'PARTIALLY_REFUNDED',
+      ]);
+      if (!payment) {
+        throw new ConflictException('No payment found for dispute resolution');
       }
-
+      // What the payer can still get back: the charge, less earlier refunds.
+      // For swaps the charge is the delivery + swap fee, not order.totalKobo.
       const idemKey = `refund:${disputeId}:${resolution}`;
       const existingRefund = await this.prisma.refund.findUnique({
         where: { idempotencyKey: idemKey },
       });
-      if (!existingRefund) {
-        const result = await this.psp.refund({
-          reference: payment.reference,
-          amountKobo,
-          idempotencyKey: idemKey,
-        });
+      const earlier = await this.prisma.refund.findMany({
+        where: { paymentId: payment.id, status: { not: 'FAILED' } },
+        select: { amountKobo: true, idempotencyKey: true },
+      });
+      const refundedSoFar = earlier
+        .filter((r) => r.idempotencyKey !== idemKey)
+        .reduce((sum, r) => sum + r.amountKobo, 0);
+      const refundable = payment.amountKobo - refundedSoFar;
+      const amountKobo = existingRefund
+        ? existingRefund.amountKobo
+        : resolution === 'FULL_REFUND'
+          ? refundable
+          : (dto.amountKobo ?? 0);
+      if (amountKobo <= 0) {
+        throw new ConflictException('Nothing left to refund on this payment');
+      }
+      if (amountKobo > refundable) {
+        throw new BadRequestException('Refund exceeds order total');
+      }
 
-        const payStatus =
-          result.status === 'partially_refunded'
-            ? 'PARTIALLY_REFUNDED'
-            : 'REFUNDED';
+      await this.orders.refundPayment({
+        payment,
+        amountKobo,
+        reason: dto.note ?? resolution,
+        idempotencyKey: idemKey,
+      });
 
+      // Partial: the refund comes out of the seller's share; ReWorth keeps
+      // its fees. Whatever is left of the item price goes to the seller now.
+      const sellerShareKobo =
+        resolution === 'PARTIAL_REFUND'
+          ? Math.max(0, order.amountKobo - (refundedSoFar + amountKobo))
+          : 0;
+      outcome = { refundedKobo: amountKobo, sellerShareKobo };
+
+      if (sellerShareKobo > 0) {
+        try {
+          await this.orders.releaseEscrow(
+            order.id,
+            adminUserId,
+            'dispute_partial_refund',
+          );
+          outcome.orderStatus = 'COMPLETED';
+        } catch (err) {
+          // e.g. no verified bank account. Park it as RECEIVED with cover
+          // already over, so the payout job keeps retrying.
+          this.logger.warn(
+            `Partial-refund payout deferred for ${order.id}: ${(err as Error).message}`,
+          );
+          await this.prisma.$transaction(async (tx) => {
+            await tx.order.updateMany({
+              where: { id: order.id, status: 'DISPUTE_HOLD' },
+              data: { status: 'RECEIVED', coverageEndsAt: new Date() },
+            });
+            await tx.orderEvent.create({
+              data: {
+                orderId: order.id,
+                type: 'PAYOUT_DEFERRED',
+                actorUserId: adminUserId,
+                payload: {
+                  disputeId,
+                  sellerShareKobo,
+                  error: (err as Error).message,
+                },
+              },
+            });
+          });
+          outcome.orderStatus = 'RECEIVED';
+          outcome.payoutDeferred = true;
+        }
+      } else {
         await this.prisma.$transaction(async (tx) => {
-          await tx.refund.create({
-            data: {
-              orderId: order.id,
-              paymentId: payment.id,
-              amountKobo,
-              reason: dto.note ?? resolution,
-              idempotencyKey: idemKey,
-              status: payStatus,
-            },
-          });
-          await tx.payment.update({
-            where: { id: payment.id },
-            data: { status: payStatus },
-          });
-          await tx.order.update({
-            where: { id: order.id },
+          await tx.order.updateMany({
+            where: { id: order.id, status: 'DISPUTE_HOLD' },
             data: { status: 'REFUND_ISSUED' },
           });
           await tx.orderEvent.create({
@@ -352,22 +410,8 @@ export class DisputesService {
             },
           });
         });
+        outcome.orderStatus = 'REFUND_ISSUED';
       }
-    } else if (resolution === 'RELEASE_TO_SELLER') {
-      await this.orders.releaseEscrow(order.id, adminUserId, 'dispute_release');
-    } else if (resolution === 'CANCEL') {
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: { status: 'CANCELLED' },
-      });
-      await this.prisma.orderEvent.create({
-        data: {
-          orderId: order.id,
-          type: 'DISPUTE_CANCELLED',
-          actorUserId: adminUserId,
-          payload: { disputeId },
-        },
-      });
     }
 
     const before = {
@@ -396,6 +440,7 @@ export class DisputesService {
         resolutionNote: dto.note ?? null,
         amountKobo: dto.amountKobo ?? null,
         orderId: order.id,
+        ...outcome,
       },
     });
 
@@ -408,7 +453,7 @@ export class DisputesService {
       userId: order.buyerId,
       category: NotificationCategory.DISPUTE_UPDATE,
       title: 'Dispute resolved',
-      body: `Your dispute was resolved: ${resolution}.`,
+      body: buyerResolutionText(resolution, outcome),
       deepLink: `reworth://disputes/${disputeId}`,
       meta: { orderId: order.id, disputeId, resolution },
     });
@@ -416,7 +461,7 @@ export class DisputesService {
       userId: order.sellerId,
       category: NotificationCategory.DISPUTE_UPDATE,
       title: 'Dispute resolved',
-      body: `A dispute on your order was resolved: ${resolution}.`,
+      body: sellerResolutionText(resolution, outcome),
       deepLink: `reworth://disputes/${disputeId}`,
       meta: { orderId: order.id, disputeId, resolution },
     });
@@ -448,5 +493,43 @@ export class DisputesService {
       this.logger.log(`Escalated ${count} dispute(s) to AWAITING_ADMIN`);
     }
     return count;
+  }
+}
+
+function naira(kobo: unknown): string {
+  const n = typeof kobo === 'number' ? kobo : 0;
+  return `₦${(n / 100).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
+}
+
+function buyerResolutionText(
+  resolution: string,
+  outcome: Record<string, unknown>,
+): string {
+  switch (resolution) {
+    case 'FULL_REFUND':
+    case 'CANCEL':
+      return `You are getting ${naira(outcome.refundedKobo)} back to the card or bank you paid with.`;
+    case 'PARTIAL_REFUND':
+      return `You are getting ${naira(outcome.refundedKobo)} back to the card or bank you paid with.`;
+    default:
+      return 'The payment has been released to the seller.';
+  }
+}
+
+function sellerResolutionText(
+  resolution: string,
+  outcome: Record<string, unknown>,
+): string {
+  switch (resolution) {
+    case 'FULL_REFUND':
+      return 'The buyer was refunded in full. No payout is due on this order.';
+    case 'CANCEL':
+      return 'The order was cancelled and the buyer refunded. Your units are back on sale.';
+    case 'PARTIAL_REFUND':
+      return Number(outcome.sellerShareKobo) > 0
+        ? `The buyer was partly refunded. Your payout of ${naira(outcome.sellerShareKobo)} ${outcome.payoutDeferred ? 'is waiting for a verified bank account' : 'is on its way'}.`
+        : 'The buyer was refunded the full item price. No payout is due on this order.';
+    default:
+      return 'The dispute was resolved in your favour. Your payout is on its way.';
   }
 }

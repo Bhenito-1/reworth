@@ -13,7 +13,7 @@ import {
   type AuthUser,
 } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { InitiatePaymentDto } from './dto/payments.dto';
+import { ConfirmPaymentDto, InitiatePaymentDto } from './dto/payments.dto';
 import { PaymentsService } from './payments.service';
 
 @Controller()
@@ -24,6 +24,12 @@ export class PaymentsController {
   @UseGuards(JwtAuthGuard)
   initiate(@CurrentUser() user: AuthUser, @Body() dto: InitiatePaymentDto) {
     return this.payments.initiate(user.id, dto);
+  }
+
+  @Post('payments/confirm')
+  @UseGuards(JwtAuthGuard)
+  confirm(@CurrentUser() user: AuthUser, @Body() dto: ConfirmPaymentDto) {
+    return this.payments.confirm(user.id, dto.reference);
   }
 
   @Get('payments/:id')

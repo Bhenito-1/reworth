@@ -232,6 +232,7 @@ describe('audit — dispute resolve completeness', () => {
       id: 'o1',
       buyerId: 'b1',
       sellerId: 's1',
+      amountKobo: 9_000,
       totalKobo: 10_000,
       status: 'DISPUTE_HOLD',
     };
@@ -245,6 +246,13 @@ describe('audit — dispute resolve completeness', () => {
       id: 'p1',
       reference: 'ref-1',
       status: 'SUCCESS',
+      amountKobo: 10_000,
+    };
+    const orders = {
+      fundingPayment: jest.fn().mockResolvedValue(payment),
+      refundPayment: jest.fn().mockResolvedValue({ id: 'r1', status: 'PENDING' }),
+      sellerPaidOut: jest.fn().mockResolvedValue(false),
+      releaseEscrow: jest.fn().mockResolvedValue({}),
     };
     const prisma = {
       dispute: {
@@ -260,6 +268,7 @@ describe('audit — dispute resolve completeness', () => {
       },
       refund: {
         findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn(),
       },
       order: { update: jest.fn() },
@@ -276,7 +285,7 @@ describe('audit — dispute resolve completeness', () => {
     const { DisputesService } = await import('../disputes/disputes.service');
     const service = new DisputesService(
       prisma as never,
-      {} as never,
+      orders as never,
       { notify, log: jest.fn() } as never,
       { log: auditLog } as never,
       psp as never,
@@ -295,7 +304,16 @@ describe('audit — dispute resolve completeness', () => {
         afterJson: expect.objectContaining({ resolution: 'PARTIAL_REFUND' }),
       }),
     );
-    expect(psp.refund).toHaveBeenCalled();
+    expect(orders.refundPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountKobo: 4000, idempotencyKey: 'refund:d1:PARTIAL_REFUND' }),
+    );
+    expect(psp.refund).not.toHaveBeenCalled();
+    // ₦90 item − ₦40 refund: the seller's ₦50 is released.
+    expect(orders.releaseEscrow).toHaveBeenCalledWith(
+      'o1',
+      'admin-1',
+      'dispute_partial_refund',
+    );
     expect(notify).toHaveBeenCalled();
   });
 });
