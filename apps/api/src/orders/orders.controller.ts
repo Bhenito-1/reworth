@@ -13,6 +13,7 @@ import {
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { FailLegDto } from '../swap/dto/swap.dto';
 import {
+  CancelOrderDto,
   ConfirmOrderDto,
   CreateOrderDto,
   RejectOrderDto,
@@ -59,9 +60,14 @@ export class OrdersController {
     return this.orders.retryPayout(id, user.id);
   }
 
+  /** Buyer before payment; buyer or seller after payment until handover (full refund). */
   @Post(':id/cancel')
-  cancel(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.orders.cancel(id, user.id);
+  cancel(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: CancelOrderDto,
+  ) {
+    return this.orders.cancel(id, user.id, dto?.reason);
   }
 
   @Post(':id/confirm')

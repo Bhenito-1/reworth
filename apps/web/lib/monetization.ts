@@ -50,11 +50,21 @@ export async function quoteBoost(
   });
 }
 
+/** Boost / featured purchase. PENDING until Paystack confirms the charge. */
+export type PromotionPurchase = {
+  id: string;
+  listingId: string;
+  kind: "BOOST" | "FEATURED";
+  paymentStatus: string;
+  active: boolean;
+  checkoutUrl?: string;
+};
+
 export async function purchaseBoost(
   token: string,
   body: { listingId: string; hours: number; idempotencyKey: string },
-): Promise<unknown> {
-  return apiFetch("/monetization/boost", {
+): Promise<PromotionPurchase> {
+  return apiFetch<PromotionPurchase>("/monetization/boost", {
     method: "POST",
     token,
     body,
@@ -68,8 +78,8 @@ export async function quoteFeatured(token: string): Promise<FeaturedQuote> {
 export async function purchaseFeatured(
   token: string,
   body: { listingId: string; idempotencyKey: string },
-): Promise<unknown> {
-  return apiFetch("/monetization/featured", {
+): Promise<PromotionPurchase> {
+  return apiFetch<PromotionPurchase>("/monetization/featured", {
     method: "POST",
     token,
     body,
@@ -80,10 +90,11 @@ export async function getSellerPlan(token: string): Promise<SellerPlan> {
   return apiFetch<SellerPlan>("/me/seller-plan", { token });
 }
 
+/** Seller Plus checkout. The plan switches on after Paystack confirms. */
 export async function upgradeSellerPlus(
   token: string,
   idempotencyKey: string,
-): Promise<unknown> {
+): Promise<{ paymentStatus: "PENDING" | "SUCCESS"; reference: string; checkoutUrl?: string }> {
   return apiFetch("/me/seller-plan/plus", {
     method: "POST",
     token,

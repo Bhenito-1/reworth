@@ -7,14 +7,26 @@ import { formatNgn } from "@reworth/shared";
 import { Button, Skeleton } from "@reworth/ui-web";
 import { ApiError } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
-import { confirmPayment, type PaymentDto } from "../../../lib/orders";
+import {
+  confirmPayment,
+  type ChargeConfirmDto,
+  type PaymentDto,
+} from "../../../lib/orders";
+
+const PURPOSE_LABEL: Record<ChargeConfirmDto["purpose"], string> = {
+  BOOST: "Boost",
+  FEATURED: "Featured slot",
+  SELLER_PLUS: "Seller Plus",
+};
 
 function PayReturn() {
   const router = useRouter();
   const search = useSearchParams();
   const reference =
     search.get("reference")?.trim() || search.get("trxref")?.trim() || "";
-  const [payment, setPayment] = useState<PaymentDto | null>(null);
+  const [payment, setPayment] = useState<PaymentDto | ChargeConfirmDto | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(true);
 
@@ -62,6 +74,8 @@ function PayReturn() {
 
   const paid = payment?.status === "SUCCESS" || payment?.status === "RELEASED";
   const failed = payment?.status === "FAILED";
+  const charge =
+    payment && "purpose" in payment ? (payment as ChargeConfirmDto) : null;
 
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] px-4 py-8 sm:px-8">
@@ -107,16 +121,25 @@ function PayReturn() {
           </dl>
         ) : null}
 
-        {paid ? (
+        {charge ? (
           <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
-            Paystack has the money. It stays held until you confirm the item
-            arrived.
+            {PURPOSE_LABEL[charge.purpose]}
+            {paid
+              ? charge.purpose === "SELLER_PLUS"
+                ? " is now on for 30 days."
+                : " is now live on your listing."
+              : " switches on once Paystack confirms the charge."}
+          </p>
+        ) : paid ? (
+          <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
+            Paystack has the money. The seller is paid only after you confirm
+            the item arrived and buyer protection ends.
           </p>
         ) : null}
         {failed ? (
           <p className="mt-4 text-sm text-[var(--rw-error)]" role="alert">
-            Paystack did not capture this charge. You can try again from the
-            order.
+            Paystack did not capture this charge. You can try again from{" "}
+            {charge ? "the listing" : "the order"}.
           </p>
         ) : null}
         {!pending && payment?.status === "PENDING" ? (
@@ -132,7 +155,19 @@ function PayReturn() {
         ) : null}
 
         <div className="mt-8 space-y-3">
-          {payment?.orderId ? (
+          {charge?.listingId ? (
+            <Link href={`/listings/${charge.listingId}`} className="block">
+              <Button variant="primary" className="w-full" size="lg">
+                View listing
+              </Button>
+            </Link>
+          ) : charge ? (
+            <Link href="/selling" className="block">
+              <Button variant="primary" className="w-full" size="lg">
+                Back to selling
+              </Button>
+            </Link>
+          ) : payment?.orderId ? (
             <Link href={`/orders/${payment.orderId}`} className="block">
               <Button variant="primary" className="w-full" size="lg">
                 View order

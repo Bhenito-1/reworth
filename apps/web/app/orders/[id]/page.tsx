@@ -100,6 +100,8 @@ export default function OrderDetailPage() {
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [paidCancelOpen, setPaidCancelOpen] = useState(false);
+  const [paidCancelReason, setPaidCancelReason] = useState("");
   const actionRef = useRef<"pay" | "cancel" | null>(null);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [sellerNote, setSellerNote] = useState("");
@@ -363,11 +365,19 @@ export default function OrderDetailPage() {
       if (action === "handed-over") await markHandedOver(token, orderId);
       else if (action === "confirm") await confirmReceipt(token, orderId);
       else {
-        await cancelOrder(token, orderId);
+        const paid = Boolean(order?.paidCancellable);
+        await cancelOrder(token, orderId, paid ? paidCancelReason : undefined);
         setOrder((current) => (current ? applyCancelled(current) : current));
+        setPaidCancelOpen(false);
+        setPaidCancelReason("");
       }
       setToast({
-        message: action === "cancel" ? "Order cancelled" : "Updated",
+        message:
+          action === "cancel"
+            ? order?.paidCancellable
+              ? "Order cancelled. The buyer's refund has been requested."
+              : "Order cancelled"
+            : "Updated",
         tone: "success",
       });
       await load(true);
@@ -481,6 +491,9 @@ export default function OrderDetailPage() {
     !canCancelSwap &&
     isBuyer &&
     (order.status === "CREATED" || order.status === "PAYMENT_PENDING");
+  // Paid but not yet handed over / shipped: either side, full refund.
+  const canCancelPaid =
+    !canCancelSwap && Boolean(order.paidCancellable) && (isBuyer || isSeller);
   const awaitingSeller =
     isSeller &&
     order.confirmationStatus === "PENDING" &&
@@ -704,6 +717,36 @@ export default function OrderDetailPage() {
           ) : null}
         </dl>
 
+        {order.status === "RECEIVED" && order.coverageEndsAt ? (
+          <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
+            {isSeller
+              ? `Your payout of ${formatNgn({ amountKobo: order.amountKobo })} is sent on `
+              : "Buyer protection covers this order until "}
+            {new Date(order.coverageEndsAt).toLocaleString("en-NG", {
+              timeZone: "Africa/Lagos",
+              day: "numeric",
+              month: "short",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+            {isSeller
+              ? " if the buyer does not report a problem."
+              : ". Report a problem before then if anything is wrong."}
+          </p>
+        ) : null}
+        {isBuyer && order.status === "PAYMENT_PENDING" && order.paymentDueAt ? (
+          <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
+            Pay by{" "}
+            {new Date(order.paymentDueAt).toLocaleString("en-NG", {
+              timeZone: "Africa/Lagos",
+              day: "numeric",
+              month: "short",
+              hour: "numeric",
+              minute: "2-digit",
+            })}{" "}
+            or the order expires and the units go back on sale.
+          </p>
+        ) : null}
         {order.confirmationStatus === "PENDING" && order.status === "CREATED" ? (
           <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
             {isBuyer
@@ -1032,6 +1075,16 @@ export default function OrderDetailPage() {
               {cancelling ? "Cancelling…" : "Cancel order"}
             </Button>
           ) : null}
+          {canCancelPaid && !paidCancelOpen ? (
+            <Button
+              type="button"
+              variant="danger"
+              disabled={paying || cancelling || busy}
+              onClick={() => setPaidCancelOpen(true)}
+            >
+              Cancel and refund
+            </Button>
+          ) : null}
           {canDispute ? (
             <Button
               variant="secondary"
@@ -1042,6 +1095,48 @@ export default function OrderDetailPage() {
             </Button>
           ) : null}
         </div>
+        {canCancelPaid && paidCancelOpen ? (
+          <div
+            className="mt-4 space-y-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] p-4"
+            role="group"
+            aria-label="Cancel paid order"
+          >
+            <p className="text-sm">
+              {isSeller
+                ? `The buyer gets their full ${formatNgn({ amountKobo: order.totalKobo })} back and the units go back on sale. Do not hand the item over.`
+                : `You get your full ${formatNgn({ amountKobo: order.totalKobo })} back, including delivery and protection fees. The seller is told not to hand it over.`}{" "}
+              Paystack sends it back to the card or bank account that paid.
+            </p>
+            <label className="block text-sm font-medium">
+              {isSeller ? "Reason for the buyer" : "Reason (optional)"}
+              <textarea
+                value={paidCancelReason}
+                onChange={(e) => setPaidCancelReason(e.target.value)}
+                maxLength={500}
+                rows={2}
+                className="mt-1 w-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-transparent px-3 py-2"
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="danger"
+                disabled={cancelling || busy}
+                onClick={() => void runAction("cancel")}
+              >
+                {cancelling ? "Cancelling…" : "Cancel order and refund"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={cancelling}
+                onClick={() => setPaidCancelOpen(false)}
+              >
+                Keep order
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         {order.status === "COMPLETED" && isSeller ? (
           <p className="mt-8 text-sm text-[var(--rw-ink-muted)]">

@@ -3,6 +3,7 @@
  * Shapes match OrdersController + PaymentsController + DisputesController.
  */
 
+import { formatNgn } from "@reworth/shared";
 import { apiFetch } from "./api";
 
 /** Every swap charges ₦500 per person, separate from that person's delivery fee. */
@@ -114,6 +115,18 @@ export type OrderDto = {
     paymentStatus: string | null;
     payoutStatus: string | null;
   };
+  /** Unpaid orders expire at this time (ISO). */
+  paymentDueAt?: string | null;
+  /** Refunds on this order, newest first. */
+  refunds?: {
+    id: string;
+    amountKobo: number;
+    status: string;
+    reason: string | null;
+    createdAt: string;
+  }[];
+  /** Buyer or seller may still cancel this paid order for a full refund. */
+  paidCancellable?: boolean;
 };
 
 export type OrderEvent = {
@@ -382,6 +395,13 @@ export function sellerPayoutLabel(
 }
 
 export function refundStatusFromOrder(order: OrderDto): string {
+  const latest = order.refunds?.[0];
+  if (latest) {
+    const amount = formatNgn({ amountKobo: latest.amountKobo });
+    if (latest.status === "PENDING") return `${amount} on the way (Paystack is processing it)`;
+    if (latest.status === "REFUNDED") return `${amount} refunded`;
+    if (latest.status === "FAILED") return `${amount} refund failed — our team is on it`;
+  }
   if (order.status === "REFUND_ISSUED") return "Issued";
   if (order.status === "REFUND_REQUESTED") return "Requested";
   if (order.status === "DISPUTE_HOLD") return "On hold (dispute)";
@@ -451,10 +471,16 @@ export function confirmReceipt(
   });
 }
 
-export function cancelOrder(token: string, orderId: string): Promise<OrderDto> {
+/** Before payment (buyer), or after payment until handover (buyer or seller, full refund). */
+export function cancelOrder(
+  token: string,
+  orderId: string,
+  reason?: string,
+): Promise<OrderDto> {
   return apiFetch<OrderDto>(`/orders/${orderId}/cancel`, {
     method: "POST",
     token,
+    body: reason?.trim() ? { reason: reason.trim() } : {},
   });
 }
 
@@ -508,11 +534,22 @@ export function getPayment(token: string, paymentId: string): Promise<PaymentDto
 }
 
 /** Ask the API to verify a Paystack charge after the buyer returns. */
+/** What `/pay/return` gets back for a boost, featured slot or Seller Plus. */
+export type ChargeConfirmDto = {
+  id: string;
+  orderId: null;
+  purpose: "BOOST" | "FEATURED" | "SELLER_PLUS";
+  listingId?: string;
+  reference: string;
+  amountKobo: number;
+  status: "PENDING" | "SUCCESS" | "FAILED";
+};
+
 export function confirmPayment(
   token: string,
   reference: string,
-): Promise<PaymentDto> {
-  return apiFetch<PaymentDto>("/payments/confirm", {
+): Promise<PaymentDto | ChargeConfirmDto> {
+  return apiFetch<PaymentDto | ChargeConfirmDto>("/payments/confirm", {
     method: "POST",
     token,
     body: { reference },

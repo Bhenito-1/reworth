@@ -1,12 +1,15 @@
-import { createHmac } from 'crypto';
-import type {
-  InitiatePaymentInput,
-  MoneyOpResult,
-  ParsedWebhook,
-  PaymentProvider,
-  PaymentResult,
-  RefundInput,
-  ReleaseInput,
+import { createHmac, timingSafeEqual } from 'crypto';
+import {
+  PspRejectedError,
+  transferReferenceFor,
+  type InitiatePaymentInput,
+  type MoneyOpResult,
+  type ParsedWebhook,
+  type PaymentProvider,
+  type PaymentResult,
+  type RefundInput,
+  type ReleaseInput,
+  type TransferCheck,
 } from './payment.provider';
 
 /**
@@ -27,8 +30,11 @@ export class PaystackAdapter implements PaymentProvider {
       );
     }
     this.secretKey = key;
+    // Paystack signs webhooks with the secret key; there is no separate
+    // webhook secret. An empty PAYSTACK_WEBHOOK_SECRET (as shipped in
+    // .env.example / .env.staging) must fall back to the key, not sign with "".
     this.webhookSecret =
-      webhookSecret ?? process.env.PAYSTACK_WEBHOOK_SECRET ?? key;
+      webhookSecret?.trim() || process.env.PAYSTACK_WEBHOOK_SECRET?.trim() || key;
   }
 
   async initiate(input: InitiatePaymentInput): Promise<PaymentResult> {
@@ -94,11 +100,11 @@ export class PaystackAdapter implements PaymentProvider {
   async release(input: ReleaseInput): Promise<MoneyOpResult> {
     const recipient = input.recipient;
     if (!recipient?.accountNumber || !recipient.bankCode || !recipient.accountName) {
-      throw new Error('Paystack release requires the seller bank account');
+      throw new PspRejectedError('Paystack release requires the seller bank account');
     }
     const recipientCode = await this.ensureRecipient(recipient);
     const transferReference =
-      input.transferReference?.trim() || `rel_${input.reference}`;
+      input.transferReference?.trim() || transferReferenceFor(input.reference);
     const res = await fetch(`${this.baseUrl}/transfer`, {
       method: 'POST',
       headers: {
@@ -120,14 +126,15 @@ export class PaystackAdapter implements PaymentProvider {
       data?: { reference?: string; status?: string; transfer_code?: string };
     } | null;
     if (!res.ok || !json?.status || !json.data) {
-      const detail = json?.message || (await Promise.resolve(''));
-      throw new Error(
-        `Paystack release failed: ${res.status} ${detail}`.trim(),
-      );
+      // Paystack answered: a 4xx/`status:false` is a definite no. A 5xx may
+      // still have created the transfer, so treat it as unknown.
+      const detail = `Paystack release failed: ${res.status} ${json?.message ?? ''}`.trim();
+      if (res.status >= 500) throw new Error(detail);
+      throw new PspRejectedError(detail);
     }
     const raw = (json.data.status ?? 'pending').toLowerCase();
     if (raw === 'failed' || raw === 'reversed') {
-      throw new Error(`Paystack transfer ${raw}`);
+      throw new PspRejectedError(`Paystack transfer ${raw}`);
     }
     return {
       reference: input.reference,
@@ -136,6 +143,44 @@ export class PaystackAdapter implements PaymentProvider {
       providerRef: json.data.reference || transferReference,
       recipientCode,
     };
+  }
+
+  /**
+   * GET /transfer/verify/:reference. Paystack documents `success`, `pending`
+   * and `otp`; `failed`, `reversed` and the rest are mapped defensively.
+   * A 404 (or "not found" message) means Paystack never created it.
+   */
+  async verifyTransfer(transferReference: string): Promise<TransferCheck> {
+    const res = await fetch(
+      `${this.baseUrl}/transfer/verify/${encodeURIComponent(transferReference)}`,
+      { headers: { Authorization: `Bearer ${this.secretKey}` } },
+    );
+    const json = (await res.json().catch(() => null)) as {
+      status?: boolean;
+      message?: string;
+      data?: { status?: string };
+    } | null;
+    // Paystack does not document the "no such transfer" response. 400/404/422
+    // (unknown or malformed reference) mean it holds no transfer under it;
+    // auth, rate-limit and server errors mean we cannot tell, so throw.
+    if ([400, 404, 422].includes(res.status)) {
+      return { status: 'not_found', raw: json?.message };
+    }
+    if (!res.ok || !json?.status || !json.data) {
+      throw new Error(
+        `Paystack transfer verify failed: ${res.status} ${json?.message ?? ''}`.trim(),
+      );
+    }
+    const raw = (json.data.status ?? '').toLowerCase();
+    const status: TransferCheck['status'] =
+      raw === 'success'
+        ? 'success'
+        : raw === 'reversed'
+          ? 'reversed'
+          : ['failed', 'rejected', 'abandoned', 'blocked'].includes(raw)
+            ? 'failed'
+            : 'pending';
+    return { status, raw };
   }
 
   private async ensureRecipient(input: {
@@ -166,35 +211,50 @@ export class PaystackAdapter implements PaymentProvider {
     } | null;
     const code = json?.data?.recipient_code;
     if (!res.ok || !json?.status || !code) {
-      throw new Error(
-        `Paystack recipient failed: ${res.status} ${json?.message ?? ''}`.trim(),
-      );
+      const detail = `Paystack recipient failed: ${res.status} ${json?.message ?? ''}`.trim();
+      if (res.status >= 500) throw new Error(detail);
+      throw new PspRejectedError(detail);
     }
     return code;
   }
 
+  /**
+   * Paystack queues refunds: the API answers `pending`/`processing` and the
+   * outcome arrives later as `refund.processed` / `refund.failed` webhooks.
+   * Only `processed` counts as refunded here.
+   */
   async refund(input: RefundInput): Promise<MoneyOpResult> {
     const res = await fetch(`${this.baseUrl}/refund`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.secretKey}`,
         'Content-Type': 'application/json',
-        'Idempotency-Key': input.idempotencyKey,
       },
       body: JSON.stringify({
         transaction: input.reference,
         amount: input.amountKobo,
       }),
     });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Paystack refund failed: ${res.status} ${text}`);
+    const json = (await res.json().catch(() => null)) as {
+      status?: boolean;
+      message?: string;
+      data?: { id?: number | string; status?: string };
+    } | null;
+    if (!res.ok || !json?.status || !json.data) {
+      throw new Error(
+        `Paystack refund failed: ${res.status} ${json?.message ?? ''}`.trim(),
+      );
+    }
+    const raw = (json.data.status ?? 'pending').toLowerCase();
+    if (raw === 'failed') {
+      throw new Error('Paystack refund failed');
     }
     return {
       reference: input.reference,
       amountKobo: input.amountKobo,
-      status: 'refunded',
-      providerRef: `paystack_refund_${input.idempotencyKey}`,
+      status: raw === 'processed' ? 'refunded' : 'pending',
+      providerRef:
+        json.data.id != null ? String(json.data.id) : undefined,
     };
   }
 
@@ -203,7 +263,7 @@ export class PaystackAdapter implements PaymentProvider {
     const expected = createHmac('sha512', this.webhookSecret)
       .update(body)
       .digest('hex');
-    return expected === signature;
+    return safeEqualHex(expected, signature);
   }
 
   parseWebhook(payload: unknown): ParsedWebhook {
@@ -224,4 +284,12 @@ export class PaystackAdapter implements PaymentProvider {
       status,
     };
   }
+}
+
+/** Constant-time compare so the signature cannot be guessed byte by byte. */
+export function safeEqualHex(expected: string, given: string): boolean {
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(given ?? '', 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }

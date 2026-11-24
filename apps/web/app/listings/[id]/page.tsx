@@ -1051,7 +1051,7 @@ export default function ListingPdpPage() {
               Buyer protection
             </p>
             <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
-              Pay on ReWorth when available — funds held until you confirm.
+              Pay on ReWorth when available — funds held until buyer protection ends.
             </p>
           </aside>
         ) : null}
@@ -1306,11 +1306,15 @@ function OwnerMonetization({
     }
     setBusy(true);
     try {
-      await purchaseBoost(token, {
+      const bought = await purchaseBoost(token, {
         listingId,
         hours: boostHours,
         idempotencyKey: newIdempotencyKey("boost"),
       });
+      if (bought.paymentStatus === "PENDING" && bought.checkoutUrl) {
+        window.location.assign(bought.checkoutUrl);
+        return;
+      }
       onToast("Boost purchased", "success");
       onRefresh();
     } catch (err) {
@@ -1328,10 +1332,14 @@ function OwnerMonetization({
     }
     setBusy(true);
     try {
-      await purchaseFeatured(token, {
+      const bought = await purchaseFeatured(token, {
         listingId,
         idempotencyKey: newIdempotencyKey("featured"),
       });
+      if (bought.paymentStatus === "PENDING" && bought.checkoutUrl) {
+        window.location.assign(bought.checkoutUrl);
+        return;
+      }
       onToast("Featured slot purchased", "success");
       onRefresh();
     } catch (err) {

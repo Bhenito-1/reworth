@@ -36,6 +36,8 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     'REFUND_ISSUED',
     'RECEIVED',
     'DELIVERED',
+    // Dispute CANCEL resolution: full refund, units back on sale.
+    'CANCELLED',
   ],
   REFUND_REQUESTED: ['REFUND_ISSUED', 'COMPLETED'],
   REFUND_ISSUED: [],

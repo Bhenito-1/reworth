@@ -406,8 +406,9 @@ export default function CheckoutPage() {
             Buyer protection
           </p>
           <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
-            Your payment is held until you confirm the item. Protection fee
-            covers eligible claims within the coverage window.
+            Your payment is held until you confirm the item, then through the
+            buyer protection window. The seller is paid only after that, so
+            eligible claims can still be refunded.
           </p>
         </aside>
         )}
@@ -426,8 +427,8 @@ export default function CheckoutPage() {
                 : `${deliveryWindowHint()}. Fee is quoted before you pay.`}
             </p>
             <p className="mt-2 text-xs text-[var(--rw-ink-muted)]">
-              {privacyBeforePayCopy()} Payment stays protected until you confirm
-              the item.
+              {privacyBeforePayCopy()} Payment stays protected until buyer
+              protection ends after you receive the item.
             </p>
           </div>
         </section>
@@ -507,7 +508,7 @@ export default function CheckoutPage() {
               <div className="space-y-2">
                 <p className="text-sm text-[var(--rw-ink-muted)]">
                   {formatNgn({ amountKobo: payment.amountKobo })} is held by
-                  Paystack until you confirm delivery.
+                  Paystack until buyer protection ends after delivery.
                 </p>
                 <a
                   href={payment.checkoutUrl}
