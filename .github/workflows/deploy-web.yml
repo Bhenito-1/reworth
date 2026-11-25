@@ -1,4 +1,8 @@
-name: Deploy web
+# Manual build check for the web app.
+# Deployment is done by the hosting platform's Git integration
+# (the web app is on Vercel), not by this workflow. The old Cloudflare
+# (wrangler) deploy step was removed: Cloudflare is no longer used.
+name: Build web
 
 on:
   workflow_dispatch:
@@ -13,7 +17,7 @@ on:
 
 jobs:
   deploy:
-    name: Build and deploy web
+    name: Build web
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     timeout-minutes: 25
@@ -40,14 +44,3 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
 
-      - name: Deploy web
-        working-directory: apps/web
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to the ${{ inputs.environment }} environment."
-            exit 1
-          fi
-          pnpm exec wrangler deploy
