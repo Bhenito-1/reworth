@@ -18,7 +18,7 @@ type ConsentRow = {
 const CHANNEL_COPY: Record<ConsentChannel, { label: string; hint: string }> = {
   EMAIL: {
     label: "Email",
-    hint: "Orders and important updates. Off means we send you no email.",
+    hint: "Orders and important updates. Off stops these emails; payment receipts are always sent.",
   },
   MARKETING: {
     label: "Marketing",

@@ -22,8 +22,13 @@ export class PaymentsController {
 
   @Post('payments/initiate')
   @UseGuards(JwtAuthGuard)
-  initiate(@CurrentUser() user: AuthUser, @Body() dto: InitiatePaymentDto) {
-    return this.payments.initiate(user.id, dto);
+  initiate(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: InitiatePaymentDto,
+    @Headers('origin') origin?: string,
+  ) {
+    // Origin = the site the buyer is on; Paystack returns them there.
+    return this.payments.initiate(user.id, dto, origin);
   }
 
   @Post('payments/confirm')
