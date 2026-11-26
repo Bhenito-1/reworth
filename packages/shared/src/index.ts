@@ -3,3 +3,4 @@ export * from "./format.js";
 export * from "./locale.js";
 export * from "./order-lifecycle.js";
 export * from "./chat-message-policy.js";
+export * from "./platform-delivery.js";

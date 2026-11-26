@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { formatNgn } from "@reworth/shared";
+import {
+  formatNgn,
+  PLATFORM_DELIVERY_CHECKOUT_ENABLED,
+  PLATFORM_DELIVERY_UNAVAILABLE_MESSAGE,
+} from "@reworth/shared";
 import {
   Button,
   EmptyState,
@@ -469,10 +473,7 @@ export default function CheckoutPage() {
   const negotiatedUnit =
     agreedUnitKobo != null ? agreedUnitKobo : unitKobo;
   const hasOfferPrice = Boolean(offerId || orderIntentId);
-  const maxUnits = Math.max(
-    1,
-    listing?.quantityAvailable ?? 1,
-  );
+  const maxUnits = Math.max(1, listing?.quantityAvailable ?? 0);
   const unitForTotal = hasOfferPrice ? negotiatedUnit : unitKobo;
   const amountKobo = unitForTotal * purchaseQty;
   const protectionFeeKobo = useMemo(
@@ -492,6 +493,21 @@ export default function CheckoutPage() {
   async function placeAndPay() {
     const token = getAccessToken();
     if (!token) return;
+
+    const checkoutMeetNow =
+      Boolean(meetupCheckout) ||
+      (!isGift && buyerFulfilment === "MEET_POINT");
+    if (
+      !PLATFORM_DELIVERY_CHECKOUT_ENABLED &&
+      !isGift &&
+      !checkoutMeetNow
+    ) {
+      setToast({
+        message: PLATFORM_DELIVERY_UNAVAILABLE_MESSAGE,
+        tone: "warn",
+      });
+      return;
+    }
 
     if (cartMode) {
       if (cartReady.length === 0) return;
