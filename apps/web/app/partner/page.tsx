@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { BackLink } from "../../components/BackLink";

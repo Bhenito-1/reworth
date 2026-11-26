@@ -1,4 +1,5 @@
 import { apiFetch, ApiError } from "./api";
+import type { FulfilmentPreference } from "./fulfilment-preference";
 import { computeProtectionFeeKobo } from "./orders";
 
 export function cartAddErrorMessage(err: unknown): string {
@@ -17,6 +18,9 @@ export type CartListing = {
   geoLng: number | null;
   quantityAvailable: number;
   quantityTotal: number;
+  fulfilmentPreference?: FulfilmentPreference | null;
+  fulfilmentDelivery?: boolean;
+  fulfilmentMeet?: boolean;
   images: { id: string; variants: Record<string, unknown> }[];
 };
 

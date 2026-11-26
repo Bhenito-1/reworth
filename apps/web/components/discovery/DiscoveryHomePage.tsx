@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Button, Chip, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "./DiscoveryListingCard";
 import { PullToRefresh } from "../PullToRefresh";
-import { ApiError, apiFetch } from "../../lib/api";
+import { ApiError } from "../../lib/api";
 import { AUTH_CHANGED_EVENT, getAccessToken, getAccessTokenUserId } from "../../lib/auth";
 import {
   areaChoices,

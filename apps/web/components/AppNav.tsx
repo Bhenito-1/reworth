@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { apiFetch } from "../lib/api";
 import { getRefreshToken, signOutAndGoLanding } from "../lib/auth";
 import {
   NotificationBell,

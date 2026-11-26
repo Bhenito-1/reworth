@@ -11,7 +11,6 @@ import {
 import {
   Button,
   EmptyState,
-  Input,
   Skeleton,
   Toast,
 } from "@reworth/ui-web";
@@ -29,7 +28,7 @@ import {
 import { cartDeliveryTotalLabel } from "../../lib/delivery-display";
 import { ApiError, apiFetch } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
-import { deliveryWindowHint, getDeliveryQuote } from "../../lib/delivery";
+import { getDeliveryQuote } from "../../lib/delivery";
 import { hasSavedAddressLine } from "../../lib/saved-address";
 import {
   estimateListingDelivery,

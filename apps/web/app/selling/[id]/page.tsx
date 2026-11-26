@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { BackLink } from "../../../components/BackLink";
 import { useParams, useRouter } from "next/navigation";
 import { koboToNaira, nairaToKobo } from "@reworth/shared";
