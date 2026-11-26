@@ -111,3 +111,11 @@ export class RejectOrderDto {
   @MaxLength(500)
   reason!: string;
 }
+
+/** Optional note when cancelling. Shown to the other party on a paid cancel. */
+export class CancelOrderDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}

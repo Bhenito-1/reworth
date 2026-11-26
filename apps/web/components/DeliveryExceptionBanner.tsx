@@ -59,7 +59,7 @@ export function DeliveryExceptionBanner({
         </button>
       ) : null}
       <p className="mt-3 text-xs text-[var(--rw-ink-muted)]">
-        Payment stays protected until you confirm or a dispute is resolved.
+        Payment stays protected until buyer protection ends or a dispute is resolved.
       </p>
     </aside>
   );

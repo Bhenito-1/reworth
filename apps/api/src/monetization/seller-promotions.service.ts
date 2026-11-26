@@ -17,6 +17,11 @@ import {
   type PaymentProvider,
 } from '../providers/payment.provider';
 import { MockPsp } from '../providers/mock-psp';
+import {
+  NON_ORDER_CHARGE_PREFIXES,
+  payReturnUrl,
+  type NonOrderChargeResult,
+} from '../common/pay-return-url';
 import { FeeConfigService } from './fee-config.service';
 import { RevenueLedgerService } from './revenue-ledger.service';
 
@@ -82,77 +87,7 @@ export class SellerPromotionsService implements OnModuleInit, OnModuleDestroy {
     hours: number,
     idempotencyKey: string,
   ) {
-    const existing = await this.prisma.promotion.findUnique({
-      where: { idempotencyKey },
-    });
-    if (existing) return this.toDto(existing);
-
-    const listing = await this.prisma.listing.findUnique({
-      where: { id: listingId },
-    });
-    if (!listing) throw new NotFoundException('Listing not found');
-    if (listing.sellerId !== sellerId) {
-      throw new ForbiddenException('Not your listing');
-    }
-    if (listing.status !== 'LIVE') {
-      throw new ConflictException('Only LIVE listings can be boosted');
-    }
-
-    const quote = await this.quoteBoost(hours);
-    const seller = await this.prisma.user.findUnique({ where: { id: sellerId } });
-    const email = seller?.email ?? `${sellerId}@reworth.local`;
-    const reference = `boost_${listingId.replace(/-/g, '').slice(0, 12)}_${Date.now()}`;
-
-    const initiated = await this.psp.initiate({
-      amountKobo: quote.priceKobo,
-      currency: 'NGN',
-      reference,
-      email,
-      metadata: { kind: 'BOOST', listingId },
-      idempotencyKey,
-    });
-
-    // Mock PSP: auto-succeed for seller self-serve demos
-    if (this.psp.name === 'mock-psp') {
-      (this.psp as MockPsp).simulateWebhookSuccess(initiated.reference);
-    }
-
-    const now = new Date();
-    const endsAt = new Date(now.getTime() + hours * 3_600_000);
-    const promo = await this.prisma.promotion.create({
-      data: {
-        listingId,
-        kind: 'BOOST',
-        startsAt: now,
-        endsAt,
-        feeKobo: quote.priceKobo,
-        feeConfigVersionId: quote.feeConfigVersionId,
-        pspReference: initiated.reference,
-        paymentStatus: 'SUCCESS',
-        idempotencyKey,
-        createdById: sellerId,
-      },
-    });
-
-    await this.ledger.record({
-      stream: 'BOOST',
-      grossKobo: quote.priceKobo,
-      netKobo: quote.priceKobo,
-      listingId,
-      sellerId,
-      city: listing.city,
-      categoryId: listing.categoryId ?? undefined,
-      pspReference: initiated.reference,
-      feeConfigVersionId: quote.feeConfigVersionId,
-      referenceType: 'Promotion',
-      referenceId: promo.id,
-      meta: { hours },
-    });
-
-    return {
-      ...this.toDto(promo),
-      checkoutUrl: initiated.checkoutUrl,
-    };
+    return this.purchase('BOOST', sellerId, listingId, idempotencyKey, hours);
   }
 
   async purchaseFeatured(
@@ -160,10 +95,30 @@ export class SellerPromotionsService implements OnModuleInit, OnModuleDestroy {
     listingId: string,
     idempotencyKey: string,
   ) {
+    return this.purchase('FEATURED', sellerId, listingId, idempotencyKey);
+  }
+
+  /**
+   * Creates the promotion as PENDING and returns the Paystack checkout link.
+   * It goes live only in `activateFromPayment`, after the PSP confirms the
+   * charge (webhook or buyer return). The promotion window starts then.
+   */
+  private async purchase(
+    kind: 'BOOST' | 'FEATURED',
+    sellerId: string,
+    listingId: string,
+    idempotencyKey: string,
+    boostHours?: number,
+  ) {
     const existing = await this.prisma.promotion.findUnique({
       where: { idempotencyKey },
     });
-    if (existing) return this.toDto(existing);
+    if (existing) {
+      if (existing.createdById !== sellerId) {
+        throw new ForbiddenException('Not your promotion');
+      }
+      return this.toDto(existing);
+    }
 
     const listing = await this.prisma.listing.findUnique({
       where: { id: listingId },
@@ -173,58 +128,151 @@ export class SellerPromotionsService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException('Not your listing');
     }
     if (listing.status !== 'LIVE') {
-      throw new ConflictException('Only LIVE listings can be featured');
+      throw new ConflictException(
+        kind === 'BOOST'
+          ? 'Only LIVE listings can be boosted'
+          : 'Only LIVE listings can be featured',
+      );
     }
 
-    const quote = await this.quoteFeatured();
+    const quote =
+      kind === 'BOOST'
+        ? await this.quoteBoost(boostHours ?? 0)
+        : await this.quoteFeatured();
     const seller = await this.prisma.user.findUnique({ where: { id: sellerId } });
-    const email = seller?.email ?? `${sellerId}@reworth.local`;
-    const reference = `feat_${listingId.replace(/-/g, '').slice(0, 12)}_${Date.now()}`;
+    const email = seller?.email?.trim() || `payments+${sellerId}@reworth.ng`;
+    const prefix =
+      kind === 'BOOST'
+        ? NON_ORDER_CHARGE_PREFIXES.BOOST
+        : NON_ORDER_CHARGE_PREFIXES.FEATURED;
+    const reference = `${prefix}${listingId.replace(/-/g, '').slice(0, 12)}_${Date.now()}`;
 
     const initiated = await this.psp.initiate({
       amountKobo: quote.priceKobo,
       currency: 'NGN',
       reference,
       email,
-      metadata: { kind: 'FEATURED', listingId },
+      metadata: { kind, listingId, sellerId },
       idempotencyKey,
+      callbackUrl: payReturnUrl(this.psp.name),
     });
-    if (this.psp.name === 'mock-psp') {
-      (this.psp as MockPsp).simulateWebhookSuccess(initiated.reference);
-    }
 
+    // The window is stored now only to keep the duration. Activation moves it
+    // to start when the charge is confirmed.
     const now = new Date();
-    const endsAt = new Date(now.getTime() + quote.hours * 3_600_000);
     const promo = await this.prisma.promotion.create({
       data: {
         listingId,
-        kind: 'FEATURED',
+        kind,
         startsAt: now,
-        endsAt,
+        endsAt: new Date(now.getTime() + quote.hours * 3_600_000),
         feeKobo: quote.priceKobo,
         feeConfigVersionId: quote.feeConfigVersionId,
         pspReference: initiated.reference,
-        paymentStatus: 'SUCCESS',
+        paymentStatus: 'PENDING',
         idempotencyKey,
         createdById: sellerId,
       },
     });
 
-    await this.ledger.record({
-      stream: 'FEATURED',
-      grossKobo: quote.priceKobo,
-      netKobo: quote.priceKobo,
-      listingId,
-      sellerId,
-      city: listing.city,
-      categoryId: listing.categoryId ?? undefined,
-      pspReference: initiated.reference,
-      feeConfigVersionId: quote.feeConfigVersionId,
-      referenceType: 'Promotion',
-      referenceId: promo.id,
-    });
+    // Mock PSP has no hosted checkout: settle at once for local demos.
+    if (this.psp.name === 'mock-psp') {
+      (this.psp as MockPsp).simulateWebhookSuccess(initiated.reference);
+      await this.activateFromPayment(initiated.reference);
+      const fresh = await this.prisma.promotion.findUnique({
+        where: { id: promo.id },
+      });
+      return this.toDto(fresh ?? promo);
+    }
 
     return { ...this.toDto(promo), checkoutUrl: initiated.checkoutUrl };
+  }
+
+  /**
+   * Confirms a boost / featured charge with the PSP and switches the
+   * promotion on. Safe to call from the webhook and the buyer return at the
+   * same time: only the first caller activates and writes the RevenueLine.
+   */
+  async activateFromPayment(
+    reference: string,
+    expectedOwnerId?: string,
+  ): Promise<NonOrderChargeResult | null> {
+    const promo = await this.prisma.promotion.findFirst({
+      where: { pspReference: reference },
+    });
+    if (!promo) return null;
+    if (expectedOwnerId && promo.createdById !== expectedOwnerId) {
+      throw new ForbiddenException('Not your promotion');
+    }
+    const result = (status: NonOrderChargeResult['status']) => ({
+      id: promo.id,
+      purpose: promo.kind === 'BOOST' ? ('BOOST' as const) : ('FEATURED' as const),
+      reference,
+      amountKobo: promo.feeKobo,
+      status,
+      ownerId: promo.createdById,
+      listingId: promo.listingId,
+    });
+    if (promo.paymentStatus === 'SUCCESS' || promo.paymentStatus === 'none') {
+      return result('SUCCESS');
+    }
+
+    const verified = await this.psp.verify(reference);
+    if (verified.status === 'pending') return result('PENDING');
+    if (verified.status === 'failed') {
+      await this.prisma.promotion.updateMany({
+        where: { id: promo.id, paymentStatus: 'PENDING' },
+        data: { paymentStatus: 'FAILED' },
+      });
+      return result('FAILED');
+    }
+    if (
+      this.psp.name === 'paystack' &&
+      verified.amountKobo !== promo.feeKobo
+    ) {
+      this.logger.error(
+        `Promotion ${promo.id}: Paystack amount ${verified.amountKobo} != fee ${promo.feeKobo}`,
+      );
+      throw new ConflictException('Paystack amount does not match this promotion');
+    }
+
+    // Duration stays what the seller bought; the window starts now.
+    const durationMs = promo.endsAt.getTime() - promo.startsAt.getTime();
+    const startsAt = new Date();
+    const endsAt = new Date(startsAt.getTime() + durationMs);
+    const claimed = await this.prisma.promotion.updateMany({
+      where: { id: promo.id, paymentStatus: { in: ['PENDING', 'FAILED'] } },
+      data: { paymentStatus: 'SUCCESS', startsAt, endsAt },
+    });
+    if (claimed.count === 0) return result('SUCCESS');
+
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: promo.listingId },
+      select: { city: true, categoryId: true },
+    });
+    await this.ledger.record({
+      stream: promo.kind === 'BOOST' ? 'BOOST' : 'FEATURED',
+      grossKobo: promo.feeKobo,
+      netKobo: promo.feeKobo,
+      listingId: promo.listingId,
+      sellerId: promo.createdById,
+      city: listing?.city ?? 'Lagos',
+      categoryId: listing?.categoryId ?? undefined,
+      pspReference: reference,
+      feeConfigVersionId: promo.feeConfigVersionId ?? undefined,
+      referenceType: 'Promotion',
+      referenceId: promo.id,
+      ...(promo.kind === 'BOOST'
+        ? { meta: { hours: Math.round(durationMs / 3_600_000) } }
+        : {}),
+    });
+    this.logger.log({
+      event: 'promotion.activated',
+      promotionId: promo.id,
+      kind: promo.kind,
+      reference,
+    });
+    return result('SUCCESS');
   }
 
   async activeForListing(listingId: string) {

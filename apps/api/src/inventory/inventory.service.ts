@@ -134,6 +134,52 @@ export class InventoryService {
   }
 
   /**
+   * Put sold units back on sale after a paid order is cancelled (before
+   * handover). The listing goes back to LIVE even if it had sold out: this is
+   * the one place SOLD may reopen, because the sale never completed.
+   * Legacy listings without unit counts just leave RESERVED/SOLD for LIVE.
+   */
+  async reverseSale(
+    tx: Prisma.TransactionClient,
+    listingId: string,
+    quantity: number,
+    actorUserId?: string | null,
+  ): Promise<void> {
+    const listing = await tx.listing.findUnique({ where: { id: listingId } });
+    if (!listing) return;
+    if (tracksQuantity(listing)) {
+      const qty = Math.min(quantity, listing.quantitySold ?? 0);
+      if (qty > 0) {
+        await tx.listing.updateMany({
+          where: { id: listingId, quantitySold: { gte: qty } },
+          data: {
+            quantitySold: { decrement: qty },
+            quantityAvailable: { increment: qty },
+          },
+        });
+      }
+    }
+    const fresh = await tx.listing.findUnique({ where: { id: listingId } });
+    if (!fresh) return;
+    const hasStock =
+      !tracksQuantity(fresh) || (fresh.quantityAvailable ?? 0) > 0;
+    if (hasStock && (fresh.status === 'RESERVED' || fresh.status === 'SOLD')) {
+      await tx.listing.update({
+        where: { id: listingId },
+        data: { status: 'LIVE' },
+      });
+      await tx.listingEvent.create({
+        data: {
+          listingId,
+          type: 'STATUS_CHANGED',
+          actorUserId: actorUserId ?? null,
+          payload: { from: fresh.status, to: 'LIVE', reason: 'sale_cancelled' },
+        },
+      });
+    }
+  }
+
+  /**
    * Seller sets how many units exist in total. Committed (sold + reserved)
    * units cannot be removed.
    */

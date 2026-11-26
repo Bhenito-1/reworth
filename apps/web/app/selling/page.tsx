@@ -150,7 +150,15 @@ export default function SellingPage() {
         className="mx-auto max-w-2xl px-4 py-8 sm:px-8"
         onRefresh={() => load({ silent: true })}
       >
-        <h1 className="text-3xl font-semibold tracking-tight">My listings</h1>
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-3xl font-semibold tracking-tight">My listings</h1>
+          <Link
+            href="/selling/wallet"
+            className="mt-1 shrink-0 text-sm font-medium text-[var(--rw-accent)]"
+          >
+            Wallet
+          </Link>
+        </div>
         <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
           Every listing you have made, including live, in review, rejected, sold, closed, and removed.
         </p>

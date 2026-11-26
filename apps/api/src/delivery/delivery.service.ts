@@ -71,7 +71,7 @@ const DELIVERY_COPY: Record<
   PICKED_UP: {
     title: 'Collected from seller',
     buyer: 'The item is with the rider.',
-    seller: 'Collected. Payout unlocks after the buyer confirms.',
+    seller: 'Collected. Payout is sent when buyer protection ends after delivery.',
   },
   IN_TRANSIT: {
     title: 'On the way',
@@ -725,10 +725,78 @@ export class DeliveryService {
    * Buyer asks for another attempt after FAILED. Up to 2 reattempts.
    * The same rider stays on the run and must be available again.
    */
+  /**
+   * Stops the courier job for a cancelled order. Only before pickup: once the
+   * rider has the item the order is SHIPPED and can no longer be cancelled.
+   * There is no CANCELLED shipment status, so the shipment is closed as
+   * FAILED with reason `order_cancelled`, the rider is unassigned (which also
+   * blocks their accept / milestone calls) and told.
+   *
+   * Partner couriers have no cancel API in DeliveryProvider yet; the event
+   * below is what ops use to cancel with the partner by hand.
+   */
+  async cancelForOrder(orderId: string, actorUserId?: string | null) {
+    const shipment = await this.prisma.deliveryShipment.findUnique({
+      where: { orderId },
+    });
+    if (!shipment) return null;
+    if (!['QUOTED', 'OFFERED', 'ASSIGNED'].includes(shipment.status)) {
+      return shipment;
+    }
+    const driverId = shipment.assignedDriverId;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.deliveryShipment.update({
+        where: { id: shipment.id },
+        data: {
+          status: 'FAILED',
+          failureReason: 'order_cancelled',
+          assignedDriverId: null,
+          driverAcceptedAt: null,
+        },
+      });
+      await tx.deliveryEvent.create({
+        data: {
+          shipmentId: shipment.id,
+          status: 'FAILED',
+          source: 'SYSTEM',
+          payload: {
+            failureReason: 'order_cancelled',
+            previousStatus: shipment.status,
+            previousDriverId: driverId,
+            provider: shipment.provider,
+            providerRef: shipment.providerRef,
+            actorUserId: actorUserId ?? null,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      return row;
+    });
+    if (driverId) {
+      try {
+        await this.notifications.notify({
+          userId: driverId,
+          category: NotificationCategory.DELIVERY_UPDATE,
+          title: 'Delivery cancelled',
+          body: 'This order was cancelled. Do not collect the item.',
+          deepLink: 'reworth://driver',
+          meta: { orderId },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Rider cancel notice failed for ${orderId}: ${(err as Error).message}`,
+        );
+      }
+    }
+    return updated;
+  }
+
   async reattemptDelivery(buyerId: string, orderId: string) {
     const order = await this.requireParticipant(orderId, buyerId);
     if (order.buyerId !== buyerId) {
       throw new ForbiddenException('Only the buyer can request another attempt');
+    }
+    if (order.status === 'CANCELLED') {
+      throw new ConflictException('This order was cancelled');
     }
     const shipment = await this.prisma.deliveryShipment.findUnique({
       where: { orderId },

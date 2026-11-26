@@ -120,13 +120,32 @@ describe('Phase 3.3 boost + subscription', () => {
       pspReference: 'boost_ref',
       idempotencyKey: 'idem-1',
     };
+    const rows: any[] = [];
     const prisma: any = {
       promotion: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValueOnce(null)
-          .mockResolvedValueOnce(promo),
-        create: jest.fn().mockResolvedValue(promo),
+        findUnique: jest.fn(async ({ where }: any) =>
+          rows.find(
+            (r) =>
+              (where.idempotencyKey && r.idempotencyKey === where.idempotencyKey) ||
+              (where.id && r.id === where.id),
+          ) ?? null,
+        ),
+        findFirst: jest.fn(async ({ where }: any) =>
+          rows.find((r) => r.pspReference === where.pspReference) ?? null,
+        ),
+        create: jest.fn(async ({ data }: any) => {
+          const row = { ...promo, ...data, id: 'promo-1' };
+          rows.push(row);
+          return { ...row };
+        }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          const row = rows.find((r) => r.id === where.id);
+          if (!row || !where.paymentStatus.in.includes(row.paymentStatus)) {
+            return { count: 0 };
+          }
+          Object.assign(row, data);
+          return { count: 1 };
+        }),
       },
       listing: {
         findUnique: jest.fn().mockResolvedValue({
@@ -162,6 +181,13 @@ describe('Phase 3.3 boost + subscription', () => {
 
     const first = await svc.purchaseBoost('seller-1', 'list-1', 24, 'idem-1');
     expect(first.kind).toBe('BOOST');
+    // Created PENDING, then activated once the (mock) charge is confirmed.
+    expect(prisma.promotion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentStatus: 'PENDING' }),
+      }),
+    );
+    expect(first.paymentStatus).toBe('SUCCESS');
     expect(ledger.record).toHaveBeenCalledWith(
       expect.objectContaining({ stream: 'BOOST', feeConfigVersionId: 'fee-v1' }),
     );
@@ -169,6 +195,94 @@ describe('Phase 3.3 boost + subscription', () => {
     const second = await svc.purchaseBoost('seller-1', 'list-1', 24, 'idem-1');
     expect(second.id).toBe('promo-1');
     expect(prisma.promotion.create).toHaveBeenCalledTimes(1);
+
+    // Webhook replay does not activate or bill twice.
+    await svc.activateFromPayment(rows[0].pspReference);
+    expect(ledger.record).toHaveBeenCalledTimes(1);
+  });
+
+  it('boost stays off until the PSP confirms the charge', async () => {
+    const rows: any[] = [];
+    const prisma: any = {
+      promotion: {
+        findUnique: jest.fn(async () => null),
+        findFirst: jest.fn(async ({ where }: any) =>
+          rows.find((r) => r.pspReference === where.pspReference) ?? null,
+        ),
+        create: jest.fn(async ({ data }: any) => {
+          const row = { ...data, id: 'promo-2' };
+          rows.push(row);
+          return { ...row };
+        }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          const row = rows.find((r) => r.id === where.id);
+          const allowed = where.paymentStatus.in ?? [where.paymentStatus];
+          if (!row || !allowed.includes(row.paymentStatus)) return { count: 0 };
+          Object.assign(row, data);
+          return { count: 1 };
+        }),
+      },
+      listing: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'list-1',
+          sellerId: 'seller-1',
+          status: 'LIVE',
+          city: 'Lagos',
+          categoryId: null,
+        }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ email: 's@x.com' }) },
+    };
+    const fees: any = {
+      getActive: jest.fn().mockResolvedValue({
+        id: 'fee-v1',
+        version: 1,
+        rates: DEFAULT_FEE_RATES,
+      }),
+    };
+    const ledger = { record: jest.fn().mockResolvedValue({ id: 'rl' }) };
+    const price = DEFAULT_FEE_RATES.boost.priceByHoursKobo['24'];
+    let verifyStatus: 'pending' | 'success' | 'failed' = 'pending';
+    const psp: any = {
+      name: 'paystack',
+      initiate: jest.fn(async (input: any) => ({
+        paymentId: 'ac_1',
+        reference: input.reference,
+        status: 'pending',
+        checkoutUrl: 'https://checkout.paystack.com/ac_1',
+      })),
+      verify: jest.fn(async (reference: string) => ({
+        paymentId: '1',
+        reference,
+        status: verifyStatus,
+        amountKobo: price,
+      })),
+    };
+    const svc = new SellerPromotionsService(
+      prisma,
+      fees,
+      ledger as any,
+      configStub(),
+      psp,
+    );
+
+    const bought: any = await svc.purchaseBoost('seller-1', 'list-1', 24, 'idem-2');
+    expect(bought.paymentStatus).toBe('PENDING');
+    expect(bought.checkoutUrl).toBe('https://checkout.paystack.com/ac_1');
+    expect(ledger.record).not.toHaveBeenCalled();
+
+    const ref = rows[0].pspReference as string;
+    expect((await svc.activateFromPayment(ref))?.status).toBe('PENDING');
+    expect(rows[0].paymentStatus).toBe('PENDING');
+
+    await expect(
+      svc.activateFromPayment(ref, 'someone-else'),
+    ).rejects.toThrow('Not your promotion');
+
+    verifyStatus = 'success';
+    expect((await svc.activateFromPayment(ref, 'seller-1'))?.status).toBe('SUCCESS');
+    expect(rows[0].paymentStatus).toBe('SUCCESS');
+    expect(ledger.record).toHaveBeenCalledTimes(1);
   });
 
   it('price versioning: quote pins feeConfigVersionId', async () => {
@@ -202,7 +316,27 @@ describe('Phase 3.3 boost + subscription', () => {
       cancelAtPeriodEnd: false,
       currentPeriodEnd: null,
     };
+    const idem = new Map<string, any>();
     const prisma: any = {
+      idempotencyRecord: {
+        findUnique: jest.fn(async ({ where }: any) => idem.get(where.key) ?? null),
+        findFirst: jest.fn(async ({ where }: any) =>
+          [...idem.values()].find(
+            (r) =>
+              r.operation === where.operation &&
+              r.responseJson.reference === where.responseJson.equals,
+          ) ?? null,
+        ),
+        create: jest.fn(async ({ data }: any) => {
+          if (idem.has(data.key)) {
+            throw Object.assign(new Error('dup'), { code: 'P2002' });
+          }
+          const row = { id: `idem-${idem.size + 1}`, ...data };
+          idem.set(data.key, row);
+          return row;
+        }),
+      },
+      $transaction: jest.fn(async (fn: any) => fn(prisma)),
       sellerSubscription: {
         findUnique: jest.fn().mockImplementation(async () => ({ ...sub })),
         create: jest.fn().mockImplementation(async ({ data }) => {
@@ -262,6 +396,122 @@ describe('Phase 3.3 boost + subscription', () => {
     await svc.tick();
     expect(sub.status).toBe('SUSPENDED');
     expect(sub.tier).toBe('STARTER');
+  });
+
+  it('Seller Plus stays off until the PSP confirms the charge', async () => {
+    const sub: any = {
+      id: 'sub-2',
+      userId: 'u2',
+      tier: 'STARTER',
+      status: 'NONE',
+      priceKobo: 0,
+      graceUntil: null,
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: null,
+    };
+    const idem = new Map<string, any>();
+    const prisma: any = {
+      idempotencyRecord: {
+        findUnique: jest.fn(async ({ where }: any) => idem.get(where.key) ?? null),
+        findFirst: jest.fn(async ({ where }: any) =>
+          [...idem.values()].find(
+            (r) =>
+              r.operation === where.operation &&
+              r.responseJson.reference === where.responseJson.equals,
+          ) ?? null,
+        ),
+        create: jest.fn(async ({ data }: any) => {
+          if (idem.has(data.key)) {
+            throw Object.assign(new Error('dup'), { code: 'P2002' });
+          }
+          const row = { id: `idem-${idem.size + 1}`, ...data };
+          idem.set(data.key, row);
+          return row;
+        }),
+      },
+      $transaction: jest.fn(async (fn: any) => fn(prisma)),
+      sellerSubscription: {
+        findUnique: jest.fn(async () => ({ ...sub })),
+        create: jest.fn(),
+        update: jest.fn(async ({ data }: any) => {
+          Object.assign(sub, data);
+          return { ...sub };
+        }),
+      },
+      user: { findUnique: jest.fn().mockResolvedValue({ email: 'u@x.com' }) },
+    };
+    const fees: any = {
+      getActive: jest.fn().mockResolvedValue({
+        id: 'fee-1',
+        version: 1,
+        rates: DEFAULT_FEE_RATES,
+      }),
+    };
+    const ledger = { record: jest.fn().mockResolvedValue({}) };
+    const price = DEFAULT_FEE_RATES.sellerPlus.monthlyKobo;
+    let verifyStatus: 'pending' | 'success' = 'pending';
+    let verifyAmount = price;
+    const psp: any = {
+      name: 'paystack',
+      initiate: jest.fn(async (input: any) => ({
+        paymentId: 'ac_2',
+        reference: input.reference,
+        status: 'pending',
+        checkoutUrl: 'https://checkout.paystack.com/ac_2',
+      })),
+      verify: jest.fn(async (reference: string) => ({
+        paymentId: '2',
+        reference,
+        status: verifyStatus,
+        amountKobo: verifyAmount,
+      })),
+    };
+    const svc = new SellerSubscriptionService(
+      prisma,
+      fees,
+      ledger as any,
+      configStub(),
+      psp,
+    );
+
+    const started: any = await svc.upgradeToPlus('u2', 'plus-1');
+    expect(started.paymentStatus).toBe('PENDING');
+    expect(started.checkoutUrl).toBe('https://checkout.paystack.com/ac_2');
+    expect(sub.tier).toBe('STARTER');
+    expect(ledger.record).not.toHaveBeenCalled();
+
+    const again: any = await svc.upgradeToPlus('u2', 'plus-1');
+    expect(again.reference).toBe(started.reference);
+    expect(psp.initiate).toHaveBeenCalledTimes(1);
+
+    expect((await svc.activateFromPayment(started.reference))?.status).toBe(
+      'PENDING',
+    );
+    expect(sub.tier).toBe('STARTER');
+
+    verifyStatus = 'success';
+    verifyAmount = price - 1;
+    await expect(svc.activateFromPayment(started.reference)).rejects.toThrow(
+      'amount does not match',
+    );
+    expect(sub.tier).toBe('STARTER');
+
+    verifyAmount = price;
+    await expect(
+      svc.activateFromPayment(started.reference, 'someone-else'),
+    ).rejects.toThrow('Not your subscription payment');
+    expect((await svc.activateFromPayment(started.reference, 'u2'))?.status).toBe(
+      'SUCCESS',
+    );
+    expect(sub.tier).toBe('PLUS');
+    expect(sub.status).toBe('ACTIVE');
+    expect(sub.subscriptionRef).toBe(started.reference);
+
+    // Webhook replay after the buyer return: no second period, no second line.
+    const periodEnd = sub.currentPeriodEnd;
+    await svc.activateFromPayment(started.reference);
+    expect(sub.currentPeriodEnd).toBe(periodEnd);
+    expect(ledger.record).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -888,7 +888,7 @@ export class AdminPortalService {
     return {
       items: items.map((o) => {
         const paymentStatus = o.payments[0]?.status ?? null;
-        const payoutStatus = o.payouts[0] ? 'RELEASED' : null;
+        const payoutStatus = o.payouts[0]?.status ?? null;
         const deliveryStatus = o.deliveryShipment?.status ?? null;
         return {
           id: o.id,
@@ -950,7 +950,7 @@ export class AdminPortalService {
     if (!order) throw new NotFoundException('Order not found');
 
     const paymentStatus = order.payments[0]?.status ?? null;
-    const payoutStatus = order.payouts[0] ? 'RELEASED' : null;
+    const payoutStatus = order.payouts[0]?.status ?? null;
     const deliveryStatus = order.deliveryShipment?.status ?? null;
 
     return {

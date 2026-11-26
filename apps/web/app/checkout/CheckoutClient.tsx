@@ -921,9 +921,13 @@ export default function CheckoutPage() {
             <p className="text-sm font-semibold text-[var(--rw-accent)]">
               Buyer protection
             </p>
+            <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
+              Your payment is held until you confirm the item, then through the
+              buyer protection window. The seller is paid only after that, so
+              eligible claims can still be refunded.
+            </p>
           </aside>
         )}
-
         <section
           className="mt-8 space-y-2 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
           aria-label="Price breakdown"
@@ -1083,12 +1087,18 @@ export default function CheckoutPage() {
                 {simulating ? "Confirming…" : "Simulate pay"}
               </Button>
             ) : payment.checkoutUrl ? (
-              <a
-                href={payment.checkoutUrl}
-                className="inline-flex w-full items-center justify-center rounded-[var(--rw-radius)] bg-[var(--rw-accent)] px-4 py-3 text-base font-medium text-white"
-              >
-                Continue to Paystack
-              </a>
+              <div className="space-y-2">
+                <p className="text-sm text-[var(--rw-ink-muted)]">
+                  {formatNgn({ amountKobo: payment.amountKobo })} is held by
+                  Paystack until buyer protection ends after delivery.
+                </p>
+                <a
+                  href={payment.checkoutUrl}
+                  className="inline-flex w-full items-center justify-center rounded-[var(--rw-radius)] bg-[var(--rw-accent)] px-4 py-3 text-base font-medium text-white"
+                >
+                  Pay {formatNgn({ amountKobo: payment.amountKobo })} with Paystack
+                </a>
+              </div>
             ) : (
               <p className="text-sm text-[var(--rw-ink-muted)]">
                 Complete payment in your PSP window, then open{" "}
