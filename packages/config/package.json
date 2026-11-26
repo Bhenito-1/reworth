@@ -13,7 +13,7 @@
     "./eslint/base": "./eslint/base.js"
   },
   "scripts": {
-    "build": "echo \"@reworth/config — static exports\"",
+    "build": "node -e \"require('fs').mkdirSync('dist',{recursive:true}); require('fs').writeFileSync('dist/.keep','');\"",
     "lint": "echo \"ok\"",
     "typecheck": "echo \"ok\"",
     "test": "echo \"no tests\""

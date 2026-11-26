@@ -9,7 +9,7 @@
     "./tokens.css": "./src/tokens.css"
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "build": "tsc --noEmit && node -e \"require('fs').mkdirSync('dist',{recursive:true}); require('fs').writeFileSync('dist/.keep','');\"",
     "lint": "node -e \"console.log('lint ok')\"",
     "typecheck": "tsc --noEmit",
     "test": "node -e \"console.log('no tests yet')\""
