@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { mockAddressesService } from '../test/addresses.mock';
 import { OrdersService } from '../orders/orders.service';
 import { GiveawayClaimsService } from './giveaway-claims.service';
 import { SwapExpiryScheduler } from './swap-expiry.scheduler';
@@ -197,6 +198,7 @@ describe('Swap and give-away', () => {
         configStub(),
         notifications as never,
         {} as never,
+        mockAddressesService(),
         undefined,
         undefined,
         trust as never,
@@ -549,6 +551,7 @@ describe('Swap and give-away', () => {
         configStub(),
         notifications as never,
         {} as never,
+        mockAddressesService(),
       );
       const first = await orders.confirmLegReceipt(
         'order-1',
@@ -626,6 +629,7 @@ describe('Swap and give-away', () => {
         configStub(),
         notifications as never,
         {} as never,
+        mockAddressesService(),
         undefined,
         undefined,
         trust as never,

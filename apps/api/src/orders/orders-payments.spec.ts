@@ -6,6 +6,7 @@ import {
   computeProtectionFeeKobo,
 } from './order-fees';
 import { OrderStateMachine } from './order-state.machine';
+import { mockAddressesService } from '../test/addresses.mock';
 import { OrdersService } from './orders.service';
 import { PaymentsService } from '../payments/payments.service';
 import { DisputesService } from '../disputes/disputes.service';
@@ -321,6 +322,7 @@ describe('escrow happy path + webhook replay', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const payments = new PaymentsService(
       prisma as never,
@@ -410,6 +412,7 @@ describe('escrow happy path + webhook replay', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const n = await orders.autoReleaseDue();
     expect(n).toBe(1);
@@ -533,6 +536,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
@@ -616,6 +620,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
@@ -641,6 +646,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
@@ -732,6 +738,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     await orders.confirmReceipt('order-1', 'buyer-1');
     expect(order.status).toBe('COMPLETED');
@@ -793,6 +800,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );

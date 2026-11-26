@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
+import { quoteDeliveryLeg } from '../delivery/delivery-pricing';
 import {
-  computeDeliveryFeeKobo,
   DEFAULT_DELIVERY_RATES,
   type CreateShipmentInput,
   type CreateShipmentResult,
@@ -10,7 +10,6 @@ import {
   type DeliveryQuoteResult,
   type UpdateShipmentStatusInput,
 } from './delivery.provider';
-import { haversineKm } from './search.provider';
 import { RegionConfigService } from '../region/region-config.service';
 
 export type PartnerDeliveryConfig = {
@@ -69,19 +68,21 @@ export class PartnerDeliveryProvider implements DeliveryProvider {
   }
 
   async quote(input: DeliveryQuoteInput): Promise<DeliveryQuoteResult> {
-    const distanceKm = haversineKm(
-      input.fromLat,
-      input.fromLng,
-      input.toLat,
-      input.toLng,
-    );
-    const rates = this.regions
-      ? this.regions.getDeliveryRates(input.city)
-      : DEFAULT_DELIVERY_RATES;
-    const feeKobo = computeDeliveryFeeKobo(distanceKm, rates);
+    const leg = quoteDeliveryLeg({
+      fromLat: input.fromLat,
+      fromLng: input.fromLng,
+      toLat: input.toLat,
+      toLng: input.toLng,
+      city: input.city,
+      categorySlug: input.categorySlug,
+      getRegionRates: (city) =>
+        this.regions
+          ? this.regions.getDeliveryRates(city ?? input.city)
+          : DEFAULT_DELIVERY_RATES,
+    });
     return {
-      feeKobo,
-      distanceKm: Math.round(distanceKm * 100) / 100,
+      feeKobo: leg.deliveryFeeKobo,
+      distanceKm: leg.distanceKm,
       provider: this.name,
     };
   }

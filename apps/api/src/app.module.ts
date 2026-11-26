@@ -21,6 +21,7 @@ import { MediaModule } from './media/media.module';
 import { ModerationModule } from './moderation/moderation.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { OffersModule } from './offers/offers.module';
+import { MeetupsModule } from './meetups/meetups.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PayoutsModule } from './payouts/payouts.module';
@@ -44,6 +45,7 @@ import { PartnerModule } from './partner/partner.module';
 import { CircularModule } from './circular/circular.module';
 import { MonetizationModule } from './monetization/monetization.module';
 import { CartModule } from './cart/cart.module';
+import { RoutingModule } from './routing/routing.module';
 import { SupportModule } from './support/support.module';
 
 @Module({
@@ -71,26 +73,13 @@ import { SupportModule } from './support/support.module';
         },
       },
     }),
+    // Only `default` is global. Named limits below are applied per controller via
+    // @Throttle({ default: { … } }) — extra names in forRoot would stack on every route.
     ThrottlerModule.forRoot([
       {
         name: 'default',
         ttl: 60_000,
         limit: 120,
-      },
-      {
-        name: 'auth',
-        ttl: 60_000,
-        limit: 20,
-      },
-      {
-        name: 'search',
-        ttl: 60_000,
-        limit: 60,
-      },
-      {
-        name: 'upload',
-        ttl: 60_000,
-        limit: 30,
       },
     ]),
     PrismaModule,
@@ -111,10 +100,12 @@ import { SupportModule } from './support/support.module';
     FavouritesModule,
     ChatModule,
     OffersModule,
+    MeetupsModule,
     SwapModule,
     MovingSalesModule,
     CommunitiesModule,
     NotificationsModule,
+    RoutingModule,
     DeliveryModule,
     OrdersModule,
     CartModule,

@@ -7,15 +7,19 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import type { AddressKind } from '@prisma/client';
+import { ADDRESS_KIND } from '../addresses/address-kind';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   CurrentUser,
   type AuthUser,
 } from '../common/decorators/current-user.decorator';
 import { UpdateConsentsDto } from './dto/consents.dto';
+import { SaveDeliveryAddressDto } from './dto/delivery-address.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UsersService } from './users.service';
 
@@ -32,6 +36,33 @@ export class UsersController {
   @Patch()
   updateMe(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
     return this.users.updateMe(user.id, dto);
+  }
+
+  @Get('addresses')
+  listAddresses(
+    @CurrentUser() user: AuthUser,
+    @Query('kind') kind?: 'PICKUP' | 'DELIVERY',
+  ) {
+    const parsed: AddressKind | undefined =
+      kind === 'PICKUP'
+        ? ADDRESS_KIND.PICKUP
+        : kind === 'DELIVERY'
+          ? ADDRESS_KIND.DELIVERY
+          : undefined;
+    return this.users.listAddresses(user.id, parsed);
+  }
+
+  @Get('delivery-address')
+  getDeliveryAddress(@CurrentUser() user: AuthUser) {
+    return this.users.getDeliveryAddress(user.id);
+  }
+
+  @Put('delivery-address')
+  saveDeliveryAddress(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SaveDeliveryAddressDto,
+  ) {
+    return this.users.saveDeliveryAddress(user.id, dto);
   }
 
   @Get('export')

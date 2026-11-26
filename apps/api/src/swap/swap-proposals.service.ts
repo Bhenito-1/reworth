@@ -21,9 +21,9 @@ import { toMessageDto } from '../chat/message.mapper';
 import { ListingStateMachine } from '../listings/listing-state.machine';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
-import { quoteSwapParty, type PartyQuote } from './swap-fees';
+import type { PartyQuote } from './swap-fees';
+import { SwapDeliveryQuotesService } from './swap-delivery-quotes.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { VisionService } from '../vision/vision.service';
 import type {
   CounterSwapProposalDto,
   CreateSwapProposalDto,
@@ -41,20 +41,6 @@ const PAID_ORDER_STATUSES = new Set([
   'REFUND_REQUESTED',
   'REFUND_ISSUED',
 ]);
-
-function swapPhotoMessage(result: {
-  decision: string;
-  evidence?: { titleMismatch?: boolean; descriptionMismatch?: boolean }[];
-}): string {
-  const titleMismatch =
-    result.decision === 'mismatch' ||
-    result.evidence?.some((item) => item.titleMismatch);
-  if (titleMismatch) return 'These photos do not match the title.';
-  if (result.evidence?.some((item) => item.descriptionMismatch)) {
-    return 'These photos do not match the description.';
-  }
-  return 'Use a clearer photo of the item.';
-}
 
 function deliveryDayFromNote(note: string | null | undefined): Date | null {
   if (!note || !/^\d{4}-\d{2}-\d{2}$/.test(note)) return null;
@@ -125,8 +111,8 @@ export class SwapProposalsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly deliveryQuotes: SwapDeliveryQuotesService,
     @Optional() private readonly notifications?: NotificationsService,
-    @Optional() private readonly vision?: VisionService,
     @Optional() private readonly gateway?: ChatGateway,
     @Optional() private readonly homeCache?: HomeCache,
   ) {}
@@ -209,34 +195,6 @@ export class SwapProposalsService {
       },
     });
     return order;
-  }
-
-  /**
-   * Same image-title check a listing gets before it can go live.
-   * A swap proposal is only sent when the photos match the title and description.
-   */
-  private async assertSwapPhotosMatch(
-    listingId: string,
-    title: string,
-    description: string,
-    images: { originalKey: string; variants: unknown; sortOrder: number }[],
-  ) {
-    if (!this.vision) {
-      throw new BadRequestException(
-        'Photo check is unavailable. Try again in a moment.',
-      );
-    }
-    const result = await this.vision.analyzeListing({
-      listingId,
-      title,
-      description,
-      images: images.map((image) => ({
-        key: image.originalKey,
-        url: imageUrlsFromVariants([image])[0],
-      })),
-    });
-    if (result.decision === 'match' && !result.needsReview) return;
-    throw new BadRequestException(swapPhotoMessage(result));
   }
 
   /** Hidden listing the proposer attaches photos to. It is not a public listing. */
@@ -358,12 +316,6 @@ export class SwapProposalsService {
         );
       }
       imageUrls = imageUrlsFromVariants(images);
-      await this.assertSwapPhotosMatch(
-        offered.id,
-        offerTitle,
-        offerDescription,
-        images,
-      );
     }
 
     const pending = await this.prisma.swapProposal.findFirst({
@@ -528,6 +480,7 @@ export class SwapProposalsService {
 
       const target = await tx.listing.findUnique({
         where: { id: proposal.listingId },
+        include: { category: { select: { slug: true } } },
       });
       if (!target) throw new NotFoundException('Listing not found');
       if (target.sellerId !== sellerId) {
@@ -542,6 +495,7 @@ export class SwapProposalsService {
 
       const offered = await tx.listing.findUnique({
         where: { id: proposal.offeredListingId },
+        include: { category: { select: { slug: true } } },
       });
       if (!offered) throw new NotFoundException('Offered listing not found');
       if (target.status !== 'LIVE' || offered.status !== 'LIVE') {
@@ -632,8 +586,14 @@ export class SwapProposalsService {
       });
 
       // Offerer receives the listed item. Offeree receives the offered item.
-      const offererQuote = quoteSwapParty(target, offered);
-      const offereeQuote = quoteSwapParty(offered, target);
+      const offererQuote = await this.deliveryQuotes.quoteSwapLeg(
+        target,
+        offered,
+      );
+      const offereeQuote = await this.deliveryQuotes.quoteSwapLeg(
+        offered,
+        target,
+      );
       const deliveryDate = deliveryDayFromNote(proposal.note);
 
       const offererOrder = await this.createSwapLeg(tx, {

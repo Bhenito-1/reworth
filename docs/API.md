@@ -85,7 +85,10 @@ GET /api/v1/healthz
 | POST | `/webhooks/paystack` | HMAC | Raw body |
 | POST | `/orders/:id/disputes` | user | |
 | GET | `/meet-points` | no | |
-| GET | `/orders/:id/delivery-quote` | user | |
+| GET | `/orders/:id/delivery-quote` | user | ORS driving distance when configured |
+| GET | `/listings/:id/delivery-estimate` | user | Pre-checkout fee preview (`toLat`, `toLng`) |
+| PUT/GET | `/me/delivery-address` | user | Saved buyer delivery + geocode |
+| POST | `/routing/geocode` | user | One-off address geocode (checkout) |
 
 ## Reviews / trust / notifications
 

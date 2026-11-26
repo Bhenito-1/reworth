@@ -9,8 +9,6 @@ import {
   DEFAULT_RULE_WEIGHTS,
   DEFAULT_THRESHOLDS,
   firesDeviceFingerprint,
-  firesLocationJump,
-  firesLowPrice,
   firesOffPlatformChat,
   firesRapidListing,
   firesRepeatedCancel,
@@ -91,25 +89,6 @@ export class RiskEngineService {
       riskEvents.push({
         kind: 'DUPLICATE_IMAGE',
         score: weights.DUPLICATE_IMAGE,
-        detail,
-      });
-    }
-
-    const estimateLow = this.fraud.estimateLowKobo(listing);
-    if (firesLowPrice(listing.priceKobo, estimateLow)) {
-      const detail = {
-        priceKobo: listing.priceKobo,
-        estimatedLowKobo: estimateLow,
-        thresholdKobo: Math.round(estimateLow * 0.3),
-      };
-      fired.push({
-        code: 'LOW_PRICE',
-        weight: weights.LOW_PRICE,
-        detail,
-      });
-      riskEvents.push({
-        kind: 'LOW_PRICE',
-        score: weights.LOW_PRICE,
         detail,
       });
     }
@@ -260,29 +239,6 @@ export class RiskEngineService {
       riskEvents.push({
         kind: 'OFF_PLATFORM_CHAT',
         score: weights.OFF_PLATFORM_CHAT,
-        detail,
-      });
-    }
-
-    // 9. LOCATION_JUMP
-    if (
-      firesLocationJump({
-        listingCommunity: listing.community,
-        preferredCommunity: listing.seller.profile?.preferredCommunity,
-      })
-    ) {
-      const detail = {
-        listingCommunity: listing.community,
-        preferredCommunity: listing.seller.profile?.preferredCommunity ?? '',
-      };
-      fired.push({
-        code: 'LOCATION_JUMP',
-        weight: weights.LOCATION_JUMP,
-        detail,
-      });
-      riskEvents.push({
-        kind: 'LOCATION_JUMP',
-        score: weights.LOCATION_JUMP,
         detail,
       });
     }

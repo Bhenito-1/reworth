@@ -57,7 +57,7 @@ describe('RegionConfigService — config-only city expansion', () => {
     const rates = svc.getDeliveryRates('ibadan');
     expect(rates.baseFeeKobo).toBe(120_000);
     expect(rates.perKmKobo).toBe(12_000);
-    expect(computeDeliveryFeeKobo(2, rates)).toBe(120_000 + 12_000 * 2);
+    expect(computeDeliveryFeeKobo(2, rates)).toBe(144_000);
 
     // search / analytics / notifications helpers
     expect(svc.resolveSearchCity('ibadan')).toBe('Ibadan');
@@ -181,5 +181,33 @@ describe('RegionConfigService — config-only city expansion', () => {
       { key: 'LEKKI_PH1', label: 'Lekki Phase 1' },
     ]);
     expect(svc.listAreas('missing')).toEqual([]);
+  });
+
+  it('communitySearchVariants matches code and display labels', () => {
+    const config = {
+      get: () => undefined,
+    } as unknown as ConfigService;
+    const svc = new RegionConfigService(config);
+    svc.loadInline({
+      city: 'lagos',
+      displayName: 'Lagos',
+      timezone: 'Africa/Lagos',
+      communities: ['LEKKI_PH1', 'VI'],
+      geocoding: {
+        LEKKI_PH1: { lat: 6.4474, lng: 3.4721, label: 'Lekki Phase 1' },
+        VI: { lat: 6.4281, lng: 3.4219, label: 'Victoria Island' },
+      },
+      logistics: { baseFeeKobo: 150_000, perKmKobo: 15_000 },
+      priceBands: { budget: { minKobo: 0, maxKobo: 1 } },
+      psp: { enabled: true },
+    });
+
+    const lekki = svc.communitySearchVariants('Lagos', 'Lekki Ph1');
+    expect(lekki).toEqual(
+      expect.arrayContaining(['Lekki Ph1', 'LEKKI_PH1', 'Lekki Phase 1']),
+    );
+    expect(svc.citySearchVariants('lagos')).toEqual(
+      expect.arrayContaining(['Lagos', 'lagos']),
+    );
   });
 });

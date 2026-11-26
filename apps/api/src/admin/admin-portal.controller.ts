@@ -130,6 +130,16 @@ export class AdminPortalController {
     return this.portal.whitelistUser(actor, id, dto, req.ip);
   }
 
+  @Post('users/:id/reset-risk')
+  @Roles(...FRAUD)
+  resetUserRisk(
+    @CurrentUser() actor: AuthUser,
+    @Param('id') id: string,
+    @Req() req: { ip?: string },
+  ) {
+    return this.portal.resetUserRisk(actor, id, req.ip);
+  }
+
   // ── Listings ───────────────────────────────────────────────────────
 
   @Get('listings')

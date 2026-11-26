@@ -1,6 +1,6 @@
 /**
  * Filename / copy heuristic for image appropriateness.
- * Roboflow image-title evidence is a separate review signal (`visionNeedsReview`)
+ * Optional image-title evidence is a separate review signal (`visionNeedsReview`)
  * and does not hard-reject a listing.
  * Higher scores = better appropriateness / fit.
  */

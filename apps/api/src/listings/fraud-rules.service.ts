@@ -63,24 +63,6 @@ export class FraudRulesService {
       if (flags.includes('DUPLICATE_IMAGE')) break;
     }
 
-    // Low price vs estimated market (price intelligence heuristic)
-    const estimatedLow = this.estimateLowKobo(listing);
-    if (estimatedLow > 0 && listing.priceKobo > 0) {
-      const threshold = Math.round(estimatedLow * 0.3);
-      if (listing.priceKobo < threshold) {
-        flags.push('LOW_PRICE');
-        riskEvents.push({
-          kind: 'LOW_PRICE',
-          score: 70,
-          detail: {
-            priceKobo: listing.priceKobo,
-            estimatedLowKobo: estimatedLow,
-            thresholdKobo: threshold,
-          },
-        });
-      }
-    }
-
     const forceUnderReview = flags.length > 0;
     return { forceUnderReview, flags, riskEvents };
   }

@@ -3,6 +3,9 @@
   "displayName": "Lagos",
   "timezone": "Africa/Lagos",
   "communities": [
+    "BARIGA",
+    "YABA",
+    "SURULERE",
     "LEKKI_PH1",
     "IKOYI",
     "VI",
@@ -13,6 +16,21 @@
     "OTHER_LAGOS"
   ],
   "geocoding": {
+    "BARIGA": {
+      "lat": 6.518,
+      "lng": 3.395,
+      "label": "Bariga"
+    },
+    "YABA": {
+      "lat": 6.509,
+      "lng": 3.371,
+      "label": "Yaba"
+    },
+    "SURULERE": {
+      "lat": 6.501,
+      "lng": 3.348,
+      "label": "Surulere"
+    },
     "LEKKI_PH1": {
       "lat": 6.4474,
       "lng": 3.4721,

@@ -2,6 +2,7 @@ import {
   IsArray,
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -16,6 +17,14 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ItemCondition, SellingMode } from '@prisma/client';
+
+export const LISTING_FULFILMENT_PREFERENCES = [
+  'DELIVERY',
+  'MEET_POINT',
+  'EITHER',
+] as const;
+export type ListingFulfilmentPreference =
+  (typeof LISTING_FULFILMENT_PREFERENCES)[number];
 
 export class CreateListingDto {
   @IsOptional()
@@ -122,6 +131,10 @@ export class CreateListingDto {
   @IsOptional()
   @IsBoolean()
   fulfilmentDelivery?: boolean;
+
+  @IsOptional()
+  @IsIn([...LISTING_FULFILMENT_PREFERENCES])
+  fulfilmentPreference?: ListingFulfilmentPreference;
 
   @IsOptional()
   @IsObject()
@@ -250,6 +263,10 @@ export class UpdateListingDto {
   @IsOptional()
   @IsBoolean()
   fulfilmentDelivery?: boolean;
+
+  @IsOptional()
+  @IsIn([...LISTING_FULFILMENT_PREFERENCES])
+  fulfilmentPreference?: ListingFulfilmentPreference;
 
   @IsOptional()
   @IsObject()

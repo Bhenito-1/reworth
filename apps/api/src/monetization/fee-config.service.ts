@@ -24,7 +24,26 @@ export class FeeConfigService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await this.ensureDefault();
+    const maxAttempts = 15;
+    const delayMs = 1000;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.ensureDefault();
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const retryable =
+          message.includes('recovery mode') ||
+          message.includes("Can't reach database server");
+        if (!retryable || attempt === maxAttempts) {
+          throw err;
+        }
+        this.logger.warn(
+          `Fee config init failed (attempt ${attempt}/${maxAttempts}): ${message}; retrying in ${delayMs}ms`,
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
   }
 
   async ensureDefault() {

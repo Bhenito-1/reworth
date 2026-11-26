@@ -69,7 +69,7 @@ export class PriceIntelligenceService {
       recommendedNaira: Math.round(recommended / 100),
       quickSaleNaira: Math.round((recommended * 0.9) / 100),
       maxValueNaira: Math.round(high / 100),
-      confidenceLabel: 'From live listings',
+      confidenceLabel: 'Estimated guide',
       sampleCount: 0,
       basis: 'rule_based_mock' as const,
     };

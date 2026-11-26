@@ -9,7 +9,7 @@ import { NlSearchDto, SearchQueryDto } from './dto/search.dto';
 import { SearchService } from './search.service';
 
 @Controller('search')
-@Throttle({ search: { limit: 60, ttl: 60_000 } })
+@Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class SearchController {
   constructor(private readonly search: SearchService) {}
 

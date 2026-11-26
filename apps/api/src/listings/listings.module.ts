@@ -18,6 +18,9 @@ import {
   MockGeocodingProvider,
 } from '../providers/geocoding.provider';
 import { RegionConfigService } from '../region/region-config.service';
+import { AddressesModule } from '../addresses/addresses.module';
+import { DeliveryModule } from '../delivery/delivery.module';
+import { RoutingModule } from '../routing/routing.module';
 import { AnalyticsService } from './analytics.service';
 import { FraudRulesService } from './fraud-rules.service';
 import { ListingAssistService } from './listing-assist.service';
@@ -43,6 +46,9 @@ import { PriceIntelligenceService } from './price-intelligence.service';
     AdminAlertsModule,
     InventoryModule,
     PayoutsModule,
+    RoutingModule,
+    AddressesModule,
+    DeliveryModule,
   ],
   controllers: [ListingsController],
   providers: [

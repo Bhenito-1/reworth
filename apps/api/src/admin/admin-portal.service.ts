@@ -112,13 +112,16 @@ export class AdminPortalService {
         : {}),
     };
     const take = 50;
-    const rows = await this.prisma.user.findMany({
-      where,
-      take: take + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      orderBy: { createdAt: 'desc' },
-      include: { profile: true, roles: true },
-    });
+    const [rows, totalCount] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        take: take + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        orderBy: { createdAt: 'desc' },
+        include: { profile: true, roles: true },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
     const nextCursor = rows.length > take ? rows[take - 1]!.id : null;
     return {
       items: rows.slice(0, take).map((u) => ({
@@ -130,10 +133,46 @@ export class AdminPortalService {
         community: u.profile?.preferredCommunity ?? null,
         roles: u.roles.map((r) => r.role),
         isDeliveryDriver: u.isDeliveryDriver,
+        riskScore: u.riskScore,
+        riskLevel: u.riskLevel,
         createdAt: u.createdAt,
       })),
       nextCursor,
+      totalCount,
     };
+  }
+
+  async resetUserRisk(
+    actor: AuthUser,
+    userId: string,
+    ip?: string,
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const before = {
+      riskScore: user.riskScore,
+      riskLevel: user.riskLevel,
+      enhancedVerificationRequired: user.enhancedVerificationRequired,
+    };
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        riskScore: 0,
+        riskLevel: 'LOW',
+        enhancedVerificationRequired: false,
+      },
+    });
+    await this.audit.log({
+      actorUserId: actor.id,
+      actorRole: actor.roles[0] ?? null,
+      action: 'USER_RISK_RESET',
+      entityType: 'User',
+      entityId: userId,
+      beforeJson: before,
+      afterJson: { riskScore: 0, riskLevel: 'LOW', enhancedVerificationRequired: false },
+      ip: ip ?? null,
+    });
+    return { ok: true, before, after: { riskScore: 0, riskLevel: 'LOW' } };
   }
 
   async exportUsersCsv() {

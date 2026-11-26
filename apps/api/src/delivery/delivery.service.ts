@@ -8,26 +8,23 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { ADDRESS_KIND } from '../addresses/address-kind';
 import {
   DeliveryShipmentStatus,
   FulfilmentMethod,
   OrderStatus,
   Prisma,
 } from '@prisma/client';
+import { AddressesService } from '../addresses/addresses.service';
 import { AdminAlertsService } from '../admin/admin-alerts.service';
 import { SUPPORT } from '../admin/admin-roles';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrderStateMachine } from '../orders/order-state.machine';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  BULKY_DELIVERY_RATES,
-  computeDeliveryFeeKobo,
-  DELIVERY_PROVIDER,
-  isBulkyDeliveryCategory,
-  type DeliveryProvider,
-} from '../providers/delivery.provider';
+import { DELIVERY_PROVIDER, type DeliveryProvider } from '../providers/delivery.provider';
 import { computeOrderTotalKobo } from '../orders/order-fees';
+import { DeliveryPricingService } from './delivery-pricing.service';
 
 const STATUS_ORDER: DeliveryShipmentStatus[] = [
   'QUOTED',
@@ -115,6 +112,8 @@ export class DeliveryService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     @Inject(DELIVERY_PROVIDER) private readonly provider: DeliveryProvider,
+    private readonly deliveryPricing: DeliveryPricingService,
+    private readonly addresses: AddressesService,
     @Optional() private readonly alerts?: AdminAlertsService,
   ) {}
 
@@ -160,18 +159,21 @@ export class DeliveryService {
     const fromLat = listing.geoLat ?? 6.5244;
     const fromLng = listing.geoLng ?? 3.3792;
 
+    const priced = await this.deliveryPricing.quoteLegForListing(listing, {
+      lat: toLat,
+      lng: toLng,
+    });
     const quote = await this.provider.quote({
       fromLat,
       fromLng,
       toLat,
       toLng,
       city: listing.city,
+      categorySlug: listing.category?.slug,
     });
 
-    const bulky = isBulkyDeliveryCategory(listing.category?.slug);
-    const deliveryFeeKobo = bulky
-      ? computeDeliveryFeeKobo(quote.distanceKm, BULKY_DELIVERY_RATES)
-      : quote.feeKobo;
+    const deliveryFeeKobo = priced.deliveryFeeKobo;
+    const bulky = priced.handling === 'bulky';
     const totalKobo = computeOrderTotalKobo({
       amountKobo: order.amountKobo,
       protectionFeeKobo: order.protectionFeeKobo,
@@ -192,7 +194,7 @@ export class DeliveryService {
           where: { id: existing.id },
           data: {
             quoteKobo: deliveryFeeKobo,
-            distanceKm: quote.distanceKm,
+            distanceKm: priced.distanceKm,
             status: 'QUOTED',
             provider: quote.provider,
           },
@@ -216,7 +218,7 @@ export class DeliveryService {
             orderId,
             provider: quote.provider,
             quoteKobo: deliveryFeeKobo,
-            distanceKm: quote.distanceKm,
+            distanceKm: priced.distanceKm,
             status: 'QUOTED',
           },
         });
@@ -240,7 +242,13 @@ export class DeliveryService {
           orderId,
           type: 'DELIVERY_QUOTED',
           actorUserId: userId,
-          payload: { deliveryFeeKobo, distanceKm: quote.distanceKm, toLat, toLng },
+          payload: {
+            deliveryFeeKobo,
+            distanceKm: priced.distanceKm,
+            distanceSource: priced.distanceSource,
+            toLat,
+            toLng,
+          },
         },
       });
 
@@ -250,7 +258,8 @@ export class DeliveryService {
     return {
       orderId,
       feeKobo: deliveryFeeKobo,
-      distanceKm: quote.distanceKm,
+      distanceKm: priced.distanceKm,
+      distanceSource: priced.distanceSource,
       provider: quote.provider,
       handling: bulky ? 'bulky' : 'parcel',
       deliveryFeeKobo,
@@ -322,7 +331,13 @@ export class DeliveryService {
       throw new ConflictException('Address already disclosed');
     }
 
-    const snapshot = order.listing.addressPrivate;
+    const pickupRow = order.listing.pickupAddressId
+      ? await this.prisma.address.findUnique({
+          where: { id: order.listing.pickupAddressId },
+        })
+      : await this.addresses.getDefault(sellerId, ADDRESS_KIND.PICKUP);
+    const snapshot =
+      pickupRow?.line1?.trim() || order.listing.addressPrivate?.trim();
     if (!snapshot) {
       throw new BadRequestException('Listing has no private address');
     }
@@ -421,7 +436,9 @@ export class DeliveryService {
   private async snapshotLegs(
     buyerId: string,
     listing: {
+      sellerId: string;
       addressPrivate: string | null;
+      pickupAddressId: string | null;
       community: string;
       city: string;
       geoLat: number | null;
@@ -434,27 +451,30 @@ export class DeliveryService {
       where: { id: buyerId },
       include: {
         profile: { select: { preferredCommunity: true } },
-        addresses: {
-          orderBy: [{ isDefault: 'desc' }],
-          take: 1,
-        },
       },
     });
-    const drop = buyer?.addresses[0];
+    const drop = await this.addresses.getDefault(buyerId, ADDRESS_KIND.DELIVERY);
     const dropoffArea =
       drop?.community || buyer?.profile?.preferredCommunity || 'Buyer area';
     const dropoffLine = drop
-      ? [drop.line1, drop.line2, drop.community, drop.city]
-          .filter((part): part is string => Boolean(part && part.trim()))
-          .join(', ')
+      ? this.addresses.formatLine(drop)
       : `${dropoffArea}, Lagos`;
+    const pickup =
+      listing.pickupAddressId != null
+        ? await this.prisma.address.findUnique({
+            where: { id: listing.pickupAddressId },
+          })
+        : await this.addresses.getDefault(listing.sellerId, ADDRESS_KIND.PICKUP);
     const pickupLine =
+      pickup?.line1?.trim() ||
       listing.addressPrivate?.trim() ||
       [listing.community, listing.city].filter(Boolean).join(', ');
+    const pickupLat = pickup?.geoLat ?? listing.geoLat;
+    const pickupLng = pickup?.geoLng ?? listing.geoLng;
     return {
       pickupLine,
-      pickupLat: listing.geoLat,
-      pickupLng: listing.geoLng,
+      pickupLat,
+      pickupLng,
       dropoffLine,
       dropoffLat: drop?.geoLat ?? toLat,
       dropoffLng: drop?.geoLng ?? toLng,

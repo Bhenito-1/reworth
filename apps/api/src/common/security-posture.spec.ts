@@ -16,15 +16,16 @@ describe('Phase 9 security posture', () => {
     expect(typeof ThrottlerModule.forRoot).toBe('function');
   });
 
-  it('documents expected global and named rate limit defaults', () => {
-    const defaults = {
-      default: { ttlMs: 60_000, limit: 120 },
+  it('documents expected global default and per-controller tighter limits', () => {
+    const globalDefault = { ttlMs: 60_000, limit: 120 };
+    const controllerOverrides = {
       auth: { ttlMs: 60_000, limit: 20 },
       search: { ttlMs: 60_000, limit: 60 },
       upload: { ttlMs: 60_000, limit: 30 },
+      support: { ttlMs: 60_000, limit: 5 },
     };
-    expect(defaults.default.limit).toBeLessThanOrEqual(120);
-    expect(defaults.auth.limit).toBeLessThanOrEqual(20);
+    expect(globalDefault.limit).toBeLessThanOrEqual(120);
+    expect(controllerOverrides.auth.limit).toBeLessThanOrEqual(20);
   });
 
   it('helmet middleware factory is available for CSP/headers', () => {

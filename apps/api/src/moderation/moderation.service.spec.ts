@@ -175,8 +175,8 @@ function readyListing(overrides?: {
 
 function visionEvidence(overrides: Record<string, unknown>) {
   return {
-    provider: 'roboflow',
-    workflowId: 'reworth-image-title-check-1790810818816',
+    provider: 'none',
+    workflowId: '',
     status: 'ok',
     match: true,
     needsReview: false,
@@ -279,12 +279,12 @@ describe('ModerationService vision review signal', () => {
         needsReview: true,
         confidence: null,
         decision: 'unavailable',
-        reason: 'Roboflow image-title check is unavailable',
+        reason: 'Image-title check is unavailable',
         labels: [],
         signals: ['VISION_CHECK_FAILED:UNAVAILABLE', 'VISION_NEEDS_REVIEW'],
         error: {
           code: 'UNAVAILABLE',
-          message: 'Roboflow image-title check is unavailable',
+          message: 'Image-title check is unavailable',
         },
       }),
     );

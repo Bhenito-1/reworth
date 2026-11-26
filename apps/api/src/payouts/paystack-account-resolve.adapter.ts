@@ -10,6 +10,7 @@ type Attempt = {
   accountName?: string;
   /** Auth failures must not continue into the transfer-recipient check. */
   stop?: boolean;
+  rateLimited?: boolean;
   message?: string;
 };
 
@@ -76,13 +77,23 @@ export class PaystackAccountResolveAdapter implements AccountNameEnquiry {
     const response = await this.paystack(secret, url);
     const body = await readJson(response);
     const accountName = text(body?.data?.account_name);
+    const message = text(body?.message);
+    if (response.status === 429) {
+      const rateLimited = {
+        found: false,
+        stop: true,
+        rateLimited: true,
+        message: message ?? 'Rate limit exceeded',
+      };
+      return rateLimited;
+    }
     if (response.ok && body?.status && accountName) {
       return { found: true, accountName };
     }
     return {
       found: false,
       stop: response.status === 401 || response.status === 403,
-      message: text(body?.message),
+      message,
     };
   }
 
@@ -107,12 +118,13 @@ export class PaystackAccountResolveAdapter implements AccountNameEnquiry {
     );
     const body = await readJson(response);
     const accountName = text(body?.data?.details?.account_name);
+    const message = text(body?.message);
     if (response.ok && body?.status && accountName) {
       return { found: true, accountName };
     }
     return {
       found: false,
-      message: text(body?.message),
+      message,
     };
   }
 
@@ -139,6 +151,9 @@ export class PaystackAccountResolveAdapter implements AccountNameEnquiry {
 function toResult(attempt: Attempt): NameEnquiryResult {
   if (attempt.found && attempt.accountName) {
     return { found: true, accountName: attempt.accountName };
+  }
+  if (attempt.rateLimited) {
+    return { found: false, rateLimited: true, message: attempt.message };
   }
   return { found: false, message: attempt.message };
 }

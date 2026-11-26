@@ -75,6 +75,11 @@ export class PaymentsService {
         `Order must be PAYMENT_PENDING (got ${order.status})`,
       );
     }
+    if (order.confirmationStatus !== 'CONFIRMED') {
+      throw new ConflictException(
+        'The seller has not confirmed this order yet',
+      );
+    }
     if (
       order.fulfilmentMethod === FulfilmentMethod.DELIVERY &&
       order.deliveryFeeKobo <= 0

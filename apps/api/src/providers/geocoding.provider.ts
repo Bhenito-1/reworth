@@ -67,6 +67,12 @@ export class MockGeocodingProvider implements GeocodingProvider {
       geoLng: 3.5667,
       label: 'Ajah',
     },
+    BARIGA: {
+      community: 'BARIGA',
+      geoLat: 6.518,
+      geoLng: 3.395,
+      label: 'Bariga',
+    },
     OTHER_LAGOS: {
       community: 'OTHER_LAGOS',
       geoLat: 6.5244,
@@ -93,6 +99,7 @@ export class MockGeocodingProvider implements GeocodingProvider {
     if (/lekki/.test(community.toLowerCase())) return this.fixtures.LEKKI_PH1;
     if (/ikoyi/.test(community.toLowerCase())) return this.fixtures.IKOYI;
     if (/victoria|vi\b/.test(community.toLowerCase())) return this.fixtures.VI;
+    if (/bariga/.test(community.toLowerCase())) return this.fixtures.BARIGA;
     return this.fixtures.OTHER_LAGOS;
   }
 

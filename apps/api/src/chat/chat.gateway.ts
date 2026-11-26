@@ -18,7 +18,7 @@ type AuthedSocket = Socket & { data: { userId?: string } };
 /**
  * Socket namespace `/chat`.
  * Auth: JWT from handshake.auth.token or Authorization Bearer.
- * Events: message.new, message.read, typing, offer.updated
+ * Events: message.new, message.read, typing, offer.updated, inbox.updated, order.updated, meetup.updated
  */
 @WebSocketGateway({
   namespace: '/chat',

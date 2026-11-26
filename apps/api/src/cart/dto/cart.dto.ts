@@ -1,7 +1,5 @@
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize,
-  IsArray,
   IsEnum,
   IsInt,
   IsNumber,
@@ -56,12 +54,20 @@ export class CheckoutCartDto {
   @MaxLength(500)
   deliveryAddress?: string;
 
-  /** Checkout these lines only. Omit to order everything currently in the cart. */
   @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(20)
-  @IsUUID('4', { each: true })
-  listingIds?: string[];
+  @IsString()
+  @MaxLength(300)
+  deliveryLine1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  deliveryCommunity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  deliveryCity?: string;
 }
 
 /** Preview cart totals before placing orders (same delivery rules as checkout). */
@@ -77,8 +83,17 @@ export class CartQuoteDto {
   toLng!: number;
 
   @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(20)
-  @IsUUID('4', { each: true })
-  listingIds?: string[];
+  @IsString()
+  @MaxLength(300)
+  deliveryLine1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  deliveryCommunity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  deliveryCity?: string;
 }

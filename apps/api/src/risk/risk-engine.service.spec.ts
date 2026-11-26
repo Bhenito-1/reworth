@@ -215,20 +215,17 @@ describe('RiskEngineService.evaluateOnPublish', () => {
 
     const result = await service.evaluateOnPublish('l1', 's1');
 
-    expect(result.level).toBe('HIGH');
-    expect(result.forceUnderReview).toBe(true);
-    expect(result.score).toBeGreaterThanOrEqual(70);
+    expect(result.level).toBe('MEDIUM');
+    expect(result.forceUnderReview).toBe(false);
+    expect(result.score).toBe(50);
     expect(result.rulesFired.map((r) => r.code)).toEqual(
-      expect.arrayContaining([
-        'DUPLICATE_IMAGE',
-        'LOW_PRICE',
-        'RAPID_LISTING',
-      ]),
+      expect.arrayContaining(['DUPLICATE_IMAGE', 'RAPID_LISTING']),
     );
+    expect(result.rulesFired.map((r) => r.code)).not.toContain('LOW_PRICE');
     expect(riskAssessmentCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          level: 'HIGH',
+          level: 'MEDIUM',
           listingId: 'l1',
           userId: 's1',
         }),
@@ -238,12 +235,12 @@ describe('RiskEngineService.evaluateOnPublish', () => {
     expect(userUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          riskLevel: 'HIGH',
-          enhancedVerificationRequired: true,
+          riskLevel: 'MEDIUM',
+          riskScore: 50,
         }),
       }),
     );
-    expect(listingUpdate).toHaveBeenCalled();
-    expect(notify).toHaveBeenCalled();
+    expect(listingUpdate).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
   });
 });

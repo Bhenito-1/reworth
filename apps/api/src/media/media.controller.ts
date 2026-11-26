@@ -21,7 +21,7 @@ import { MAX_IMAGE_BYTES } from './image-pipeline';
 
 @Controller('media')
 @UseGuards(JwtAuthGuard)
-@Throttle({ upload: { limit: 30, ttl: 60_000 } })
+@Throttle({ default: { limit: 30, ttl: 60_000 } })
 export class MediaController {
   constructor(private readonly media: MediaService) {}
 

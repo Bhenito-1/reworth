@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
+import { COMMUNITY_LABEL_DISPLAY } from '@reworth/shared';
 import type { GeocodeResult } from '../providers/geocoding.provider';
 import {
   DEFAULT_CITY_KEY,
@@ -314,6 +315,60 @@ export class RegionConfigService implements OnModuleInit {
     return this.requireCity(city).displayName;
   }
 
+  /** Values stored on listings.city for a search filter. */
+  citySearchVariants(city?: string | null): string[] {
+    if (!city?.trim()) return [];
+    const cfg = this.requireCity(city);
+    const raw = city.trim();
+    return [...new Set([raw, cfg.displayName, cfg.city, normalizeCityKey(raw)])];
+  }
+
+  /** Values stored on listings.community for a search filter within a city. */
+  communitySearchVariants(
+    city: string | undefined | null,
+    community: string,
+  ): string[] {
+    const raw = community.trim();
+    if (!raw) return [];
+    const cfg = this.requireCity(city);
+    const out = new Set<string>([raw, normalizeCommunityKey(raw)]);
+    const normRaw = normalizeCommunityKey(raw);
+
+    for (const code of cfg.communities) {
+      const entry = cfg.geocoding[code];
+      const label = entry?.label?.trim() || code;
+      const matches =
+        code === normRaw ||
+        normalizeCommunityKey(label) === normRaw ||
+        label.toLowerCase() === raw.toLowerCase() ||
+        code.toLowerCase() === raw.toLowerCase();
+      if (matches) {
+        out.add(code);
+        out.add(label);
+      }
+    }
+
+    const direct = cfg.geocoding[normRaw] ?? cfg.geocoding[raw];
+    if (direct?.label) out.add(direct.label);
+
+    const fuzzy = this.fuzzyGeo(cfg, raw);
+    if (fuzzy) {
+      for (const [code, entry] of Object.entries(cfg.geocoding)) {
+        if (entry.lat === fuzzy.lat && entry.lng === fuzzy.lng) {
+          out.add(code);
+          if (entry.label?.trim()) out.add(entry.label.trim());
+        }
+      }
+    }
+
+    for (const code of [...out].map((v) => normalizeCommunityKey(v))) {
+      const label = (COMMUNITY_LABEL_DISPLAY as Record<string, string>)[code];
+      if (label) out.add(label);
+    }
+
+    return [...out];
+  }
+
   resolveAnalyticsCity(city?: string | null): string {
     return this.requireCity(city).city;
   }
@@ -336,8 +391,9 @@ export class RegionConfigService implements OnModuleInit {
         return v;
       }
     }
-    const first = cfg.communities[0];
-    return first ? cfg.geocoding[first] ?? null : null;
+    const other = cfg.geocoding.OTHER_LAGOS;
+    if (other) return other;
+    return null;
   }
 
   private fallbackLagos(): RegionConfig {

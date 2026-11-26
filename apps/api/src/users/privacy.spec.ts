@@ -1,3 +1,4 @@
+import { mockAddressesService } from '../test/addresses.mock';
 import { UsersService } from './users.service';
 
 describe('UsersService privacy', () => {
@@ -66,7 +67,11 @@ describe('UsersService privacy', () => {
       ordersAsSeller: [],
     });
 
-    const service = new UsersService(prisma as never, audit as never);
+    const service = new UsersService(
+      prisma as never,
+      audit as never,
+      mockAddressesService(),
+    );
     const dump = await service.exportMe('u1');
 
     expect(dump.profile!.displayName).toBe('Ada');
@@ -93,7 +98,11 @@ describe('UsersService privacy', () => {
       addresses: [],
     });
 
-    const service = new UsersService(prisma as never, audit as never);
+    const service = new UsersService(
+      prisma as never,
+      audit as never,
+      mockAddressesService(),
+    );
     const result = await service.requestDelete('u1', '127.0.0.1');
 
     expect(result.deleted).toBe(true);
@@ -109,7 +118,11 @@ describe('UsersService privacy', () => {
 
   it('getConsents defaults all channels to false', async () => {
     const prisma = buildPrisma();
-    const service = new UsersService(prisma as never, audit as never);
+    const service = new UsersService(
+      prisma as never,
+      audit as never,
+      mockAddressesService(),
+    );
     const result = await service.getConsents('u1');
     expect(result.consents).toHaveLength(2);
     expect(result.consents.every((c) => c.granted === false)).toBe(true);
@@ -120,7 +133,11 @@ describe('UsersService privacy', () => {
     (prisma.consentRecord.findMany as jest.Mock).mockResolvedValue([
       { channel: 'MARKETING', granted: true, updatedAt: new Date() },
     ]);
-    const service = new UsersService(prisma as never, audit as never);
+    const service = new UsersService(
+      prisma as never,
+      audit as never,
+      mockAddressesService(),
+    );
     await service.updateConsents('u1', {
       consents: [{ channel: 'MARKETING', granted: true }],
     });

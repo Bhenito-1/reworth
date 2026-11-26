@@ -1,15 +1,10 @@
 import {
-  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
 import { MessageType, NotificationChannel } from '@prisma/client';
-import {
-  containsProhibitedChatContact,
-  PROHIBITED_CHAT_WARNING,
-} from '@reworth/shared';
 import { AdminAlertsService } from '../admin/admin-alerts.service';
 import { REPORTS } from '../admin/admin-roles';
 import { NotificationCategory } from '../notifications/notification-categories';
@@ -21,6 +16,10 @@ import { NotificationStub } from './notification.stub';
 import { toMessageDto, type MessageDto } from './message.mapper';
 import type { PostMeetupPinDto, PostMessageDto } from './dto/chat.dto';
 import { encodeMeetupPin, meetupPinPreview } from './meetup-pin';
+import {
+  encodeMeetupCheckout,
+  meetupCheckoutPreview,
+} from './meetup-checkout';
 import {
   encodeOfferCheckout,
   offerCheckoutPreview,
@@ -77,12 +76,18 @@ export function chatPreview(
     }
     const checkoutPreview = offerCheckoutPreview(trimmed);
     if (checkoutPreview) return checkoutPreview;
+    const meetupCheckout = meetupCheckoutPreview(trimmed);
+    if (meetupCheckout) return meetupCheckout;
     if (/offerId/i.test(trimmed) || type === 'OFFER_CARD') return 'Offer';
+    if (type === 'MEETUP_CARD' || /meetupProposalId/i.test(trimmed)) {
+      return 'Meetup';
+    }
     if (type === 'LISTING_CARD') return 'Listing';
     return 'New message';
   }
   if (type === 'SWAP_PROPOSAL_CARD') return 'Swap proposal';
   if (type === 'OFFER_CARD') return 'Offer';
+  if (type === 'MEETUP_CARD') return 'Meetup';
   if (type === 'LISTING_CARD') return 'Listing';
   if (!trimmed) return null;
   return trimmed.slice(0, 120);
@@ -93,6 +98,7 @@ export type ConversationListItem = {
   listingId: string;
   listingTitle: string;
   listingThumb: string | null;
+  listingNegotiable: boolean;
   buyerId: string;
   sellerId: string;
   counterpart: { id: string; displayName: string };
@@ -258,6 +264,7 @@ export class MessagesService {
         listingId: c.listingId,
         listingTitle: c.listing.title,
         listingThumb: variants.thumb ?? variants.card ?? thumb?.originalKey ?? null,
+        listingNegotiable: c.listing.negotiable,
         buyerId: c.buyerId,
         sellerId: c.sellerId,
         counterpart,
@@ -423,13 +430,6 @@ export class MessagesService {
     }
 
     const type = dto.type ?? MessageType.TEXT;
-    if (
-      type === MessageType.TEXT &&
-      dto.body &&
-      containsProhibitedChatContact(dto.body)
-    ) {
-      throw new BadRequestException(PROHIBITED_CHAT_WARNING);
-    }
     const scrubbed = dto.body ?? null;
 
     const created = await this.prisma.message.create({
@@ -497,19 +497,23 @@ export class MessagesService {
     return mapped;
   }
 
-  /** Buyer offer card in chat + inbox preview for the seller. */
+  /** Offer card in chat + inbox/push for the other party. */
   async postOfferCard(input: {
     conversationId: string;
-    buyerId: string;
+    senderId: string;
     offerId: string;
     amountKobo: number;
+    isCounter?: boolean;
   }): Promise<MessageDto> {
     const conversation = await this.requireParticipant(
       input.conversationId,
-      input.buyerId,
+      input.senderId,
     );
-    if (conversation.buyerId !== input.buyerId) {
-      throw new ForbiddenException('Only the buyer can post an offer card');
+    if (
+      input.senderId !== conversation.buyerId &&
+      input.senderId !== conversation.sellerId
+    ) {
+      throw new ForbiddenException('Not a participant in this chat');
     }
 
     const existing = await this.prisma.message.findUnique({
@@ -526,7 +530,7 @@ export class MessagesService {
     const created = await this.prisma.message.create({
       data: {
         conversationId: input.conversationId,
-        senderId: input.buyerId,
+        senderId: input.senderId,
         type: MessageType.OFFER_CARD,
         offerId: input.offerId,
         body: JSON.stringify({ offerId: input.offerId, amountKobo: input.amountKobo }),
@@ -549,20 +553,25 @@ export class MessagesService {
         conversationId: input.conversationId,
         lastMessageAt: created.createdAt.toISOString(),
         preview: chatPreview(mapped.type, mapped.body),
-        senderId: input.buyerId,
+        senderId: input.senderId,
       },
     );
 
-    const sellerMuted = await this.isMuted(
-      conversation.sellerId,
-      input.buyerId,
+    const recipientId =
+      input.senderId === conversation.buyerId
+        ? conversation.sellerId
+        : conversation.buyerId;
+    const recipientMuted = await this.isMuted(
+      recipientId,
+      input.senderId,
       input.conversationId,
     );
-    if (!sellerMuted) {
-      await this.alertNewOffer(
-        conversation.sellerId,
+    if (!recipientMuted) {
+      await this.alertOfferCard(
+        recipientId,
         mapped,
         input.amountKobo,
+        Boolean(input.isCounter),
       ).catch(() => undefined);
     }
 
@@ -590,10 +599,11 @@ export class MessagesService {
     });
   }
 
-  private async alertNewOffer(
+  private async alertOfferCard(
     recipientId: string,
     message: MessageDto,
     amountKobo: number,
+    isCounter: boolean,
   ): Promise<void> {
     if (!this.inbox) return;
     const amountLabel = new Intl.NumberFormat('en-NG', {
@@ -601,11 +611,18 @@ export class MessagesService {
       currency: 'NGN',
     }).format(amountKobo / 100);
     const deepLink = `reworth://chats/${message.conversationId}`;
+    const category = isCounter
+      ? NotificationCategory.COUNTEROFFER
+      : NotificationCategory.NEW_OFFER;
+    const title = isCounter ? 'Counter offer in chat' : 'New offer on your listing';
+    const body = isCounter
+      ? `They countered with ${amountLabel}. Open chat to respond.`
+      : `A buyer offered ${amountLabel}. Open chat to respond.`;
     await this.upsertChatNotification({
       recipientId,
-      category: NotificationCategory.NEW_OFFER,
-      title: 'New offer on your listing',
-      body: `A buyer offered ${amountLabel}. Open chat to respond.`,
+      category,
+      title,
+      body,
       deepLink,
       meta: {
         conversationId: message.conversationId,
@@ -629,6 +646,107 @@ export class MessagesService {
         label: dto.label,
       }),
       clientMsgId: dto.clientMsgId,
+    });
+  }
+
+  async postMeetupCard(input: {
+    conversationId: string;
+    senderId: string;
+    meetupProposalId: string;
+    locationText: string;
+  }): Promise<MessageDto> {
+    const conversation = await this.requireParticipant(
+      input.conversationId,
+      input.senderId,
+    );
+
+    const existing = await this.prisma.message.findUnique({
+      where: {
+        conversationId_clientMsgId: {
+          conversationId: input.conversationId,
+          clientMsgId: `meetup-card-${input.meetupProposalId}`,
+        },
+      },
+      include: { sender: { include: { profile: true } } },
+    });
+    if (existing) return toMessageDto(existing);
+
+    const created = await this.prisma.message.create({
+      data: {
+        conversationId: input.conversationId,
+        senderId: input.senderId,
+        type: MessageType.MEETUP_CARD,
+        meetupProposalId: input.meetupProposalId,
+        body: JSON.stringify({
+          meetupProposalId: input.meetupProposalId,
+          locationText: input.locationText,
+        }),
+        clientMsgId: `meetup-card-${input.meetupProposalId}`,
+      },
+      include: { sender: { include: { profile: true } } },
+    });
+
+    await this.prisma.conversation.update({
+      where: { id: input.conversationId },
+      data: { lastMessageAt: created.createdAt },
+    });
+
+    const mapped = toMessageDto(created);
+    this.gateway?.emitToConversation(
+      input.conversationId,
+      'message.new',
+      mapped,
+    );
+    this.gateway?.emitToUsers(
+      [conversation.buyerId, conversation.sellerId],
+      'inbox.updated',
+      {
+        conversationId: input.conversationId,
+        lastMessageAt: created.createdAt.toISOString(),
+        preview: chatPreview(mapped.type, mapped.body),
+        senderId: input.senderId,
+      },
+    );
+
+    const recipientId =
+      input.senderId === conversation.buyerId
+        ? conversation.sellerId
+        : conversation.buyerId;
+    const recipientMuted = await this.isMuted(
+      recipientId,
+      input.senderId,
+      input.conversationId,
+    );
+    if (!recipientMuted) {
+      await this.alertMeetupCard(
+        recipientId,
+        mapped,
+        input.locationText,
+      ).catch(() => undefined);
+    }
+
+    return mapped;
+  }
+
+  async postMeetupCheckoutLink(input: {
+    conversationId: string;
+    sellerId: string;
+    meetupProposalId: string;
+    orderIntentId: string;
+    listingId: string;
+    buyerId: string;
+    locationText: string;
+  }): Promise<MessageDto> {
+    return this.postMessage(input.conversationId, input.sellerId, {
+      type: MessageType.SYSTEM,
+      body: encodeMeetupCheckout({
+        meetupProposalId: input.meetupProposalId,
+        orderIntentId: input.orderIntentId,
+        listingId: input.listingId,
+        buyerId: input.buyerId,
+        locationText: input.locationText,
+      }),
+      clientMsgId: `meetup-checkout-${input.meetupProposalId}`,
     });
   }
 
@@ -896,6 +1014,31 @@ export class MessagesService {
       deepLink: input.deepLink,
       channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
       meta: input.meta,
+    });
+  }
+
+  private async alertMeetupCard(
+    recipientId: string,
+    message: MessageDto,
+    locationText: string,
+  ): Promise<void> {
+    if (!this.inbox) return;
+    const deepLink = `reworth://chats/${message.conversationId}`;
+    const senderName = message.sender?.displayName?.trim() || 'Someone';
+    const place = locationText.trim().slice(0, 80);
+    await this.upsertChatNotification({
+      recipientId,
+      category: NotificationCategory.NEW_MESSAGE,
+      title: `Meetup suggestion from ${senderName}`,
+      body: place
+        ? `${senderName} suggested: ${place}`
+        : `${senderName} suggested a meetup point. Open chat to respond.`,
+      deepLink,
+      meta: {
+        conversationId: message.conversationId,
+        messageId: message.id,
+        meetupProposalId: message.meetupProposalId,
+      },
     });
   }
 

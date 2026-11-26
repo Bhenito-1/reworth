@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { AddressesModule } from '../addresses/addresses.module';
 import { AdminAlertsModule } from '../admin/admin-alerts.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
@@ -11,6 +12,9 @@ import { DELIVERY_PROVIDER } from '../providers/delivery.provider';
 import { MockDeliveryProvider } from '../providers/mock-delivery.provider';
 import { PartnerDeliveryProvider } from '../providers/partner-delivery.provider';
 import { RegionConfigService } from '../region/region-config.service';
+import { RegionModule } from '../region/region.module';
+import { RoutingModule } from '../routing/routing.module';
+import { DeliveryPricingService } from './delivery-pricing.service';
 import {
   DeliveryWebhookController,
   DriverDeliveryController,
@@ -41,6 +45,9 @@ export function createDeliveryProvider(
     ConfigModule,
     NotificationsModule,
     AdminAlertsModule,
+    RegionModule,
+    RoutingModule,
+    AddressesModule,
   ],
   controllers: [
     MeetPointsController,
@@ -50,6 +57,7 @@ export function createDeliveryProvider(
   ],
   providers: [
     DeliveryService,
+    DeliveryPricingService,
     DeliveryDriverGuard,
     RolesGuard,
     AdminOnlyGuard,
@@ -59,6 +67,6 @@ export function createDeliveryProvider(
       inject: [ConfigService, RegionConfigService],
     },
   ],
-  exports: [DeliveryService, DELIVERY_PROVIDER],
+  exports: [DeliveryService, DeliveryPricingService, DELIVERY_PROVIDER],
 })
 export class DeliveryModule {}

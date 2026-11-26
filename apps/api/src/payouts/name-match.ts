@@ -29,8 +29,9 @@ export function splitAccountName(raw: string): LegalName {
 
 function fold(value: string): string {
   return value
+    .normalize('NFC')
     .trim()
-    .toLowerCase()
+    .toLocaleLowerCase('en-US')
     .replace(/[^a-z0-9\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim();

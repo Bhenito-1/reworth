@@ -21,8 +21,11 @@ type UsersRes = {
     community: string | null;
     roles: string[];
     isDeliveryDriver?: boolean;
+    riskScore: number;
+    riskLevel: string;
     createdAt: string;
   }[];
+  totalCount?: number;
 };
 
 function statusLabel(status: string) {
@@ -87,7 +90,11 @@ export default function UsersPage() {
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Users"
-        description="Lookup, suspend, export, and add riders for the courier portal."
+        description={
+          data?.totalCount != null
+            ? `${data.totalCount.toLocaleString()} users · lookup, suspend, export, and add riders for the courier portal.`
+            : "Lookup, suspend, export, and add riders for the courier portal."
+        }
         actions={
           <div className="flex gap-2">
             <Button
@@ -215,6 +222,7 @@ export default function UsersPage() {
             { key: "displayName", label: "Name" },
             { key: "email", label: "Email" },
             { key: "status", label: "Status" },
+            { key: "risk", label: "Risk" },
             { key: "community", label: "Community" },
             { key: "roles", label: "Roles" },
             { key: "rider", label: "Rider" },
@@ -223,6 +231,7 @@ export default function UsersPage() {
             ...u,
             status: statusLabel(u.status),
             accountStatus: u.status,
+            risk: `${u.riskScore} (${u.riskLevel})`,
             roles: u.roles.join(", ") || "—",
             rider: u.isDeliveryDriver ? "Rider" : "—",
           }))}
@@ -317,6 +326,15 @@ export default function UsersPage() {
                   await adminFetch(`/admin/users/${row.id}/whitelist`, {
                     method: "POST",
                     body: { reason: "Trusted seller" },
+                  });
+                  await reload();
+                }}
+              />
+              <ActionButton
+                label="Reset risk to 0"
+                onClick={async () => {
+                  await adminFetch(`/admin/users/${row.id}/reset-risk`, {
+                    method: "POST",
                   });
                   await reload();
                 }}
