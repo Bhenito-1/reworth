@@ -13,6 +13,7 @@ import {
   DeliveryPricingService,
   PICKUP_ADDRESS_QUOTE_SELECT,
 } from '../delivery/delivery-pricing.service';
+import { buyerCanCheckoutOnListing } from '../common/buyer-listing-checkout';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CartQuoteDto, CheckoutCartDto, UpsertCartItemDto } from './dto/cart.dto';
 
@@ -28,8 +29,10 @@ const cartListingSelect = {
   city: true,
   pickupAddress: { select: PICKUP_ADDRESS_QUOTE_SELECT },
   quantityAvailable: true,
+  quantityReserved: true,
   category: { select: { slug: true } },
   quantityTotal: true,
+  quantitySold: true,
   images: {
     orderBy: { sortOrder: 'asc' as const },
     take: 1,
@@ -72,12 +75,12 @@ export class CartService {
     });
     const synced: typeof rows = [];
     for (const row of rows) {
-      const available = row.listing.quantityAvailable;
-      const live = row.listing.status === ListingStatus.LIVE;
-      if (!live || available < 1) {
+      const ready = await this.cartLineCheckoutReady(userId, row.listing);
+      if (!ready) {
         await this.prisma.cartItem.delete({ where: { id: row.id } });
         continue;
       }
+      const available = row.listing.quantityAvailable;
       if (row.quantity > available) {
         const updated = await this.prisma.cartItem.update({
           where: { id: row.id },
@@ -97,9 +100,9 @@ export class CartService {
       for (const row of extra) {
         await this.prisma.cartItem.delete({ where: { id: row.id } });
       }
-      return [this.toDto(keep)];
+      return [await this.toDtoForUser(userId, keep)];
     }
-    return synced.map((row) => this.toDto(row));
+    return Promise.all(synced.map((row) => this.toDtoForUser(userId, row)));
   }
 
   async upsert(userId: string, dto: UpsertCartItemDto) {
@@ -136,7 +139,7 @@ export class CartService {
       update: { quantity },
       include: { listing: { select: cartListingSelect } },
     });
-    return this.toDto(row);
+    return await this.toDtoForUser(userId, row);
   }
 
   async updateQuantity(userId: string, listingId: string, quantity: number) {
@@ -154,7 +157,7 @@ export class CartService {
       data: { quantity: Math.min(capped, existing.listing.quantityAvailable) },
       include: { listing: { select: cartListingSelect } },
     });
-    return this.toDto(row);
+    return await this.toDtoForUser(userId, row);
   }
 
   async remove(userId: string, listingId: string) {
@@ -258,7 +261,8 @@ export class CartService {
       throw new BadRequestException('Your cart is empty');
     }
     for (const row of rows) {
-      if (row.listing.status !== ListingStatus.LIVE) {
+      const ready = await this.cartLineCheckoutReady(userId, row.listing);
+      if (!ready) {
         throw new ConflictException(
           `"${row.listing.title || 'Item'}" is no longer available`,
         );
@@ -403,7 +407,52 @@ export class CartService {
     };
   }
 
-  private toDto(row: {
+  private async cartLineCheckoutReady(
+    userId: string,
+    listing: {
+      id: string;
+      status: ListingStatus;
+      quantityAvailable: number;
+      quantityReserved: number;
+      quantityTotal: number;
+      quantitySold: number;
+    },
+  ): Promise<boolean> {
+    if (listing.status === ListingStatus.LIVE) {
+      return listing.quantityAvailable >= 1;
+    }
+    if (listing.status === ListingStatus.RESERVED) {
+      const lane = await buyerCanCheckoutOnListing(
+        this.prisma,
+        listing,
+        userId,
+      );
+      if (!lane) return false;
+      if (listing.quantityAvailable >= 1) return true;
+      return (
+        listing.quantityAvailable < 1 && (listing.quantityReserved ?? 0) < 1
+      );
+    }
+    return false;
+  }
+
+  private async toDtoForUser(
+    userId: string,
+    row: Parameters<CartService['toDto']>[0],
+  ) {
+    const checkoutReady = await this.cartLineCheckoutReady(userId, {
+      id: row.listing.id,
+      status: row.listing.status,
+      quantityAvailable: row.listing.quantityAvailable,
+      quantityReserved: row.listing.quantityReserved ?? 0,
+      quantityTotal: row.listing.quantityTotal,
+      quantitySold: row.listing.quantitySold ?? 0,
+    });
+    return this.toDto(row, checkoutReady);
+  }
+
+  private toDto(
+    row: {
     id: string;
     quantity: number;
     createdAt: Date;
@@ -419,16 +468,20 @@ export class CartService {
       geoLng: number | null;
       quantityAvailable: number;
       quantityTotal: number;
+      quantityReserved?: number;
+      quantitySold?: number;
       images: { id: string; variants: unknown }[];
     };
-  }) {
+  },
+    checkoutReady: boolean,
+  ) {
     const available = row.listing.quantityAvailable;
     return {
       id: row.id,
       quantity: row.quantity,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
-      unavailable: row.listing.status !== 'LIVE' || available < 1,
+      unavailable: !checkoutReady,
       listing: {
         id: row.listing.id,
         title: row.listing.title,

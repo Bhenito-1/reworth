@@ -35,6 +35,11 @@ import { AdminAlertsService } from '../admin/admin-alerts.service';
 import { SUPPORT } from '../admin/admin-roles';
 import { DeliveryService } from '../delivery/delivery.service';
 import { ListingStateMachine } from '../listings/listing-state.machine';
+import {
+  assertBuyerCanMeetupOnListing,
+  buyerCheckoutUnitCap,
+} from '../common/buyer-listing-checkout';
+import { assertPlatformDeliveryCheckoutAllowed } from '../common/platform-delivery-guard';
 import { newOrderReference } from '../common/transaction-reference';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -447,6 +452,11 @@ export class OrdersService {
       );
     }
 
+    const negotiatedEarly = Boolean(dto.offerId || dto.orderIntentId);
+    if (listing.status === 'RESERVED' && !negotiatedEarly) {
+      throw new ConflictException('Listing is reserved for another buyer');
+    }
+
     let amountKobo = listing.priceKobo;
     let offerId: string | undefined = dto.offerId;
     let orderIntentId: string | undefined = dto.orderIntentId;
@@ -503,6 +513,9 @@ export class OrdersService {
     }
 
     const negotiated = Boolean(dto.offerId || dto.orderIntentId);
+    if (listing.status === 'RESERVED' && negotiated) {
+      await assertBuyerCanMeetupOnListing(this.prisma, listing, buyerId);
+    }
     const quantity = Math.min(
       999,
       Math.max(1, dto.quantity ?? 1),
@@ -511,13 +524,19 @@ export class OrdersService {
     if (!negotiated && listing.sellingMode !== 'SELL') {
       throw new BadRequestException('This listing is not sold by the unit');
     }
-    if (
-      typeof listing.quantityAvailable === 'number' &&
-      listing.quantityAvailable < quantity
-    ) {
+    const { cap, openOrderId } = await buyerCheckoutUnitCap(
+      this.prisma,
+      listing,
+      buyerId,
+      { negotiated },
+    );
+    if (openOrderId) {
       throw new ConflictException(
-        `Only ${listing.quantityAvailable} unit(s) available`,
+        'You already have an unpaid order for this item. Open it from Orders to pay.',
       );
+    }
+    if (quantity > cap) {
+      throw new ConflictException(`Only ${cap} unit(s) available`);
     }
     amountKobo = unitPriceKobo * quantity;
 
@@ -531,6 +550,8 @@ export class OrdersService {
       dto.fulfilmentMethod ??
       checkoutIntent?.fulfilmentMethod ??
       FulfilmentMethod.DELIVERY;
+
+    assertPlatformDeliveryCheckoutAllowed(fulfilmentMethod);
 
     let deliveryFeeKobo = 0;
     let distanceKm: number | null = null;
