@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Button, Chip, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "./DiscoveryListingCard";
 import { PullToRefresh } from "../PullToRefresh";
 import { ApiError, apiFetch } from "../../lib/api";
-import { getAccessToken } from "../../lib/auth";
+import { AUTH_CHANGED_EVENT, getAccessToken, getAccessTokenUserId } from "../../lib/auth";
 import {
   areaChoices,
   FALLBACK_AREAS,
@@ -26,8 +26,9 @@ import {
 } from "../../lib/discovery";
 import { getRegion, listRegions, type RegionCity } from "../../lib/region";
 import { formatNgn } from "@reworth/shared";
-import { addToCart } from "../../lib/cart";
-import type { CategoryNode, HomeRail, MeResponse, RadiusKm } from "../../lib/types";
+import { addToCart, cartAddErrorMessage } from "../../lib/cart";
+import { listingPdpHref } from "../../lib/listings";
+import type { CategoryNode, HomeRail, RadiusKm } from "../../lib/types";
 
 function listingInCategory(
   item: { category: { id: string; slug: string } | null },
@@ -55,6 +56,8 @@ function widerRadius(current: DiscoveryLocation["radiusKm"]) {
 
 export function DiscoveryHomePage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const marketplaceFrom = pathname === "/" ? "/" : pathname;
 
   const [loc, setLoc] = useState<DiscoveryLocation>({
     city: "",
@@ -81,22 +84,13 @@ export function DiscoveryHomePage() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [meId, setMeId] = useState<string | null>(null);
+  const [meId, setMeId] = useState<string | null>(() => getAccessTokenUserId());
 
   useEffect(() => {
-    const token = getAccessToken();
-    if (!token) return;
-    let cancelled = false;
-    void apiFetch<MeResponse>("/me", { token })
-      .then((me) => {
-        if (!cancelled) setMeId(me.id);
-      })
-      .catch(() => {
-        if (!cancelled) setMeId(null);
-      });
-    return () => {
-      cancelled = true;
-    };
+    const sync = () => setMeId(getAccessTokenUserId());
+    sync();
+    window.addEventListener(AUTH_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
   }, []);
 
   useEffect(() => {
@@ -120,25 +114,26 @@ export function DiscoveryHomePage() {
         location.radiusKm === "all"
           ? undefined
           : (location.radiusKm as RadiusKm);
-      const [home, cats] = await Promise.all([
+      const token = getAccessToken();
+      const [home, cats, favs] = await Promise.all([
         fetchHome(
           {
             community: location.community || undefined,
             city: location.community ? location.city || undefined : undefined,
             radiusKm,
           },
-          getAccessToken(),
+          token,
         ),
         fetchCategories().catch(() => [] as CategoryNode[]),
+        token
+          ? getMeFavourites(token).catch(() => null)
+          : Promise.resolve(null),
       ]);
       setRails(sellerCatalogue(home.rails ?? []));
       setCategories(cats);
-      if (getAccessToken()) {
-        const favs = await getMeFavourites(getAccessToken()!).catch(() => null);
-        setFavourites(
-          new Set(favs?.items.map((item) => item.listing.id) ?? []),
-        );
-      }
+      setFavourites(
+        new Set(favs?.items.map((item) => item.listing.id) ?? []),
+      );
     } catch (err) {
       if (opts?.silent) return;
       setError(err instanceof ApiError ? err.message : "Could not load home");
@@ -276,10 +271,7 @@ export function DiscoveryHomePage() {
       await addToCart(token, listing.id, 1);
       setToast({ message: "Added to cart", tone: "success" });
     } catch (err) {
-      setToast({
-        message: err instanceof ApiError ? err.message : "Could not add to cart",
-        tone: "error",
-      });
+      setToast({ message: cartAddErrorMessage(err), tone: "error" });
     }
   }
 
@@ -837,6 +829,7 @@ export function DiscoveryHomePage() {
                               <li key={item.id} className="min-w-0">
                                 <DiscoveryListingCard
                                   listing={item}
+                                  href={listingPdpHref(item.id, marketplaceFrom)}
                                   favourited={favourites.has(item.id)}
                                   onToggleFavourite={
                                   own

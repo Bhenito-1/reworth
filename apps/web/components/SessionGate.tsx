@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { usePathname } from "next/navigation";
 import { AppNav } from "./AppNav";
 import {
@@ -15,67 +21,106 @@ import {
   refreshSession,
 } from "../lib/auth";
 
+function resolveGate(pathname: string): {
+  authed: boolean;
+  allowed: boolean;
+  redirectDriver: boolean;
+  redirectLanding: boolean;
+} {
+  const publicPath = isPublicAuthPath(pathname);
+  const authed = isAuthed();
+
+  if (!authed && pathname.startsWith("/driver")) {
+    return {
+      authed: false,
+      allowed: false,
+      redirectDriver: true,
+      redirectLanding: false,
+    };
+  }
+
+  if (!authed && !publicPath) {
+    return {
+      authed: false,
+      allowed: false,
+      redirectDriver: false,
+      redirectLanding: true,
+    };
+  }
+
+  if (!authed && typeof window !== "undefined") {
+    const raw = localStorage.getItem("rw_access_token");
+    if (raw) clearTokens();
+  }
+
+  return {
+    authed,
+    allowed: true,
+    redirectDriver: false,
+    redirectLanding: false,
+  };
+}
+
 /**
  * No session → landing (Login | Register), except /login and /onboarding.
+ * Token refresh runs in the background so navigation is not blocked on /auth/refresh.
  */
 export function SessionGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+
   const [ready, setReady] = useState(false);
   const [allowed, setAllowed] = useState(false);
   const [authed, setAuthed] = useState(false);
+
+  const applyGate = (path: string) => {
+    const next = resolveGate(path);
+    if (next.redirectDriver) {
+      setAuthed(false);
+      setAllowed(false);
+      setReady(true);
+      window.location.replace("/login?next=/driver");
+      return;
+    }
+    if (next.redirectLanding) {
+      setAuthed(false);
+      setAllowed(false);
+      setReady(true);
+      forceLandingRedirect();
+      return;
+    }
+    setAuthed(next.authed);
+    setAllowed(next.allowed);
+    setReady(true);
+  };
+
+  useLayoutEffect(() => {
+    applyGate(pathname);
+  }, [pathname]);
+
   useEffect(() => {
     let cancelled = false;
-    const sync = async () => {
+
+    const maybeRefresh = () => {
       const access = getAccessToken();
-      if (getRefreshToken() && (!access || accessTokenNeedsRefresh(access))) {
-        const outcome = await refreshSession();
+      if (!getRefreshToken() || !access || !accessTokenNeedsRefresh(access)) {
+        return;
+      }
+      void refreshSession().then((outcome) => {
         if (cancelled) return;
-        if (outcome === "rejected" && !isPublicAuthPath(pathname)) {
-          setAuthed(false);
-          setAllowed(false);
-          setReady(true);
-          forceLandingRedirect();
-          return;
+        if (
+          outcome === "rejected" &&
+          !isPublicAuthPath(pathnameRef.current)
+        ) {
+          applyGate(pathnameRef.current);
         }
-      }
-      if (cancelled) return;
-
-      const publicPath = isPublicAuthPath(pathname);
-      const authed = isAuthed();
-
-      if (!authed && pathname.startsWith("/driver")) {
-        setAuthed(false);
-        setAllowed(false);
-        setReady(true);
-        window.location.replace("/login?next=/driver");
-        return;
-      }
-
-      if (!authed && !publicPath) {
-        setAuthed(false);
-        setAllowed(false);
-        setReady(true);
-        forceLandingRedirect();
-        return;
-      }
-
-      // Drop a dead access token only when nothing can renew the session.
-      if (!authed && typeof window !== "undefined") {
-        const raw = localStorage.getItem("rw_access_token");
-        if (raw) clearTokens();
-      }
-
-      setAuthed(authed);
-      setAllowed(true);
-      setReady(true);
+      });
     };
 
-    const onAuth = () => {
-      const signedIn = isAuthed();
-      setAuthed(signedIn);
-      void sync();
-    };
-    void sync();
+    maybeRefresh();
+
+    const onAuth = () => applyGate(pathnameRef.current);
     window.addEventListener(AUTH_CHANGED_EVENT, onAuth);
     window.addEventListener("storage", onAuth);
     return () => {

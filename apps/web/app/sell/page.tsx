@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -12,8 +13,14 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatNgn, nairaToKobo, koboToNaira } from "@reworth/shared";
 import { Button, Chip, Input, Skeleton, Toast } from "@reworth/ui-web";
-import { ApiError } from "../../lib/api";
-import { fetchCategories } from "../../lib/discovery";
+import { ApiError, apiFetch } from "../../lib/api";
+import {
+  consolidateCategoryTree,
+  flattenCategoryOptions,
+  fetchCategories,
+  SELL_FEATURED_PARENT_SLUGS,
+} from "../../lib/discovery";
+import type { CategoryNode } from "../../lib/types";
 import { getAccessToken } from "../../lib/auth";
 import {
   FALLBACK_BANKS,
@@ -43,8 +50,18 @@ import {
   appealListing,
   uploadListingPhoto,
 } from "../../lib/listings";
+import { mapWithConcurrency } from "../../lib/prepare-listing-photo";
 import { getRegion, listRegions, type RegionCity } from "../../lib/region";
+import { hasSavedAddressLine } from "../../lib/saved-address";
+import {
+  preferenceToSellerChoice,
+  readFulfilmentPreference,
+  sellerChoiceToPreference,
+  type SellerFulfilmentChoice,
+} from "../../lib/fulfilment-preference";
 import type {
+  MeDeliveryAddress,
+  MeResponse,
   PriceIntelligence,
   PublicListing,
   SellingModeValue,
@@ -86,6 +103,15 @@ type LocalPhoto = {
   previewUrl: string;
 };
 
+function isPostPublishStatus(status: string): boolean {
+  return (
+    status === "LIVE" ||
+    status === "UNDER_REVIEW" ||
+    status === "REJECTED" ||
+    status === "RESERVED"
+  );
+}
+
 function draftResumeStep(listing: PublicListing): SellStep {
   if ((listing.images?.length ?? 0) < 2) return "photos";
   const priced =
@@ -124,9 +150,23 @@ export default function SellPage() {
   const [description, setDescription] = useState("");
   const [categoryName, setCategoryName] = useState("");
   const [categoryId, setCategoryId] = useState("");
-  const [categories, setCategories] = useState<
-    { id: string; name: string; slug: string }[]
-  >([]);
+  const [categoryTree, setCategoryTree] = useState<CategoryNode[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const consolidatedParents = useMemo(
+    () => consolidateCategoryTree(categoryTree),
+    [categoryTree],
+  );
+  const allCategoryOptions = useMemo(
+    () => flattenCategoryOptions(consolidatedParents),
+    [consolidatedParents],
+  );
+  const featuredParents = useMemo(
+    () =>
+      consolidatedParents.filter((p) =>
+        (SELL_FEATURED_PARENT_SLUGS as readonly string[]).includes(p.slug),
+      ),
+    [consolidatedParents],
+  );
   const [condition, setCondition] = useState<string>("GOOD");
   const [brand, setBrand] = useState("");
   const [priceNaira, setPriceNaira] = useState("");
@@ -138,9 +178,13 @@ export default function SellPage() {
   const [vehicleMileage, setVehicleMileage] = useState("");
 
   const [sellingMode, setSellingMode] = useState<SellingModeValue>("SELL");
+  const [sellerFulfilment, setSellerFulfilment] =
+    useState<SellerFulfilmentChoice>("delivery");
   const [negotiable, setNegotiable] = useState(true);
   const [community, setCommunity] = useState("");
   const [pickupAddress, setPickupAddress] = useState("");
+  const [savedPickup, setSavedPickup] = useState<MeDeliveryAddress | null>(null);
+  const [pickupMode, setPickupMode] = useState<"saved" | "new">("new");
   const [stateKey, setStateKey] = useState("");
   const [areaOptions, setAreaOptions] = useState<AreaChoice[]>([]);
   const [donateIfUnsold, setDonateIfUnsold] = useState(false);
@@ -164,20 +208,31 @@ export default function SellPage() {
 
   useEffect(() => {
     void fetchCategories()
-      .then((items) =>
-        setCategories(
-          items.map((item) => ({
-            id: item.id,
-            name: item.name,
-            slug: item.slug,
-          })),
-        ),
-      )
-      .catch(() => setCategories([]));
+      .then((items) => setCategoryTree(items))
+      .catch(() => setCategoryTree([]))
+      .finally(() => setCategoriesLoading(false));
   }, []);
 
+  function categoryUnderParent(parent: CategoryNode, id: string) {
+    if (id === parent.id) return true;
+    return parent.children?.some((c) => c.id === id) ?? false;
+  }
+
+  function pickFeaturedParent(parent: CategoryNode) {
+    const child = parent.children?.[0];
+    if (child) {
+      setCategoryId(child.id);
+      setCategoryName(`${parent.name} · ${child.name}`);
+      return;
+    }
+    setCategoryId(parent.id);
+    setCategoryName(parent.name);
+  }
+
   useEffect(() => {
-    if (categoryId || !categoryName.trim() || categories.length === 0) return;
+    if (categoryId || !categoryName.trim() || allCategoryOptions.length === 0) {
+      return;
+    }
     const norm = (value: string) =>
       value
         .toLowerCase()
@@ -186,18 +241,31 @@ export default function SellPage() {
         .trim();
     const query = norm(categoryName);
     const match =
-      categories.find(
+      allCategoryOptions.find(
         (item) =>
           norm(item.name) === query || item.slug.replace(/-/g, " ") === query,
       ) ??
-      categories.find((item) => {
+      allCategoryOptions.find((item) => {
         const name = norm(item.name);
         return name.includes(query) || query.includes(name);
       });
     if (!match) return;
     setCategoryId(match.id);
     if (match.name !== categoryName) setCategoryName(match.name);
-  }, [categories, categoryName, categoryId]);
+  }, [allCategoryOptions, categoryName, categoryId]);
+
+  const refreshSavedPickup = useCallback(async () => {
+    const token = getAccessToken();
+    if (!token) return null;
+    try {
+      const me = await apiFetch<MeResponse>("/me", { token });
+      const pick = me.pickupAddress ?? null;
+      setSavedPickup(pick);
+      return pick;
+    } catch {
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     const token = getAccessToken();
@@ -209,7 +277,24 @@ export default function SellPage() {
     void listRegions()
       .then((regions) => setCities(regions))
       .catch(() => setCities([]));
-  }, [router]);
+    void refreshSavedPickup();
+  }, [router, refreshSavedPickup]);
+
+  useEffect(() => {
+    if (step !== "location") return;
+    void refreshSavedPickup();
+  }, [step, refreshSavedPickup]);
+
+  useEffect(() => {
+    if (step !== "location" || pickupAddress.trim()) return;
+    if (pickupMode === "new") return;
+    const saved = savedPickup;
+    if (!hasSavedAddressLine(saved)) return;
+    setPickupMode("saved");
+    setPickupAddress(saved!.line1);
+    if (!community.trim() && saved!.community) setCommunity(saved!.community);
+    if (!city.trim() && saved!.city) setCity(saved!.city);
+  }, [step, savedPickup, pickupAddress, pickupMode, community, city]);
 
   useEffect(() => {
     if (!ready || !resumeId) return;
@@ -220,7 +305,15 @@ export default function SellPage() {
         const token = getAccessToken();
         if (!token) return;
         const existing = await getListing(resumeId, token);
-        if (cancelled || existing.status !== "DRAFT") return;
+        if (cancelled) return;
+        if (isPostPublishStatus(existing.status)) {
+          setListingId(existing.id);
+          syncFromListing(existing);
+          setPublished(existing);
+          setStep("done");
+          return;
+        }
+        if (existing.status !== "DRAFT") return;
         setListingId(existing.id);
         syncFromListing(existing);
         setPhotos(
@@ -313,8 +406,9 @@ export default function SellPage() {
     });
     setListingId(created.id);
     setListing(created);
+    router.replace(`/sell?listingId=${created.id}`, { scroll: false });
     return created.id;
-  }, [listingId, tokenOrThrow]);
+  }, [listingId, router, tokenOrThrow]);
 
   function syncFromListing(l: PublicListing) {
     setListing(l);
@@ -330,8 +424,13 @@ export default function SellPage() {
     setUnits(String(l.quantityTotal && l.quantityTotal > 0 ? l.quantityTotal : 1));
     setSellingMode((l.sellingMode as SellingModeValue) || "SELL");
     setNegotiable(l.negotiable);
+    setSellerFulfilment(
+      preferenceToSellerChoice(readFulfilmentPreference(l)),
+    );
     if (l.community) setCommunity(l.community);
-    setPickupAddress(l.pickupAddress?.trim() ?? "");
+    const draftPickup = l.pickupAddress?.trim() ?? "";
+    setPickupAddress(draftPickup);
+    if (draftPickup) setPickupMode("new");
     if (l.city) setCity(l.city);
     if (l.donateIfUnsoldDays != null && l.donateIfUnsoldDays > 0) {
       setDonateIfUnsold(true);
@@ -401,9 +500,21 @@ export default function SellPage() {
       const token = tokenOrThrow();
       const id = await ensureDraft();
       const uploaded: { key: string; sortOrder: number }[] = [];
-      const nextPhotos: LocalPhoto[] = [];
       const hasExisting = photos.some((photo) => photo.existing);
 
+      const uploadJobs = photos.flatMap((photo, index) =>
+        !photo.existing && !photo.key && photo.file
+          ? [{ index, file: photo.file }]
+          : [],
+      );
+
+      const uploadOut = await mapWithConcurrency(uploadJobs, 3, async (job) => {
+        const result = await uploadListingPhoto(token, id, job.file, job.index);
+        return { index: job.index, result };
+      });
+      const doneByIndex = new Map(uploadOut.map((row) => [row.index, row.result]));
+
+      const nextPhotos: LocalPhoto[] = [];
       for (let i = 0; i < photos.length; i++) {
         const photo = photos[i];
         if (photo.existing) {
@@ -415,10 +526,10 @@ export default function SellPage() {
           nextPhotos.push(photo);
           continue;
         }
-        if (!photo.file) continue;
-        const result = await uploadListingPhoto(token, id, photo.file, i);
-        uploaded.push({ key: result.key, sortOrder: i });
-        nextPhotos.push({ ...photo, key: result.key });
+        const done = doneByIndex.get(i);
+        if (!done) continue;
+        uploaded.push({ key: done.key, sortOrder: i });
+        nextPhotos.push({ ...photo, key: done.key });
       }
 
       setPhotos(nextPhotos);
@@ -488,8 +599,9 @@ export default function SellPage() {
       community,
       addressPrivate: pickupAddress.trim() || undefined,
       fulfilmentPickup: false,
-      fulfilmentMeet: false,
+      fulfilmentMeet: true,
       fulfilmentDelivery: true,
+      fulfilmentPreference: sellerChoiceToPreference(sellerFulfilment),
       city: city || undefined,
       donateIfUnsoldDays:
         sellingMode !== "GIVE_AWAY" && donateIfUnsold
@@ -539,14 +651,13 @@ export default function SellPage() {
       return;
     }
     if (pickupAddress.trim().length < 8) {
-      setError(
-        "Add your pickup address (street and landmark). Buyers never see this — we use it for delivery.",
-      );
+      setError("Add a pickup address (street and area, at least 8 characters).");
       return;
     }
     setBusy(true);
     try {
       await saveDraftFields();
+      await refreshSavedPickup();
       setStep("fulfilment");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save location");
@@ -633,6 +744,7 @@ export default function SellPage() {
       });
       setPayoutAccount(result.account);
       setBankEditing(false);
+      if (result.warning) setToast(result.warning);
       setStep("publish");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save the account");
@@ -641,22 +753,54 @@ export default function SellPage() {
     }
   }
 
+  function finishPublish(live: PublicListing) {
+    setPublished(live);
+    setStep("done");
+    setError(null);
+    router.replace(`/sell?listingId=${live.id}`, { scroll: false });
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  async function recoverPublishedListing(
+    id: string,
+    token: string,
+  ): Promise<PublicListing | null> {
+    try {
+      const row = await getListing(id, token);
+      return isPostPublishStatus(row.status) ? row : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function doPublish() {
     setError(null);
     if (!listingId) return;
     setBusy(true);
+    const token = tokenOrThrow();
     try {
       await saveDraftFields();
-      const token = tokenOrThrow();
       const live = await publishListing(listingId, token);
-      setPublished(live);
-      setStep("done");
+      finishPublish(live);
     } catch (err) {
+      const recovered = await recoverPublishedListing(listingId, token);
+      if (recovered) {
+        finishPublish(recovered);
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Publish failed");
     } finally {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (step === "done") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [step]);
 
   const skipsPayout =
     sellingMode === "GIVE_AWAY" || sellingMode === "SWAP";
@@ -814,7 +958,7 @@ export default function SellPage() {
                 Review the details
               </h1>
               <p className="mt-3 text-[var(--rw-ink-muted)]">
-                Review and edit — you stay in control.
+                Review and edit.
               </p>
 
               {assistLoading ? (
@@ -851,26 +995,70 @@ export default function SellPage() {
                     />
                   </div>
                   <div>
-                    <p className="mb-2 text-sm font-medium">Category</p>
-                    {categories.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {categories.map((item) => (
-                          <Chip
-                            key={item.id}
-                            selected={categoryId === item.id}
-                            onClick={() => {
-                              setCategoryId(item.id);
-                              setCategoryName(item.name);
-                            }}
-                          >
-                            {item.name}
-                          </Chip>
-                        ))}
-                      </div>
+                    {categoriesLoading ? (
+                      <>
+                        <p className="mb-2 text-sm font-medium">Category</p>
+                        <Skeleton
+                          className="h-10 w-full max-w-md"
+                          label="Loading categories"
+                        />
+                      </>
+                    ) : allCategoryOptions.length > 0 ? (
+                      <>
+                        <p className="mb-2 text-sm font-medium">Category</p>
+                        {featuredParents.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {featuredParents.map((parent) => (
+                              <Chip
+                                key={parent.id}
+                                selected={categoryUnderParent(
+                                  parent,
+                                  categoryId,
+                                )}
+                                onClick={() => pickFeaturedParent(parent)}
+                              >
+                                {parent.name}
+                              </Chip>
+                            ))}
+                          </div>
+                        ) : null}
+                        <label
+                          htmlFor="sell-category-select"
+                          className="mt-4 mb-1.5 block text-sm text-[var(--rw-ink-muted)]"
+                        >
+                          All categories
+                        </label>
+                        <select
+                          id="sell-category-select"
+                          value={categoryId || ""}
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            if (!id) {
+                              setCategoryId("");
+                              return;
+                            }
+                            const hit = allCategoryOptions.find(
+                              (o) => o.id === id,
+                            );
+                            if (!hit) return;
+                            setCategoryId(hit.id);
+                            setCategoryName(hit.name);
+                          }}
+                          className="w-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2.5 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+                        >
+                          <option value="">Choose a category</option>
+                          {allCategoryOptions.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name}
+                            </option>
+                          ))}
+                        </select>
+                      </>
                     ) : (
                       <Input
                         label="Category"
                         value={categoryName}
+                        placeholder="e.g. Phones, Furniture"
                         onChange={(e) => {
                           setCategoryId("");
                           setCategoryName(e.target.value);
@@ -1133,12 +1321,8 @@ export default function SellPage() {
                 id="sell-loc-title"
                 className="text-3xl font-semibold tracking-tight"
               >
-                Pickup Address
+                Pickup address
               </h1>
-              <p className="mt-3 text-[var(--rw-ink-muted)]">
-                Input the address for item pickup. Buyers see the area, never your
-                street address.
-              </p>
               <label className="mt-6 block text-sm font-medium">
                 State
                 <select
@@ -1184,18 +1368,53 @@ export default function SellPage() {
                     </div>
                   )}
                 </div>
-              ) : (
-                <p className="mt-6 text-sm text-[var(--rw-ink-muted)]">
-                  Select a state to see areas such as VI and Ikoyi.
-                </p>
-              )}
+              ) : null}
+              {hasSavedAddressLine(savedPickup) ? (
+                <fieldset className="mt-8 space-y-2 text-sm">
+                  <legend className="sr-only">Pickup address source</legend>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="pickupMode"
+                      checked={pickupMode === "saved"}
+                      onChange={() => {
+                        setPickupMode("saved");
+                        const s = savedPickup;
+                        if (s?.line1) setPickupAddress(s.line1);
+                        if (s?.community) setCommunity(s.community);
+                        if (s?.city) setCity(s.city);
+                      }}
+                    />
+                    Use saved pickup (
+                    {[savedPickup!.line1, savedPickup!.community]
+                      .filter(Boolean)
+                      .join(", ")}
+                    )
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="pickupMode"
+                      checked={pickupMode === "new"}
+                      onChange={() => setPickupMode("new")}
+                    />
+                    Different pickup address
+                  </label>
+                </fieldset>
+              ) : null}
               <Input
                 className="mt-8"
-                label="Pickup address"
+                label="Street / building"
                 value={pickupAddress}
-                onChange={(e) => setPickupAddress(e.target.value)}
+                onChange={(e) => {
+                  setPickupMode("new");
+                  setPickupAddress(e.target.value);
+                }}
                 placeholder="e.g. 12 Admiralty Way, Lekki Phase 1"
-                disabled={busy}
+                disabled={
+                  busy ||
+                  (pickupMode === "saved" && hasSavedAddressLine(savedPickup))
+                }
               />
               {error ? (
                 <p className="mt-4 text-sm text-[var(--rw-error)]" role="alert">
@@ -1229,11 +1448,57 @@ export default function SellPage() {
                 id="sell-ful-title"
                 className="text-3xl font-semibold tracking-tight"
               >
-                ReWorth delivery
+                Fulfilment
               </h1>
               <p className="mt-3 text-[var(--rw-ink-muted)]">
-                All listings use ReWorth delivery.
+                Shown on your listing as your fulfilment preference.
               </p>
+              <fieldset className="mt-8 flex flex-col gap-3">
+                <legend className="sr-only">Fulfilment preference</legend>
+                {(
+                  [
+                    {
+                      id: "delivery" as const,
+                      title: "ReWorth delivery",
+                      line: "Our courier collects from your pickup address.",
+                    },
+                    {
+                      id: "meetup" as const,
+                      title: "Meetup point",
+                      line: "You and the buyer agree on a place in chat.",
+                    },
+                    {
+                      id: "any" as const,
+                      title: "No preference",
+                      line: "Open to delivery or meetup.",
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <label
+                    key={opt.id}
+                    className={`flex cursor-pointer items-start gap-3 rounded-[var(--rw-radius-lg)] border p-4 ${
+                      sellerFulfilment === opt.id
+                        ? "border-[var(--rw-accent)] bg-[var(--rw-accent-muted)]/30"
+                        : "border-[var(--rw-border)]"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="seller-fulfilment"
+                      className="mt-1"
+                      checked={sellerFulfilment === opt.id}
+                      onChange={() => setSellerFulfilment(opt.id)}
+                      disabled={busy}
+                    />
+                    <span>
+                      <span className="block font-medium">{opt.title}</span>
+                      <span className="mt-1 block text-sm text-[var(--rw-ink-muted)]">
+                        {opt.line}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
               {error ? (
                 <p className="mt-4 text-sm text-[var(--rw-error)]" role="alert">
                   {error}
@@ -1335,10 +1600,9 @@ export default function SellPage() {
                     autoComplete="given-name"
                   />
                   <Input
-                    label="Middle name"
+                    label="Middle name (optional)"
                     value={legalMiddle}
                     onChange={(e) => setLegalMiddle(e.target.value)}
-                    hint="Optional"
                     autoComplete="additional-name"
                   />
                   <Input
@@ -1414,11 +1678,6 @@ export default function SellPage() {
                   </p>
                 ) : null}
               </div>
-              <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
-                Publishing can take a little while. We verify your photos and
-                the item details before the listing goes live, so you can stay
-                on this page.
-              </p>
               {error ? (
                 <p className="mt-4 text-sm text-[var(--rw-error)]" role="alert">
                   {error}
@@ -1533,16 +1792,32 @@ export default function SellPage() {
                   size="lg"
                   className="w-full sm:w-auto"
                   onClick={() => {
+                    router.replace("/sell", { scroll: false });
                     setStep("photos");
                     setListingId(null);
                     setListing(null);
-                    setPublished(null);
-                    setPhotos([]);
-                    setTitle("");
-                    setDescription("");
-                    setError(null);
-                    setAppealOk(false);
-                    setAppealReason("");
+                    void (async () => {
+                      setStep("photos");
+                      setListingId(null);
+                      setListing(null);
+                      setPublished(null);
+                      setPhotos([]);
+                      setTitle("");
+                      setDescription("");
+                      setError(null);
+                      setAppealOk(false);
+                      setAppealReason("");
+                      const pick = await refreshSavedPickup();
+                      if (hasSavedAddressLine(pick)) {
+                        setPickupMode("saved");
+                        setPickupAddress(pick!.line1);
+                        if (pick!.community) setCommunity(pick!.community);
+                        if (pick!.city) setCity(pick!.city);
+                      } else {
+                        setPickupMode("new");
+                        setPickupAddress("");
+                      }
+                    })();
                   }}
                 >
                   List another

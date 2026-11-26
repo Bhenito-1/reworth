@@ -1,42 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { Skeleton } from "@reworth/ui-web";
+import { AUTH_CHANGED_EVENT, isAuthed } from "../lib/auth";
 import { LandingPage } from "../components/LandingPage";
 import { DiscoveryHomePage } from "../components/discovery/DiscoveryHomePage";
-import { AUTH_CHANGED_EVENT, isAuthed } from "../lib/auth";
 
 /**
- * Cold start: guests see landing (Login | Register).
- * Signed-in users see discovery home. Logout returns here → landing.
+ * Signed-in users see marketplace discovery; guests see the marketing landing.
  */
 export default function RootPage() {
-  const [ready, setReady] = useState(false);
-  const [authed, setAuthed] = useState(false);
+  const [authed, setAuthed] = useState(() =>
+    typeof window !== "undefined" ? isAuthed() : false,
+  );
 
   useEffect(() => {
-    const sync = () => {
-      setAuthed(isAuthed());
-      setReady(true);
-    };
+    const sync = () => setAuthed(isAuthed());
     sync();
     window.addEventListener(AUTH_CHANGED_EVENT, sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener(AUTH_CHANGED_EVENT, sync);
-      window.removeEventListener("storage", sync);
-    };
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, sync);
   }, []);
 
-  if (!ready) {
-    return (
-      <main
-        className="flex min-h-[100dvh] items-center justify-center bg-[var(--rw-bg)] text-[var(--rw-ink-muted)]"
-        aria-busy
-      >
-        <p className="text-sm">Loading…</p>
-      </main>
-    );
-  }
+  const fallback = (
+    <main className="min-h-[100dvh] bg-[var(--rw-bg)] px-4 py-8">
+      <Skeleton
+        className="mx-auto h-12 w-full max-w-6xl"
+        label="Loading"
+      />
+    </main>
+  );
 
-  return authed ? <DiscoveryHomePage /> : <LandingPage />;
+  return (
+    <Suspense fallback={fallback}>
+      {authed ? <DiscoveryHomePage /> : <LandingPage />}
+    </Suspense>
+  );
 }
