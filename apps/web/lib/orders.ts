@@ -85,6 +85,7 @@ export type OrderDto = {
   rejectionReason?: string | null;
   sellerNote?: string | null;
   deliveryDate?: string | null;
+  meetupLocationText?: string | null;
   swapProposalId?: string | null;
   swapListingAId?: string | null;
   swapListingBId?: string | null;
@@ -411,9 +412,13 @@ export function createOrder(
     buyNow?: boolean;
     quantity?: number;
     meetPointId?: string;
+    meetupLocationText?: string;
     toLat?: number;
     toLng?: number;
     deliveryAddress?: string;
+    deliveryLine1?: string;
+    deliveryCommunity?: string;
+    deliveryCity?: string;
   },
 ): Promise<OrderDto> {
   return apiFetch<OrderDto>("/orders", { method: "POST", token, body });

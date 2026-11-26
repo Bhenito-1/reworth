@@ -12,6 +12,7 @@ import {
   Skeleton,
   Toast,
 } from "@reworth/ui-web";
+import { BackLink } from "../../../components/BackLink";
 import { ReviewForm } from "../../../components/trust/ReviewForm";
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
 import { DeliveryExceptionBanner } from "../../../components/DeliveryExceptionBanner";
@@ -67,6 +68,7 @@ import {
   type CreateReviewBody,
   type OrderReviewUiState,
 } from "../../../lib/trust";
+import { subscribeChat } from "../../../lib/chat-socket";
 
 function formatDeliveryDay(iso: string): string {
   const [year, month, day] = iso.slice(0, 10).split("-").map(Number);
@@ -201,6 +203,9 @@ export default function OrderDetailPage() {
         router.replace("/");
         return;
       }
+      if (quiet && err instanceof ApiError && err.status === 429) {
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Order not found");
       setOrder(null);
     } finally {
@@ -211,6 +216,17 @@ export default function OrderDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token || !orderId) return;
+    const stop = subscribeChat(token, {
+      onOrder: (update) => {
+        if (update.orderId === orderId) void load(true);
+      },
+    });
+    return stop;
+  }, [load, orderId]);
 
   useEffect(() => {
     if (!shipment) return;
@@ -523,12 +539,7 @@ export default function OrderDetailPage() {
 
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-8">
         <header className="mb-6 flex items-center justify-between gap-4">
-          <Link
-            href={ordersHref}
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Orders
-          </Link>
+          <BackLink href={ordersHref} />
           <span className="text-xl font-semibold tracking-tight">ReWorth</span>
         </header>
 
@@ -684,18 +695,29 @@ export default function OrderDetailPage() {
         {order.confirmationStatus === "PENDING" && order.status === "CREATED" ? (
           <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
             {isBuyer
-              ? "Waiting for the seller to confirm this order. Your units are reserved. You can cancel before paying."
-              : "Confirm the delivery date so the buyer can pay. The units stay reserved until you confirm, reject, or they cancel."}
+              ? "Waiting for the seller to confirm. You can cancel before paying."
+              : "Confirm the delivery date so the buyer can pay."}
           </p>
         ) : null}
-        {order.deliveryDate ? (
+        {order.fulfilmentMethod === "MEET_POINT" ? (
+          <div className="mt-2 space-y-1 text-sm">
+            {order.meetupLocationText ? (
+              <p>
+                <span className="text-[var(--rw-ink-muted)]">Meetup · </span>
+                {order.meetupLocationText}
+              </p>
+            ) : null}
+            {order.deliveryDate ? (
+              <p>
+                <span className="text-[var(--rw-ink-muted)]">Meetup date · </span>
+                {formatDeliveryDay(order.deliveryDate)}
+              </p>
+            ) : null}
+          </div>
+        ) : order.deliveryDate ? (
           <p className="mt-2 text-sm">
             Delivery date{" "}
-            {new Date(order.deliveryDate).toLocaleDateString("en-NG", {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-            })}
+            {formatDeliveryDay(order.deliveryDate)}
             {order.sellerNote ? ` · ${order.sellerNote}` : ""}
           </p>
         ) : null}
@@ -1016,12 +1038,6 @@ export default function OrderDetailPage() {
             </Button>
           ) : null}
         </div>
-
-        {order.status === "COMPLETED" && isSeller ? (
-          <p className="mt-8 text-sm text-[var(--rw-ink-muted)]">
-            Buyers rate the purchase after this order. That rating shows on your listings. Sellers do not rate buyers.
-          </p>
-        ) : null}
 
         {order.status === "COMPLETED" && isBuyer ? (
           <section className="mt-10" aria-labelledby="review-section">

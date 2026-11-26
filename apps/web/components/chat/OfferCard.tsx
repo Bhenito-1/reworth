@@ -13,6 +13,16 @@ import {
   type OfferDto,
 } from "../../lib/chat";
 import { OFFER_MULTI_UNIT_HINT_SELLER } from "../../lib/offer-copy";
+import {
+  proposalActionsClass,
+  proposalBodyClass,
+  proposalBtnClass,
+  proposalCardClass,
+  proposalLabelClass,
+  proposalLinkActionClass,
+  proposalLinkMutedClass,
+  proposalPrimaryRowClass,
+} from "./proposal-card";
 
 type Props = {
   offer: OfferDto;
@@ -22,7 +32,6 @@ type Props = {
   onReject?: () => void;
   onCounter?: () => void;
   onWithdraw?: () => void;
-  onCheckout?: () => void;
 };
 
 export function OfferCard({
@@ -33,98 +42,89 @@ export function OfferCard({
   onReject,
   onCounter,
   onWithdraw,
-  onCheckout,
 }: Props) {
   const isBuyer = meId === offer.buyerId;
   const pending = offer.status === "PENDING";
-  const accepted = offer.status === "ACCEPTED";
   const proposerId = offerProposerId(offer);
   const showRespond = canAcceptOrRejectOffer(offer, meId);
   const showCounter = canCounterOffer(offer, meId);
   const showWithdraw = canWithdrawOffer(offer, meId);
   const showSellerMultiUnitNote =
     !isBuyer && pending && showRespond && proposerId === offer.buyerId;
+  const heading =
+    proposerId === offer.sellerId && pending ? "Counter offer" : "Offer";
 
   return (
     <article
-      className="w-full min-w-0 max-w-sm rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 shadow-sm"
+      className={proposalCardClass}
       aria-label={`Offer ${offerStatusLabel(String(offer.status))}`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium text-[var(--rw-ink-muted)]">
-            {proposerId === offer.sellerId && pending ? "Counter offer" : "Offer"}
-          </p>
-          <p className="mt-1 text-2xl font-semibold tracking-tight">
-            {formatNgn({ amountKobo: offer.amountKobo })}
-          </p>
-        </div>
-        <Chip selected={pending} className="pointer-events-none shrink-0">
+      <div className="flex items-start justify-between gap-2">
+        <p className={proposalLabelClass}>{heading}</p>
+        <Chip
+          selected={pending}
+          className="pointer-events-none !min-h-0 shrink-0 !px-1.5 !py-0 !text-[10px]"
+        >
           {offerStatusLabel(String(offer.status))}
         </Chip>
       </div>
+      <p className={`${proposalBodyClass} tabular-nums text-lg font-semibold tracking-tight`}>
+        {formatNgn({ amountKobo: offer.amountKobo })}
+      </p>
       {offer.note ? (
-        <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">{offer.note}</p>
+        <p className="mt-1 text-xs leading-snug text-[var(--rw-ink-muted)]">
+          {offer.note}
+        </p>
       ) : null}
       {showSellerMultiUnitNote ? (
-        <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+        <p className="mt-1 text-xs leading-snug text-[var(--rw-ink-muted)]">
           {OFFER_MULTI_UNIT_HINT_SELLER}
         </p>
       ) : null}
       {pending ? (
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className={proposalActionsClass}>
           {showRespond ? (
-            <>
+            <div className={proposalPrimaryRowClass}>
               <Button
                 variant="primary"
                 size="sm"
+                className={proposalBtnClass}
                 disabled={busy}
                 onClick={onAccept}
               >
                 Accept
               </Button>
               <Button
-                variant="secondary"
+                variant="ghost"
                 size="sm"
+                className={`${proposalBtnClass} !border !border-[var(--rw-border)]`}
                 disabled={busy}
                 onClick={onReject}
               >
                 Reject
               </Button>
-            </>
+            </div>
           ) : null}
           {showCounter ? (
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
+              type="button"
+              className={proposalLinkActionClass}
               disabled={busy}
               onClick={onCounter}
             >
               Counter
-            </Button>
+            </button>
           ) : null}
           {showWithdraw ? (
-            <Button
-              variant="danger"
-              size="sm"
+            <button
+              type="button"
+              className={proposalLinkMutedClass}
               disabled={busy}
               onClick={onWithdraw}
             >
               Withdraw
-            </Button>
+            </button>
           ) : null}
-        </div>
-      ) : null}
-      {accepted && isBuyer && onCheckout ? (
-        <div className="mt-4">
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={busy}
-            onClick={onCheckout}
-          >
-            Complete order
-          </Button>
         </div>
       ) : null}
     </article>

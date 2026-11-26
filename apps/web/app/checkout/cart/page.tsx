@@ -1,5 +1,6 @@
-import CartCheckoutClient from "./CartCheckoutClient";
+import { redirect } from "next/navigation";
 
-export default function CartCheckoutPage() {
-  return <CartCheckoutClient />;
+/** Cart checkout uses the same page as listing checkout. */
+export default function CartCheckoutRedirect() {
+  redirect("/checkout?cart=1");
 }

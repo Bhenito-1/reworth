@@ -17,7 +17,7 @@ import { OFFER_MULTI_UNIT_HINT_BUYER } from "../../../lib/offer-copy";
 import { ListingReviews } from "../../../components/trust/ListingReviews";
 import { SwapProposalModal } from "../../../components/swap/SwapProposalModal";
 import { apiFetch, ApiError } from "../../../lib/api";
-import { getAccessToken } from "../../../lib/auth";
+import { getAccessToken, getAccessTokenUserId } from "../../../lib/auth";
 import {
   createConversation,
   createOffer,
@@ -27,17 +27,24 @@ import {
   getMeFavourites,
   unfavouriteListing,
 } from "../../../lib/discovery";
-import { addToCart, listCart } from "../../../lib/cart";
-import { CartIcon } from "../../../components/AppNav";
+import { addToCart, cartAddErrorMessage, listCart } from "../../../lib/cart";
+import {
+  fulfilmentPreferenceLabel,
+  readFulfilmentPreference,
+} from "../../../lib/fulfilment-preference";
 import { fetchRecommendations } from "../../../lib/intelligence";
 import { removeListing } from "../../../lib/inventory";
 import {
   CONDITION_LABELS,
+  listingCategoryLabel,
   sentenceCaseLabel,
   formatPostedAt,
   getListing,
   getPriceIntelligence,
+  listingBackFromParam,
   listingImageUrl,
+  listingPdpHref,
+  resolveListingFromContext,
   listingShareLinks,
   reportListing,
 } from "../../../lib/listings";
@@ -59,6 +66,7 @@ import type {
   PublicListing,
 } from "../../../lib/types";
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
+import { ListingActionButton } from "../../../components/listings/ListingActionButton";
 import {
   BOOST_DURATIONS_HOURS,
   newIdempotencyKey,
@@ -74,8 +82,10 @@ export default function ListingPdpPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
   const router = useRouter();
-  const from = useSearchParams().get("from");
-  const backHref = from && /^\/users\/[\w-]+$/.test(from) ? from : null;
+  const searchParams = useSearchParams();
+  const from = searchParams.get("from");
+  const backHref = listingBackFromParam(from);
+  const similarFrom = resolveListingFromContext(from);
 
   const [listing, setListing] = useState<PublicListing | null>(null);
   const [loading, setLoading] = useState(true);
@@ -101,7 +111,7 @@ export default function ListingPdpPage() {
   const [offerBusy, setOfferBusy] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  const [meId, setMeId] = useState<string | null>(null);
+  const [meId, setMeId] = useState<string | null>(() => getAccessTokenUserId());
   const [similar, setSimilar] = useState<PublicListing[]>([]);
   const similarInCategory = useMemo(
     () =>
@@ -180,9 +190,13 @@ export default function ListingPdpPage() {
         .then((res) => setSimilar(res.items ?? []))
         .catch(() => setSimilar([]));
 
-      void getPriceIntelligence(id)
-        .then((intel) => setPriceIntel(intel))
-        .catch(() => setPriceIntel(null));
+      if (data.status === "LIVE") {
+        void getPriceIntelligence(id)
+          .then((intel) => setPriceIntel(intel))
+          .catch(() => setPriceIntel(null));
+      } else {
+        setPriceIntel(null);
+      }
 
       if (token) {
         try {
@@ -313,6 +327,7 @@ export default function ListingPdpPage() {
       setInCart(saved.quantity);
       setQty(1);
       setCartReady(true);
+      setCartFormOpen(false);
       setToast({
         message:
           adding === 1
@@ -322,7 +337,7 @@ export default function ListingPdpPage() {
       });
     } catch (err) {
       setToast({
-        message: err instanceof ApiError ? err.message : "Could not add to cart",
+        message: cartAddErrorMessage(err),
         tone: "error",
       });
     } finally {
@@ -432,10 +447,6 @@ export default function ListingPdpPage() {
       router.push("/");
       return;
     }
-    const title = listing.title || "Untitled";
-    if (!window.confirm(`Delete the draft “${title}”? This cannot be undone.`)) {
-      return;
-    }
     setDeleting(true);
     try {
       await removeListing(token, listing.id);
@@ -504,15 +515,24 @@ export default function ListingPdpPage() {
   const images = [...listing.images].sort((a, b) => a.sortOrder - b.sortOrder);
   const photoIndex =
     images.length === 0 ? 0 : Math.min(imageIndex, images.length - 1);
-  const isOwner = Boolean(meId && meId === listing.seller.id);
+  const viewerId = meId ?? getAccessTokenUserId();
+  const isOwner = Boolean(viewerId && viewerId === listing.seller.id);
   const isLive = listing.status === "LIVE";
   const isDraft = listing.status === "DRAFT";
+  const inReview = listing.status === "UNDER_REVIEW";
   const isSwap =
     listing.sellingMode === "SWAP";
   const isGiveAway = listing.sellingMode === "GIVE_AWAY";
+  const showBuyerCart =
+    !isGiveAway &&
+    !isSwap &&
+    !isOwner &&
+    isLive &&
+    listing.status !== "SOLD";
+  const showMakeOffer = showBuyerCart && listing.negotiable;
   const posted = formatPostedAt(listing.publishedAt ?? listing.createdAt);
-
-  const fulfilment = ["ReWorth delivery"];
+  const categoryLabel = listingCategoryLabel(listing);
+  const fulfilmentPref = readFulfilmentPreference(listing);
 
   const inspected = resolveInspectedBadge(listing);
   const authLabel = luxuryAuthLabel(listing);
@@ -530,31 +550,34 @@ export default function ListingPdpPage() {
         }}
       />
 
-      <div className="relative z-10 mx-auto max-w-3xl px-4 pb-16 pt-6 sm:px-8">
-        <header className="mb-6 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            {backHref ? (
-              <Link
-                href={backHref}
-                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-              >
-                ← Back
-              </Link>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-3">
-            {isOwner ? null : (
-              <button
-                type="button"
-                onClick={() => setReportOpen(true)}
-                className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-              >
-                Report
-              </button>
-            )}
-          </div>
-        </header>
+      <div className="relative z-20 mx-auto w-full max-w-3xl pr-3 pt-[max(0.5rem,env(safe-area-inset-top))] pl-[max(0.25rem,env(safe-area-inset-left))] sm:pr-6 sm:pt-3 sm:pl-[max(0.5rem,env(safe-area-inset-left))] lg:pr-8">
+        <div className="flex min-h-11 items-center justify-between gap-3 pb-3 sm:pb-4">
+          {backHref ? (
+            <Link
+              href={backHref}
+              aria-label="Back"
+              className="-ml-1 inline-flex h-11 min-w-[2.75rem] shrink-0 items-center justify-start pl-0 text-2xl leading-none text-[var(--rw-ink)] hover:text-[var(--rw-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)] focus-visible:ring-offset-2"
+            >
+              ←
+            </Link>
+          ) : (
+            <span className="h-11 w-0 shrink-0" aria-hidden />
+          )}
+          {isOwner ? (
+            <span className="h-11 w-0 shrink-0" aria-hidden />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setReportOpen(true)}
+              className="shrink-0 px-2 py-2 text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline sm:text-base"
+            >
+              Report
+            </button>
+          )}
+        </div>
+      </div>
 
+      <div className="relative z-10 mx-auto max-w-3xl px-3 pb-[max(4rem,env(safe-area-inset-bottom))] sm:px-6 lg:px-8">
         <section aria-label="Photo gallery" className="rw-fade-up">
           {images.length === 0 ? (
             <div className="flex aspect-[4/5] max-h-[70dvh] items-center justify-center rounded-[var(--rw-radius-lg)] bg-[var(--rw-border)] text-sm text-[var(--rw-ink-muted)] sm:aspect-[3/4] sm:max-h-[min(70dvh,36rem)] lg:aspect-[16/10] lg:max-h-[min(72dvh,42rem)]">
@@ -597,7 +620,7 @@ export default function ListingPdpPage() {
           )}
         </section>
 
-        <section className="rw-fade-up-delay mt-8">
+        <section className="rw-fade-up-delay mt-8 min-w-0">
           <p className="text-3xl font-semibold tracking-tight sm:text-4xl">
             {isGiveAway
               ? "Free"
@@ -609,7 +632,11 @@ export default function ListingPdpPage() {
                 per unit
                 {listing.status === "SOLD"
                   ? " · Sold"
-                  : listing.status === "RESERVED"
+                  : listing.status === "UNDER_REVIEW"
+                    ? " · In review"
+                    : listing.status === "REJECTED"
+                      ? " · Not published"
+                      : listing.status === "RESERVED"
                     ? " · Reserved"
                     : listing.status === "EXPIRED"
                       ? " · No longer listed"
@@ -690,6 +717,12 @@ export default function ListingPdpPage() {
             </p>
           ) : null}
           <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-sm text-[var(--rw-ink-muted)]">
+            {categoryLabel ? (
+              <>
+                <span>{categoryLabel}</span>
+                <span aria-hidden>·</span>
+              </>
+            ) : null}
             <span>
               {CONDITION_LABELS[listing.condition] ?? listing.condition}
             </span>
@@ -702,9 +735,15 @@ export default function ListingPdpPage() {
               {posted}
             </time>
           </p>
-          {priceIntel?.confidenceLabel ? (
+          {isLive && priceIntel?.confidenceLabel ? (
             <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
               {priceIntel.confidenceLabel}
+            </p>
+          ) : null}
+          {isOwner && inReview ? (
+            <p className="mt-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-3 text-sm text-[var(--rw-ink-muted)]">
+              This listing is in review and is not visible on the marketplace yet.
+              You’ll get a notification when it’s approved.
             </p>
           ) : null}
           {listing.movingSale ? (
@@ -729,6 +768,232 @@ export default function ListingPdpPage() {
                   : ""}
               </Link>
             </p>
+          ) : null}
+          {!isOwner && isLive && id ? (
+            <div className="mt-6 flex min-w-0 flex-wrap items-center gap-2">
+              <ListingActionButton
+                type="button"
+                variant={saved ? "softActive" : "soft"}
+                disabled={saving}
+                onClick={() => void toggleSave()}
+                aria-label={saved ? "Remove from wishlist" : "Add to wishlist"}
+                aria-pressed={saved}
+              >
+                <span
+                  aria-hidden
+                  className={
+                    saved ? "text-rose-600" : "text-[var(--rw-ink-muted)]"
+                  }
+                >
+                  {saved ? "♥" : "♡"}
+                </span>
+                {saved ? "Saved" : "Save"}
+              </ListingActionButton>
+              <div className="relative">
+                <ListingActionButton
+                  type="button"
+                  variant="soft"
+                  onClick={() => setShareOpen((open) => !open)}
+                  aria-label="Share listing"
+                  aria-expanded={shareOpen}
+                >
+                  Share
+                </ListingActionButton>
+                {shareOpen ? (
+                  <div className="absolute left-0 top-full z-20 mt-2 w-[min(13rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-1.5 shadow-lg sm:left-auto sm:right-0">
+                    {(
+                      [
+                        ["WhatsApp", "whatsapp"],
+                        ["Facebook", "facebook"],
+                        ["X", "x"],
+                      ] as const
+                    ).map(([label, key]) => {
+                      const links = listingShareLinks(
+                        id,
+                        listing?.title ?? "ReWorth listing",
+                      );
+                      return (
+                        <a
+                          key={key}
+                          href={links[key]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block rounded-md px-3 py-2 text-sm font-medium hover:bg-[var(--rw-bg)]"
+                          onClick={() => setShareOpen(false)}
+                        >
+                          {label}
+                        </a>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      className="block w-full rounded-md px-3 py-2 text-left text-sm font-medium hover:bg-[var(--rw-bg)]"
+                      onClick={() => void copyShareLink()}
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              {isSwap ? (
+                <ListingActionButton
+                  type="button"
+                  variant="primary"
+                  onClick={() => {
+                    if (!requireAuth()) return;
+                    setSwapOpen(true);
+                  }}
+                >
+                  Swap
+                </ListingActionButton>
+              ) : null}
+            </div>
+          ) : null}
+          {showBuyerCart ? (
+            <div
+              className={`flex w-full min-w-0 flex-col gap-3 rounded-xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 shadow-sm ${!isOwner && isLive ? "mt-3" : "mt-6"}`}
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {!cartFormOpen ? (
+                  <ListingActionButton
+                    type="button"
+                    variant="primary"
+                    disabled={cartBusy}
+                    onClick={() => {
+                      if (meId && meId === listing.seller.id) {
+                        setToast({
+                          message: "You can't add your own listing to the cart",
+                          tone: "warn",
+                        });
+                        return;
+                      }
+                      if (!requireAuth()) return;
+                      if (stock < 1) {
+                        setToast({
+                          message: "No units available for this listing.",
+                          tone: "warn",
+                        });
+                        return;
+                      }
+                      if (remaining < 1) {
+                        setToast({
+                          message:
+                            inCart > 0
+                              ? "All available units are already in your cart."
+                              : "No units available for this listing.",
+                          tone: "warn",
+                        });
+                        return;
+                      }
+                      if (remaining === 1) {
+                        setQty(1);
+                        void saveToCart();
+                        return;
+                      }
+                      setQty(1);
+                      setCartFormOpen(true);
+                    }}
+                  >
+                    {cartBusy ? "Adding…" : "Add to cart"}
+                  </ListingActionButton>
+                ) : null}
+                {showMakeOffer ? (
+                  <ListingActionButton
+                    type="button"
+                    variant="accent"
+                    onClick={() => {
+                      if (!requireAuth()) return;
+                      setOfferOpen(true);
+                    }}
+                  >
+                    Make offer
+                  </ListingActionButton>
+                ) : null}
+              </div>
+              {stock < 1 ? (
+                <p className="text-sm font-medium text-[var(--rw-ink-muted)]">
+                  No units left
+                </p>
+              ) : null}
+              {inCart > 0 ? (
+                <p className="text-sm text-[var(--rw-ink-muted)]">
+                  {inCart} already in your cart
+                  {remaining > 0 ? ` · ${remaining} still available` : ""}
+                </p>
+              ) : null}
+              {cartFormOpen && remaining > 1 ? (
+                <form
+                  className="w-full space-y-4 border-t border-[var(--rw-border)] pt-4"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (meId && meId === listing.seller.id) {
+                      setToast({
+                        message: "You can't add your own listing to the cart",
+                        tone: "warn",
+                      });
+                      return;
+                    }
+                    void saveToCart();
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">How many units?</p>
+                    <button
+                      type="button"
+                      className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
+                      onClick={() => setCartFormOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="h-11 w-11 shrink-0 rounded-full border border-[var(--rw-border)] touch-manipulation sm:h-10 sm:w-10"
+                      onClick={() => setQty((n) => Math.max(1, n - 1))}
+                      aria-label="Decrease quantity"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-6 text-center text-sm font-semibold">
+                      {qty}
+                    </span>
+                    <button
+                      type="button"
+                      className="h-11 w-11 shrink-0 rounded-full border border-[var(--rw-border)] touch-manipulation disabled:opacity-40 sm:h-10 sm:w-10"
+                      disabled={qty >= remaining}
+                      onClick={() =>
+                        setQty((n) => Math.min(remaining, n + 1))
+                      }
+                      aria-label="Increase quantity"
+                    >
+                      +
+                    </button>
+                    <span className="text-sm text-[var(--rw-ink-muted)]">
+                      {remaining} available
+                    </span>
+                  </div>
+                  <ListingActionButton
+                    type="submit"
+                    variant="primary"
+                    className="w-full max-w-full sm:w-auto"
+                    disabled={cartBusy}
+                  >
+                    {cartBusy ? "Adding…" : `Add ${Math.min(qty, remaining)} to cart`}
+                  </ListingActionButton>
+                </form>
+              ) : null}
+              {inCart > 0 || cartReady ? (
+                <ListingActionButton
+                  type="button"
+                  variant="soft"
+                  className="!w-auto self-start"
+                  onClick={() => router.push("/cart")}
+                >
+                  Go to cart
+                </ListingActionButton>
+              ) : null}
+            </div>
           ) : null}
           {isOwner && isLive && !listing.movingSale ? (
             <p className="mt-3 text-sm">
@@ -757,73 +1022,7 @@ export default function ListingPdpPage() {
                 {deleting ? "Deleting…" : "Delete draft"}
               </Button>
             </div>
-          ) : (
-          <div className="mt-5 flex flex-wrap items-center gap-2">
-            {isOwner ? null : (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={saving}
-              onClick={() => void toggleSave()}
-              aria-label={saved ? "Remove from wishlist" : "Add to wishlist"}
-              aria-pressed={saved}
-            >
-              <span aria-hidden style={{ color: saved ? "#DC2626" : "#5C636A" }}>
-                {saved ? "♥" : "♡"}
-              </span>
-              <span className="ml-1.5">{saved ? "Saved" : "Save"}</span>
-            </Button>
-            )}
-            {isLive && id ? (
-            <div className="relative">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setShareOpen((open) => !open)}
-                aria-label="Share listing"
-                aria-expanded={shareOpen}
-              >
-                Share
-              </Button>
-              {shareOpen ? (
-                <div className="absolute left-0 z-20 mt-2 w-52 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-2 shadow-lg">
-                  {(
-                    [
-                      ["WhatsApp", "whatsapp"],
-                      ["Facebook", "facebook"],
-                      ["X", "x"],
-                    ] as const
-                  ).map(([label, key]) => {
-                    const links = listingShareLinks(
-                      id,
-                      listing?.title ?? "ReWorth listing",
-                    );
-                    return (
-                      <a
-                        key={key}
-                        href={links[key]}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block rounded-md px-3 py-2 text-sm font-medium hover:bg-[var(--rw-bg)]"
-                        onClick={() => setShareOpen(false)}
-                      >
-                        {label}
-                      </a>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    className="block w-full rounded-md px-3 py-2 text-left text-sm font-medium hover:bg-[var(--rw-bg)]"
-                    onClick={() => void copyShareLink()}
-                  >
-                    Copy link
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            ) : null}
-          </div>
-          )}
+          ) : null}
 
           {isOwner && isLive ? (
             <OwnerMonetization
@@ -846,10 +1045,10 @@ export default function ListingPdpPage() {
 
         {meId === listing.seller.id ? null : (
         <section
-          className="mt-8 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/90 p-4"
+          className="mt-8 rounded-xl border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 shadow-sm"
           aria-label="Seller"
         >
-          <div className="flex items-start gap-3">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
             <Link
               href={`/users/${listing.seller.id}?from=/listings/${listing.id}`}
               className="flex min-w-0 flex-1 items-start gap-3 rounded-[var(--rw-radius)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
@@ -884,16 +1083,16 @@ export default function ListingPdpPage() {
                 </p>
               </div>
             </Link>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="shrink-0"
+            <ListingActionButton
+              type="button"
+              variant="accent"
+              className="w-fit shrink-0 self-start sm:self-auto"
               disabled={chatBusy}
               aria-busy={chatBusy}
               onClick={() => void startChat()}
             >
-              Chat
-            </Button>
+              {chatBusy ? "Opening…" : "Chat"}
+            </ListingActionButton>
           </div>
           <Link
             href={`/users/${listing.seller.id}?from=/listings/${listing.id}`}
@@ -913,133 +1112,15 @@ export default function ListingPdpPage() {
           <p className="mt-3 whitespace-pre-wrap leading-relaxed text-[var(--rw-ink-muted)]">
             {listing.description || "No description provided."}
           </p>
-          {!isGiveAway && !isSwap && meId !== listing.seller.id && listing.status !== "SOLD" ? (
-            <div className="mt-6 flex flex-col items-center gap-3">
-              <CartIcon className="h-20 w-20 text-[var(--rw-ink-muted)]" />
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  className="px-5"
-                  disabled={stock < 1 || remaining < 1}
-                  onClick={() => {
-                    setQty(1);
-                    setCartFormOpen(true);
-                  }}
-                >
-                  {remaining < 1 && inCart > 0 ? "In your cart" : "Add to cart"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    if (!requireAuth()) return;
-                    setOfferOpen(true);
-                  }}
-                >
-                  Make offer
-                </Button>
-              </div>
-              {stock < 1 ? (
-                <p className="mt-2 text-sm font-medium text-[var(--rw-ink-muted)]">
-                  No units left
-                </p>
-              ) : null}
-              {inCart > 0 ? (
-                <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-                  {inCart} already in your cart
-                  {remaining > 0 ? ` · ${remaining} still available` : ""}
-                </p>
-              ) : null}
-              {cartFormOpen && remaining > 0 ? (
-                <form
-                  className="mt-4 w-full space-y-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (meId && meId === listing.seller.id) {
-                      setToast({
-                        message: "You can't add your own listing to the cart",
-                        tone: "warn",
-                      });
-                      return;
-                    }
-                    void saveToCart();
-                  }}
-                >
-                  <p className="text-sm font-medium">How many units?</p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="h-10 w-10 rounded-full border border-[var(--rw-border)]"
-                      onClick={() => setQty((n) => Math.max(1, n - 1))}
-                      aria-label="Decrease quantity"
-                    >
-                      −
-                    </button>
-                    <span className="min-w-6 text-center text-sm font-semibold">
-                      {qty}
-                    </span>
-                    <button
-                      type="button"
-                      className="h-10 w-10 rounded-full border border-[var(--rw-border)] disabled:opacity-40"
-                      disabled={qty >= remaining}
-                      onClick={() =>
-                        setQty((n) => Math.min(remaining, n + 1))
-                      }
-                      aria-label="Increase quantity"
-                    >
-                      +
-                    </button>
-                    <span className="text-sm text-[var(--rw-ink-muted)]">
-                      {remaining} available
-                    </span>
-                  </div>
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    className="w-full"
-                    disabled={cartBusy}
-                  >
-                    {cartBusy ? "Adding…" : `Add ${Math.min(qty, remaining)} to cart`}
-                  </Button>
-                </form>
-              ) : null}
-              {inCart > 0 || cartReady ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="w-full"
-                  onClick={() => router.push("/cart")}
-                >
-                  Go to cart
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
         </section>
 
         <section className="mt-8" aria-labelledby="pdp-delivery">
           <h2 id="pdp-delivery" className="text-lg font-semibold">
-            Delivery options
+            Fulfilment preference
           </h2>
-          {fulfilment.length ? (
-            <ul className="mt-3 flex flex-wrap gap-2">
-              {fulfilment.map((f) => (
-                <li
-                  key={f}
-                  className="rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-1.5 text-sm"
-                >
-                  {f}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-3 text-sm text-[var(--rw-ink-muted)]">
-              Seller has not set fulfilment options.
-            </p>
-          )}
+          <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
+            Seller prefers {fulfilmentPreferenceLabel(fulfilmentPref).toLowerCase()}.
+          </p>
         </section>
 
         {listing.buyerProtection ? (
@@ -1050,35 +1131,14 @@ export default function ListingPdpPage() {
             <p className="text-sm font-semibold text-[var(--rw-accent)]">
               Buyer protection
             </p>
-            <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
-              Pay on ReWorth when available — funds held until you confirm.
-            </p>
           </aside>
-        ) : null}
-
-        {isSwap && meId !== listing.seller.id ? (
-          <div className="mt-8 flex flex-col items-center gap-3">
-            <p className="text-center text-sm font-medium text-[var(--rw-ink-muted)]">
-              Interested in swapping? Chat with the seller
-            </p>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => {
-                if (!requireAuth()) return;
-                setSwapOpen(true);
-              }}
-            >
-              Swap
-            </Button>
-          </div>
         ) : null}
 
         {isGiveAway && meId !== listing.seller.id ? (
           <div className="mt-8 flex justify-center">
-            <Button
+            <ListingActionButton
+              type="button"
               variant="primary"
-              size="sm"
               onClick={() => {
                 if (!id) return;
                 if (!requireAuth()) return;
@@ -1086,7 +1146,7 @@ export default function ListingPdpPage() {
               }}
             >
               Get this gift
-            </Button>
+            </ListingActionButton>
           </div>
         ) : null}
 
@@ -1095,10 +1155,13 @@ export default function ListingPdpPage() {
             <h2 id="similar-heading" className="text-lg font-semibold">
               Similar items
             </h2>
-            <ul className="mt-4 flex gap-3 overflow-x-auto pb-2">
+            <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
               {similarInCategory.map((item) => (
-                <li key={item.id} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
-                  <DiscoveryListingCard listing={item} />
+                <li key={item.id} className="min-w-0">
+                  <DiscoveryListingCard
+                    listing={item}
+                    href={listingPdpHref(item.id, similarFrom ?? undefined)}
+                  />
                 </li>
               ))}
             </ul>
