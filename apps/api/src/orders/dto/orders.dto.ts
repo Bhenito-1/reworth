@@ -51,6 +51,11 @@ export class CreateOrderDto {
   @IsUUID()
   meetPointId?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  meetupLocationText?: string;
+
   /** Units to buy. Per-unit price applies; negotiated (offer) checkouts use agreed unit price × quantity. */
   @IsOptional()
   @Type(() => Number)
@@ -65,9 +70,23 @@ export class CreateOrderDto {
   @MaxLength(500)
   deliveryAddress?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  deliveryLine1?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  deliveryCommunity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  deliveryCity?: string;
+
   /**
-   * When set (e.g. multi-item cart checkout), use this fee instead of recomputing.
-   * Second+ orders from the same seller in one checkout should pass 0.
+   * When set (e.g. cart checkout), use this fee instead of recomputing.
    */
   @IsOptional()
   @Type(() => Number)

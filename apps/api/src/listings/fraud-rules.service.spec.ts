@@ -45,7 +45,7 @@ describe('FraudRulesService', () => {
     expect(result.riskEvents[0].kind).toBe('DUPLICATE_IMAGE');
   });
 
-  it('flags low price under 30% of estimated low', async () => {
+  it('does not flag low price (estimate helper is static; not used for risk)', async () => {
     const prisma = buildPrisma();
     (prisma.listing.findUnique as jest.Mock).mockResolvedValue({
       id: 'listing-tv',
@@ -53,14 +53,13 @@ describe('FraudRulesService', () => {
       title: 'Samsung Smart TV 55',
       model: '55-inch',
       originalPriceKobo: null,
-      priceKobo: 50_000_00, // ₦50k — well under 30% of ₦280k
+      priceKobo: 50_000_00,
       images: [],
     });
 
     const service = new FraudRulesService(prisma as never);
     const result = await service.evaluateListing('listing-tv');
-    expect(result.forceUnderReview).toBe(true);
-    expect(result.flags).toContain('LOW_PRICE');
-    expect(result.riskEvents.some((e) => e.kind === 'LOW_PRICE')).toBe(true);
+    expect(result.forceUnderReview).toBe(false);
+    expect(result.flags).not.toContain('LOW_PRICE');
   });
 });

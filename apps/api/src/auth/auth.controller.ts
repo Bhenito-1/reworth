@@ -13,7 +13,7 @@ import {
 } from './dto/auth.dto';
 
 @Controller('auth')
-@Throttle({ auth: { limit: 20, ttl: 60_000 } })
+@Throttle({ default: { limit: 20, ttl: 60_000 } })
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 

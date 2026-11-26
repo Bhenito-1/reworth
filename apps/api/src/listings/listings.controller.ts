@@ -62,6 +62,26 @@ export class ListingsController {
     return this.listings.listMine(user.id);
   }
 
+  @Get('listings/:id/delivery-estimate')
+  @UseGuards(JwtAuthGuard)
+  estimateDelivery(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Query('toLat') toLat: string,
+    @Query('toLng') toLng: string,
+    @Query('deliveryLine1') deliveryLine1?: string,
+    @Query('deliveryCommunity') deliveryCommunity?: string,
+    @Query('deliveryCity') deliveryCity?: string,
+  ) {
+    const lat = Number(toLat);
+    const lng = Number(toLng);
+    return this.listings.estimateDelivery(id, user.id, lat, lng, {
+      line1: deliveryLine1,
+      community: deliveryCommunity,
+      city: deliveryCity,
+    });
+  }
+
   @Get('listings/:id')
   @UseGuards(OptionalJwtAuthGuard)
   getOne(

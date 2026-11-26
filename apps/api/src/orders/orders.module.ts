@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { AddressesModule } from '../addresses/addresses.module';
 import { AuthModule } from '../auth/auth.module';
 import { DeliveryModule } from '../delivery/delivery.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -13,6 +14,7 @@ import { VerticalsModule } from '../verticals/verticals.module';
 import { AdminAlertsModule } from '../admin/admin-alerts.module';
 import { AutoReleaseScheduler } from './auto-release.scheduler';
 import { HomeModule } from '../home/home.module';
+import { ChatModule } from '../chat/chat.module';
 import { SwapModule } from '../swap/swap.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { OrdersController } from './orders.controller';
@@ -36,6 +38,7 @@ export function createPaymentProvider(config: ConfigService) {
 @Module({
   imports: [
     PrismaModule,
+    AddressesModule,
     AuthModule,
     ConfigModule,
     NotificationsModule,
@@ -46,6 +49,7 @@ export function createPaymentProvider(config: ConfigService) {
     ReferralsModule,
     InventoryModule,
     HomeModule,
+    ChatModule,
     SwapModule,
   ],
   controllers: [OrdersController],

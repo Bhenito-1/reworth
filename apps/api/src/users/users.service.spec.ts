@@ -1,3 +1,4 @@
+import { mockAddressesService } from '../test/addresses.mock';
 import { UsersService } from './users.service';
 
 describe('UsersService profile privacy', () => {
@@ -6,6 +7,7 @@ describe('UsersService profile privacy', () => {
       user: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'u1',
+          memberReference: 'RW-MBR-TESTUSER01',
           phone: '+2348012345678',
           email: null,
           status: 'ACTIVE',
@@ -32,7 +34,11 @@ describe('UsersService profile privacy', () => {
       },
     };
     const audit = { log: jest.fn() };
-    const service = new UsersService(prisma as never, audit as never);
+    const service = new UsersService(
+      prisma as never,
+      audit as never,
+      mockAddressesService(),
+    );
     const me = await service.getMe('u1');
     expect(me.profile?.fullName).toBeNull();
     expect(me.profile?.showFullName).toBe(false);
@@ -44,6 +50,7 @@ describe('UsersService profile privacy', () => {
       user: {
         findUnique: jest.fn().mockResolvedValue({
           id: 'u1',
+          memberReference: 'RW-MBR-TESTUSER02',
           phone: null,
           email: 'a@b.com',
           status: 'ACTIVE',
@@ -69,7 +76,11 @@ describe('UsersService profile privacy', () => {
         }),
       },
     };
-    const service = new UsersService(prisma as never, { log: jest.fn() } as never);
+    const service = new UsersService(
+      prisma as never,
+      { log: jest.fn() } as never,
+      mockAddressesService(),
+    );
     const me = await service.getMe('u1');
     expect(me.profile?.fullName).toBe('Ada Lovelace');
   });

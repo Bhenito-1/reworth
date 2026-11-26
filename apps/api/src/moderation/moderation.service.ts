@@ -35,7 +35,7 @@ export type ModerationEvalResult = {
   signals: string[];
   rejectionReason?: string;
   moderationId?: string;
-  /** Roboflow evidence asked for admin review. Not itself a reject. */
+  /** Image-title evidence asked for admin review. Not itself a reject. */
   visionNeedsReview: boolean;
 };
 
@@ -623,7 +623,7 @@ export class ModerationService {
       this.logger.error({ err, listingId }, 'Vision analysis failed');
       return visionFailureResult({
         code: 'UNAVAILABLE',
-        message: 'Roboflow image-title check is unavailable',
+        message: 'Image-title check is unavailable',
       });
     }
   }

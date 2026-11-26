@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { BackLink } from "../../../../components/BackLink";
 import { useParams } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Skeleton } from "@reworth/ui-web";
@@ -51,12 +52,7 @@ export default function ShareableBundlePage() {
 
       <div className="relative z-10 mx-auto max-w-3xl px-4 pb-16 pt-6 sm:px-6">
         <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/ask"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Ask ReWorth
-          </Link>
+          <BackLink href="/ask" />
           <span className="text-xl font-semibold tracking-tight">ReWorth</span>
         </header>
 

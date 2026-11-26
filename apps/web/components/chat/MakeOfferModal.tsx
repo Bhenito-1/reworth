@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { nairaToKobo } from "@reworth/shared";
 import { Button, Input, Modal } from "@reworth/ui-web";
-import { OFFER_MULTI_UNIT_HINT } from "../../lib/offer-copy";
+import { OFFER_MULTI_UNIT_HINT_BUYER } from "../../lib/offer-copy";
 
 type Props = {
   open: boolean;
@@ -40,7 +40,7 @@ export function MakeOfferModal({
   return (
     <Modal open={open} onClose={onClose} title={title}>
       <div className="flex flex-col gap-4">
-        <p className="text-sm text-[var(--rw-ink-muted)]">{OFFER_MULTI_UNIT_HINT}</p>
+        <p className="text-sm text-[var(--rw-ink-muted)]">{OFFER_MULTI_UNIT_HINT_BUYER}</p>
         <Input
           label="Amount (₦)"
           inputMode="decimal"

@@ -1,6 +1,10 @@
 import type { PublicListingDto } from '../listings/public-listing.mapper';
 import { toPublicListing } from '../listings/public-listing.mapper';
 import type { PrismaService } from '../prisma/prisma.service';
+import {
+  buildListingTextSearchOrClause,
+  listingMatchesSearchQuery,
+} from '../search/search-text';
 
 export type SearchFilters = {
   q?: string;
@@ -27,6 +31,10 @@ export type SearchFilters = {
   viewerId?: string | null;
   /** Precomputed Prisma visibility fragment */
   visibilityWhere?: Record<string, unknown>;
+  /** Resolved server-side — listing.city values that match the filter */
+  cityMatch?: string[];
+  /** Resolved server-side — listing.community values that match the filter */
+  communityMatch?: string[];
 };
 
 export type SearchFacets = {
@@ -74,6 +82,18 @@ const listingInclude = {
     },
   },
 } as const;
+
+function appendWhereAnd(
+  where: Record<string, unknown>,
+  clause: Record<string, unknown>,
+): void {
+  const and = Array.isArray(where.AND)
+    ? where.AND
+    : where.AND
+      ? [where.AND]
+      : [];
+  where.AND = [...and, clause];
+}
 
 export function haversineKm(
   lat1: number,
@@ -130,6 +150,7 @@ type ListingRow = {
   addressPrivate?: string | null;
   categoryId?: string | null;
   category?: { id: string; slug: string; name: string } | null;
+  subcategory?: { id: string; slug: string; name: string } | null;
   images?: Array<{
     id: string;
     sortOrder: number;
@@ -153,22 +174,6 @@ function isVerifiedSeller(listing: ListingRow): boolean {
       (v) => v.level === 'L3_IDENTITY' && v.status === 'VERIFIED',
     ),
   );
-}
-
-function matchesKeyword(listing: ListingRow, q: string): boolean {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  const hay = [
-    listing.title,
-    listing.description,
-    listing.brand ?? '',
-    listing.model ?? '',
-    listing.category?.name ?? '',
-    listing.category?.slug ?? '',
-  ]
-    .join(' ')
-    .toLowerCase();
-  return needle.split(/\s+/).every((token) => hay.includes(token));
 }
 
 function buildFacets(rows: ListingRow[]): SearchFacets {
@@ -232,11 +237,37 @@ export class PostgresFullTextSearchProvider implements SearchProvider {
       where.AND = [filters.visibilityWhere];
     }
 
-    if (filters.categoryId) where.categoryId = filters.categoryId;
-    if (filters.subcategoryId) where.subcategoryId = filters.subcategoryId;
+    if (filters.subcategoryId) {
+      where.subcategoryId = filters.subcategoryId;
+    } else if (filters.categoryId) {
+      const categoryClause = {
+        OR: [
+          { categoryId: filters.categoryId },
+          { subcategory: { parentId: filters.categoryId } },
+        ],
+      };
+      const and = Array.isArray(where.AND)
+        ? where.AND
+        : where.AND
+          ? [where.AND]
+          : [];
+      where.AND = [...and, categoryClause];
+    }
     if (filters.condition) where.condition = filters.condition;
     if (filters.communityId) where.communityId = filters.communityId;
-    if (filters.city) where.city = filters.city;
+    if (filters.cityMatch?.length) {
+      appendWhereAnd(where, {
+        OR: filters.cityMatch.map((v) => ({
+          city: { equals: v, mode: 'insensitive' },
+        })),
+      });
+    } else if (filters.city?.trim()) {
+      appendWhereAnd(where, {
+        OR: [
+          { city: { equals: filters.city.trim(), mode: 'insensitive' } },
+        ],
+      });
+    }
     if (filters.deliveryAvailable) where.fulfilmentDelivery = true;
     const priceMin = filters.priceMinKobo;
     const priceMax = filters.priceMaxKobo;
@@ -246,23 +277,37 @@ export class PostgresFullTextSearchProvider implements SearchProvider {
         ...(priceMax != null ? { lte: priceMax } : {}),
       };
     }
-    if (filters.community) {
-      where.community = {
-        equals: filters.community,
-        mode: 'insensitive',
-      };
+    if (filters.communityMatch?.length) {
+      appendWhereAnd(where, {
+        OR: filters.communityMatch.map((v) => ({
+          community: { equals: v, mode: 'insensitive' },
+        })),
+      });
+    } else if (filters.community?.trim()) {
+      appendWhereAnd(where, {
+        OR: [
+          {
+            community: {
+              equals: filters.community.trim(),
+              mode: 'insensitive',
+            },
+          },
+        ],
+      });
     }
     if (filters.listedAfter) {
       where.publishedAt = { gte: new Date(filters.listedAfter) };
     }
-    if (filters.q?.trim()) {
-      const q = filters.q.trim();
-      where.OR = [
-        { title: { contains: q, mode: 'insensitive' } },
-        { description: { contains: q, mode: 'insensitive' } },
-        { brand: { contains: q, mode: 'insensitive' } },
-        { model: { contains: q, mode: 'insensitive' } },
-      ];
+    const textClause = filters.q?.trim()
+      ? buildListingTextSearchOrClause(filters.q)
+      : null;
+    if (textClause) {
+      const and = Array.isArray(where.AND)
+        ? where.AND
+        : where.AND
+          ? [where.AND]
+          : [];
+      where.AND = [...and, textClause];
     }
 
     const rows = (await this.prisma.listing.findMany({
@@ -273,7 +318,7 @@ export class PostgresFullTextSearchProvider implements SearchProvider {
     })) as unknown as ListingRow[];
 
     let filtered = rows.filter((row) => {
-      if (filters.q && !matchesKeyword(row, filters.q)) return false;
+      if (filters.q && !listingMatchesSearchQuery(row, filters.q)) return false;
       if (filters.verifiedOnly && !isVerifiedSeller(row)) return false;
       return true;
     });

@@ -8,7 +8,7 @@ import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListin
 import { ApiError } from "../../lib/api";
 import { CONDITION_LABELS } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
-import { addToCart } from "../../lib/cart";
+import { addToCart, cartAddErrorMessage } from "../../lib/cart";
 import {
   buildSearchQueryString,
   compactFilters,
@@ -97,10 +97,7 @@ export default function MyPage() {
       await addToCart(token, listing.id);
       setToast({ message: "Added to cart", tone: "success" });
     } catch (err) {
-      setToast({
-        message: err instanceof ApiError ? err.message : "Could not add to cart",
-        tone: "error",
-      });
+      setToast({ message: cartAddErrorMessage(err), tone: "error" });
     }
   }
 

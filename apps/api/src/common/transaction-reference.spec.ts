@@ -1,4 +1,5 @@
 import {
+  newMemberReference,
   newOrderReference,
   newPaymentReference,
 } from './transaction-reference';
@@ -12,6 +13,11 @@ describe('transaction-reference', () => {
   it('generates prefixed payment references', () => {
     const ref = newPaymentReference();
     expect(ref).toMatch(/^RW-PAY-[A-Z0-9]{8,12}$/);
+  });
+
+  it('generates prefixed member references', () => {
+    const ref = newMemberReference();
+    expect(ref).toMatch(/^RW-MBR-[A-Z0-9]{8,12}$/);
   });
 
   it('generates distinct values', () => {

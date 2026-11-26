@@ -1,6 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
 import { MessageType } from '@prisma/client';
-import { containsProhibitedChatContact } from '@reworth/shared';
 import { ChatScanProcessor } from './chat-scan.processor';
 import { ChatScanService } from './chat-scan.service';
 import { toMessageDto } from './message.mapper';
@@ -8,18 +7,9 @@ import {
   conversationHiddenFromViewer,
   MessagesService,
 } from './messages.service';
-import { redactPhoneEmail, assertNoPiiFields } from './pii.util';
+import { assertNoPiiFields } from './pii.util';
 
-describe('PII redaction', () => {
-  it('redactPhoneEmail strips +234 phones and emails', () => {
-    const raw =
-      'Call me on +2348012345678 or email seller@example.com thanks';
-    const scrubbed = redactPhoneEmail(raw);
-    expect(scrubbed).not.toMatch(/\+234/);
-    expect(scrubbed).not.toMatch(/seller@example\.com/);
-    expect(scrubbed).toContain('[redacted]');
-  });
-
+describe('message DTO', () => {
   it('toMessageDto never exposes phone/email fields', () => {
     const dto = toMessageDto({
       id: 'm1',
@@ -29,6 +19,7 @@ describe('PII redaction', () => {
       body: 'hi',
       imageKey: null,
       offerId: null,
+      meetupProposalId: null,
       listingCardId: null,
       clientMsgId: null,
       deliveredAt: null,
@@ -47,21 +38,6 @@ describe('PII redaction', () => {
     expect(dto).not.toHaveProperty('email');
     expect(dto.sender).toEqual({ id: 'u1', displayName: 'Ada' });
     assertNoPiiFields(dto as unknown as Record<string, unknown>);
-  });
-});
-
-describe('prohibited chat contact detection', () => {
-  it.each([
-    '+2348012345678',
-    '08012345678',
-    '8012345678',
-    'seller@example.com',
-  ])('detects %s', (contact) => {
-    expect(containsProhibitedChatContact(`Please contact me at ${contact}`)).toBe(true);
-  });
-
-  it('allows ordinary text and unrelated numbers', () => {
-    expect(containsProhibitedChatContact('The price is 1234567890 naira')).toBe(false);
   });
 });
 

@@ -9,6 +9,7 @@ export type MessageDto = {
   body: string | null;
   imageKey: string | null;
   offerId: string | null;
+  meetupProposalId: string | null;
   listingCardId: string | null;
   clientMsgId: string | null;
   deliveredAt: Date | null;
@@ -39,6 +40,7 @@ export function toMessageDto(
     body: message.body,
     imageKey: message.imageKey,
     offerId: message.offerId,
+    meetupProposalId: message.meetupProposalId ?? null,
     listingCardId: message.listingCardId,
     clientMsgId: message.clientMsgId,
     deliveredAt: message.deliveredAt,

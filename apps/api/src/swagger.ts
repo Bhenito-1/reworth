@@ -1,11 +1,31 @@
 import { INestApplication, Logger } from '@nestjs/common';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 const DOCS_PATH = 'docs';
+
+function loadSwagger(): Record<string, unknown> | null {
+  try {
+    // Optional at runtime when install is incomplete (e.g. offline dev).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require('@nestjs/swagger');
+  } catch {
+    return null;
+  }
+}
 
 /** Interactive OpenAPI UI. Off in production unless SWAGGER_ENABLED=true. */
 export function setupSwagger(app: INestApplication): void {
   if (!swaggerEnabled()) return;
+
+  const swagger = loadSwagger();
+  if (!swagger) {
+    new Logger('Swagger').warn(
+      '@nestjs/swagger not installed — API docs disabled',
+    );
+    return;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { DocumentBuilder, SwaggerModule } = swagger as any;
 
   const apiUrl = (process.env.API_URL ?? 'http://localhost:3001').replace(
     /\/$/,

@@ -41,6 +41,11 @@ export type NotifyInput = {
   channels?: NotificationChannel[];
   /** Send even when the user turned the category off or is in quiet hours. */
   forceDelivery?: boolean;
+  /**
+   * Transactional email (payment receipts): sent even when the user's general
+   * Email consent is off. Never applies to marketing categories.
+   */
+  transactional?: boolean;
 };
 
 type CapBucket = { count: number; hourKey: string };
@@ -218,7 +223,9 @@ export class NotificationsService {
       }
 
       if (channel === NotificationChannel.EMAIL) {
-        if (!emailAllowed) {
+        const transactional =
+          input.transactional === true && !isMarketingEmailCategory(input.category);
+        if (!emailAllowed && !transactional) {
           skipped.push({ channel, reason: 'email_consent' });
           continue;
         }

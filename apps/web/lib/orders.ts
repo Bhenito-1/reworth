@@ -86,6 +86,7 @@ export type OrderDto = {
   rejectionReason?: string | null;
   sellerNote?: string | null;
   deliveryDate?: string | null;
+  meetupLocationText?: string | null;
   swapProposalId?: string | null;
   swapListingAId?: string | null;
   swapListingBId?: string | null;
@@ -211,6 +212,34 @@ export function computeOrderTotalKobo(input: {
     input.protectionFeeKobo +
     (input.deliveryFeeKobo ?? 0)
   );
+}
+
+export function isSwapOrder(
+  order: Pick<OrderDto, "swap" | "transactionType">,
+): boolean {
+  return Boolean(order.swap) || order.transactionType === "SWAP";
+}
+
+/** Standard sale viewed by the listing seller — buyer-paid fees are hidden. */
+export function isSellerStandardSale(
+  order: OrderDto,
+  meId: string | null,
+): boolean {
+  if (!meId || meId !== order.sellerId) return false;
+  return !isSwapOrder(order);
+}
+
+export function orderDisplayTotalKobo(
+  order: OrderDto,
+  meId: string | null,
+): number {
+  if (order.swap) {
+    return order.deliveryFeeKobo + SWAP_FEE_KOBO;
+  }
+  if (isSellerStandardSale(order, meId)) {
+    return order.amountKobo;
+  }
+  return order.totalKobo;
 }
 
 export function newIdempotencyKey(): string {
@@ -435,9 +464,13 @@ export function createOrder(
     buyNow?: boolean;
     quantity?: number;
     meetPointId?: string;
+    meetupLocationText?: string;
     toLat?: number;
     toLng?: number;
     deliveryAddress?: string;
+    deliveryLine1?: string;
+    deliveryCommunity?: string;
+    deliveryCity?: string;
   },
 ): Promise<OrderDto> {
   return apiFetch<OrderDto>("/orders", { method: "POST", token, body });

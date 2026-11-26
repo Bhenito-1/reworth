@@ -15,8 +15,8 @@ import {
   VerificationLevel,
   VerificationStatus,
 } from '@prisma/client';
-import { RegionConfigService } from '../region/region-config.service';
-import { quoteGiftDelivery } from './swap-fees';
+import { PICKUP_ADDRESS_QUOTE_SELECT } from '../delivery/delivery-pricing.service';
+import { SwapDeliveryQuotesService } from './swap-delivery-quotes.service';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -61,14 +61,20 @@ export class GiveawayClaimsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly deliveryQuotes: SwapDeliveryQuotesService,
     @Optional() private readonly notifications?: NotificationsService,
-    @Optional() private readonly regions?: RegionConfigService,
   ) {}
 
   /** Delivery from the gift to the buyer's preferred area. */
   async previewDelivery(listingId: string, userId: string) {
     const listing = await this.prisma.listing.findUnique({
       where: { id: listingId },
+      include: {
+        category: { select: { slug: true } },
+        pickupAddress: {
+          select: PICKUP_ADDRESS_QUOTE_SELECT,
+        },
+      },
     });
     if (!listing) throw new NotFoundException('Listing not found');
     if (listing.sellingMode !== 'GIVE_AWAY') {
@@ -83,28 +89,11 @@ export class GiveawayClaimsService {
       geoLng?: number | null;
       city?: string | null;
       community?: string | null;
+      category?: { slug: string } | null;
     },
     userId: string,
   ) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { profile: { select: { preferredCommunity: true } } },
-    });
-    const area =
-      user?.profile?.preferredCommunity?.trim() ||
-      listing.community?.trim() ||
-      '';
-    const geo = area
-      ? this.regions?.getCommunityGeo(listing.city || 'lagos', area)
-      : null;
-    const quote = quoteGiftDelivery(
-      listing,
-      geo ? { lat: geo.geoLat, lng: geo.geoLng } : undefined,
-    );
-    return {
-      ...quote,
-      area: geo?.label || area || 'your area',
-    };
+    return this.deliveryQuotes.quoteGiftForBuyer(listing, userId);
   }
 
   private expiryHours(): number {
@@ -145,6 +134,7 @@ export class GiveawayClaimsService {
 
     const listing = await this.prisma.listing.findUnique({
       where: { id: listingId },
+      include: { category: { select: { slug: true } } },
     });
     if (!listing) throw new NotFoundException('Listing not found');
     if (listing.sellerId === claimantId) {

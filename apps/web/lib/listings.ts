@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import { prepareListingPhoto } from "./prepare-listing-photo";
 import type {
   AssistResponse,
   CreateListingBody,
@@ -155,8 +156,9 @@ export async function uploadListingPhoto(
   file: File,
   sortOrder = 0,
 ): Promise<{ key: string; previewUrl: string; publicUrl?: string }> {
+  const prepared = await prepareListingPhoto(file);
   const form = new FormData();
-  form.append("file", file);
+  form.append("file", prepared);
   form.append("listingId", listingId);
   form.append("sortOrder", String(sortOrder));
 
@@ -212,6 +214,48 @@ export function sentenceCaseLabel(value: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+const SAFE_FROM_PATH = /^\/(?:[\w@%.-]+(?:\/[\w@%.-]*)*)?$/;
+
+function safeListingFromParam(from: string | null): string | null {
+  if (!from || !from.startsWith("/") || from.startsWith("//")) return null;
+  if (from.includes("://") || from.includes("\\") || from.includes("<")) {
+    return null;
+  }
+  const path = from.split("?", 1)[0];
+  if (!SAFE_FROM_PATH.test(path)) return null;
+  if (from.length > 2048) return null;
+  return from;
+}
+
+/** Safe internal `from` query on `/listings/:id` — destination href only. */
+export function listingBackFromParam(from: string | null): string | null {
+  return safeListingFromParam(from);
+}
+
+/** Prefer explicit `from` query when linking from listing PDP rails. */
+export function resolveListingFromContext(
+  fromSearchParam: string | null,
+): string | null {
+  return safeListingFromParam(fromSearchParam);
+}
+
+export function listingPdpHref(listingId: string, from?: string | null): string {
+  const base = `/listings/${encodeURIComponent(listingId)}`;
+  if (!from?.trim()) return base;
+  const safe = safeListingFromParam(from);
+  if (!safe) return base;
+  return `${base}?from=${encodeURIComponent(safe)}`;
+}
+
+export function listingCategoryLabel(
+  listing: Pick<PublicListing, "category" | "subcategory">,
+): string | null {
+  const cat = listing.category?.name;
+  const sub = listing.subcategory?.name;
+  if (sub && cat) return `${cat} · ${sub}`;
+  return sub ?? cat ?? null;
+}
+
 export const CONDITION_LABELS: Record<string, string> = {
   NEW: "New",
   LIKE_NEW: "Like new",
@@ -229,3 +273,37 @@ export const CONDITIONS = [
   "FAIR",
   "FOR_PARTS",
 ] as const;
+
+export type ListingDeliveryEstimate = {
+  listingId: string;
+  distanceKm: number;
+  deliveryFeeKobo: number;
+  distanceSource: "ors" | "estimated" | "haversine";
+  handling: "bulky" | "parcel";
+};
+
+export async function estimateListingDelivery(
+  token: string,
+  listingId: string,
+  toLat: number,
+  toLng: number,
+  address?: {
+    line1?: string;
+    community?: string;
+    city?: string;
+  },
+): Promise<ListingDeliveryEstimate> {
+  const q = new URLSearchParams({
+    toLat: String(toLat),
+    toLng: String(toLng),
+  });
+  if (address?.line1?.trim()) q.set("deliveryLine1", address.line1.trim());
+  if (address?.community?.trim()) {
+    q.set("deliveryCommunity", address.community.trim());
+  }
+  if (address?.city?.trim()) q.set("deliveryCity", address.city.trim());
+  return apiFetch<ListingDeliveryEstimate>(
+    `/listings/${listingId}/delivery-estimate?${q.toString()}`,
+    { token },
+  );
+}

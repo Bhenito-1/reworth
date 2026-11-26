@@ -83,7 +83,11 @@ export class PaymentsService {
     @Optional() private readonly subscriptions?: SellerSubscriptionService,
   ) {}
 
-  async initiate(buyerId: string, dto: InitiatePaymentDto): Promise<PaymentDto> {
+  async initiate(
+    buyerId: string,
+    dto: InitiatePaymentDto,
+    requestOrigin?: string | null,
+  ): Promise<PaymentDto> {
     const existing = await this.prisma.payment.findUnique({
       where: { idempotencyKey: dto.idempotencyKey },
     });
@@ -108,6 +112,11 @@ export class PaymentsService {
         `Order must be PAYMENT_PENDING (got ${order.status})`,
       );
     }
+    if (order.confirmationStatus !== 'CONFIRMED') {
+      throw new ConflictException(
+        'The seller has not confirmed this order yet',
+      );
+    }
     if (
       order.fulfilmentMethod === FulfilmentMethod.DELIVERY &&
       order.deliveryFeeKobo <= 0
@@ -129,9 +138,16 @@ export class PaymentsService {
         ? order.deliveryFeeKobo + SWAP_FEE_PER_USER_KOBO
         : order.totalKobo;
 
+    const callbackUrl = payReturnUrl(this.psp.name, requestOrigin);
+
     // One open checkout per order. Reusing it stops a buyer from paying the
     // same order twice in two tabs (or after a double click).
-    const open = await this.reuseOpenCheckout(order.id, buyerId, amountKobo);
+    const open = await this.reuseOpenCheckout(
+      order.id,
+      buyerId,
+      amountKobo,
+      callbackUrl,
+    );
     if (open) return open;
 
     const result = await this.psp.initiate({
@@ -141,7 +157,7 @@ export class PaymentsService {
       email,
       metadata: { orderId: order.id, payerId: buyerId },
       idempotencyKey: dto.idempotencyKey,
-      callbackUrl: payReturnUrl(this.psp.name),
+      callbackUrl,
     });
 
     const payment = await this.prisma.$transaction(async (tx) => {
@@ -158,6 +174,7 @@ export class PaymentsService {
           providerPayload: {
             checkoutUrl: result.checkoutUrl,
             paymentId: result.paymentId,
+            ...(callbackUrl ? { callbackUrl } : {}),
           },
         },
       });
@@ -190,6 +207,7 @@ export class PaymentsService {
     orderId: string,
     buyerId: string,
     amountKobo: number,
+    callbackUrl?: string,
   ): Promise<PaymentDto | null> {
     const open = await this.prisma.payment.findFirst({
       where: { orderId, payerId: buyerId, status: 'PENDING' },
@@ -206,10 +224,17 @@ export class PaymentsService {
       return this.toDto(fresh, this.checkoutUrlOf(fresh));
     }
     const checkoutUrl = this.checkoutUrlOf(open);
+    // A checkout started on another of our sites (or before return URLs
+    // followed the buyer's site) sends them back to the wrong origin, where
+    // they are not logged in. Open a fresh one for this site instead.
+    const openCallback = (open.providerPayload as { callbackUrl?: string } | null)
+      ?.callbackUrl;
+    const sameReturnSite = !callbackUrl || openCallback === callbackUrl;
     if (
       verified.status === 'pending' &&
       open.amountKobo === amountKobo &&
-      checkoutUrl
+      checkoutUrl &&
+      sameReturnSite
     ) {
       return this.toDto(open, checkoutUrl);
     }
@@ -221,7 +246,11 @@ export class PaymentsService {
           ...((open.providerPayload as object | null) ?? {}),
           abandonedAt: new Date().toISOString(),
           abandonReason:
-            verified.status === 'failed' ? 'psp_failed' : 'amount_changed',
+            verified.status === 'failed'
+              ? 'psp_failed'
+              : open.amountKobo !== amountKobo
+                ? 'amount_changed'
+                : 'return_site_changed',
         } as Prisma.InputJsonValue,
       },
     });

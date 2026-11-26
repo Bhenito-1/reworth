@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ListingStatus, OrderStatus, Prisma } from '@prisma/client';
+import { AddressesService } from '../addresses/addresses.service';
 import { AdminAlertsService } from '../admin/admin-alerts.service';
 import { LISTINGS_MOD, REPORTS } from '../admin/admin-roles';
 import { PrismaService } from '../prisma/prisma.service';
@@ -38,6 +39,16 @@ import { ratingLabelFromTrust, toPublicListing } from './public-listing.mapper';
 import { FeatureStoreService } from '../intelligence/feature-store.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { SellerPayoutService } from '../payouts/seller-payout.service';
+import {
+  listingHasPickupGeo,
+  pickupCoordsFromListing,
+  quoteDeliveryLeg,
+} from '../delivery/delivery-pricing';
+import {
+  DeliveryPricingService,
+  PICKUP_ADDRESS_QUOTE_SELECT,
+} from '../delivery/delivery-pricing.service';
+import { RoutingService } from '../routing/routing.service';
 import type {
   AttachImagesDto,
   BrowseListingsQueryDto,
@@ -51,6 +62,15 @@ const PUBLIC_STATUSES: ListingStatus[] = ['LIVE', 'RESERVED'];
 const listingInclude = {
   category: true,
   subcategory: true,
+  pickupAddress: {
+    select: {
+      line1: true,
+      community: true,
+      city: true,
+      geoLat: true,
+      geoLng: true,
+    },
+  },
   images: { orderBy: { sortOrder: 'asc' as const } },
   estateCommunity: true,
   movingSale: true,
@@ -91,12 +111,134 @@ export class ListingsService {
     private readonly visibility: CommunityVisibilityService,
     private readonly inventory: InventoryService,
     private readonly payouts: SellerPayoutService,
+    private readonly routing: RoutingService,
+    private readonly addresses: AddressesService,
     @Optional()
     @Inject(forwardRef(() => FavouritesService))
     private readonly favourites?: FavouritesService,
     @Optional() private readonly features?: FeatureStoreService,
     @Optional() private readonly alerts?: AdminAlertsService,
+    @Optional() private readonly deliveryPricing?: DeliveryPricingService,
   ) {}
+
+  private async geocodeSellerPickup(input: {
+    addressPrivate: string;
+    community?: string;
+    city?: string;
+  }): Promise<{ geoLat: number; geoLng: number } | null> {
+    const hit = await this.routing.geocodeAddress({
+      line1: input.addressPrivate,
+      community: input.community,
+      city: input.city,
+      country: 'NG',
+    });
+    if (!hit) return null;
+    return { geoLat: hit.lat, geoLng: hit.lng };
+  }
+
+  private async persistSellerPickup(
+    sellerId: string,
+    listingId: string,
+    input: {
+      addressPrivate: string;
+      community: string;
+      city: string;
+      geoLat?: number | null;
+      geoLng?: number | null;
+    },
+  ): Promise<{ geoLat: number | null; geoLng: number | null } | null> {
+    const line = input.addressPrivate.trim();
+    if (line.length < 8) return null;
+    const pickup = await this.addresses.savePickupForSeller(sellerId, {
+      line1: line,
+      community: input.community || 'Lagos',
+      city: input.city || 'Lagos',
+      geoLat: input.geoLat,
+      geoLng: input.geoLng,
+    });
+    await this.prisma.listing.update({
+      where: { id: listingId },
+      data: {
+        pickupAddressId: pickup.id,
+        ...(pickup.geoLat != null ? { geoLat: pickup.geoLat } : {}),
+        ...(pickup.geoLng != null ? { geoLng: pickup.geoLng } : {}),
+      },
+    });
+    return { geoLat: pickup.geoLat, geoLng: pickup.geoLng };
+  }
+
+  /** Buyer delivery fee preview (ORS driving distance when configured). */
+  async estimateDelivery(
+    listingId: string,
+    userId: string,
+    toLat: number,
+    toLng: number,
+    dropoffAddress?: {
+      line1?: string;
+      community?: string;
+      city?: string;
+    } | null,
+  ) {
+    if (!Number.isFinite(toLat) || !Number.isFinite(toLng)) {
+      throw new BadRequestException('toLat and toLng are required');
+    }
+    const listing = await this.prisma.listing.findUnique({
+      where: { id: listingId },
+      include: {
+        category: { select: { slug: true } },
+        pickupAddress: {
+          select: PICKUP_ADDRESS_QUOTE_SELECT,
+        },
+      },
+    });
+    if (!listing) throw new NotFoundException('Listing not found');
+    if (listing.sellerId === userId) {
+      throw new BadRequestException('Cannot quote delivery on your own listing');
+    }
+    if (!listingHasPickupGeo(listing)) {
+      throw new BadRequestException('Seller pickup location is not ready yet');
+    }
+    if (!this.deliveryPricing) {
+      const { fromLat, fromLng } = pickupCoordsFromListing(listing);
+      const sync = quoteDeliveryLeg({
+        fromLat,
+        fromLng,
+        toLat,
+        toLng,
+        city: listing.city,
+        categorySlug: listing.category?.slug,
+      });
+      return {
+        listingId,
+        distanceKm: sync.distanceKm,
+        deliveryFeeKobo: sync.deliveryFeeKobo,
+        distanceSource: 'haversine' as const,
+        handling: sync.handling,
+      };
+    }
+    const addressParts =
+      dropoffAddress?.line1?.trim() && dropoffAddress.community?.trim()
+        ? {
+            line1: dropoffAddress.line1.trim(),
+            community: dropoffAddress.community.trim(),
+            city: dropoffAddress.city?.trim() || listing.city || 'Lagos',
+            country: 'NG',
+          }
+        : null;
+    const priced = await this.deliveryPricing.quoteLegForListing(
+      listing,
+      { lat: toLat, lng: toLng },
+      addressParts,
+      userId,
+    );
+    return {
+      listingId,
+      distanceKm: priced.distanceKm,
+      deliveryFeeKobo: priced.deliveryFeeKobo,
+      distanceSource: priced.distanceSource,
+      handling: priced.handling,
+    };
+  }
 
   async listCategories() {
     const cats = await this.prisma.category.findMany({
@@ -133,12 +275,39 @@ export class ListingsService {
       }
     }
 
+    const pickupDraft = dto.addressPrivate?.trim() ?? '';
+    if (pickupDraft.length >= 8 && (geoLat == null || geoLng == null)) {
+      const mapped = await this.geocodeSellerPickup({
+        addressPrivate: pickupDraft,
+        community: dto.community,
+        city: dto.city,
+      });
+      if (mapped) {
+        geoLat = mapped.geoLat;
+        geoLng = mapped.geoLng;
+      }
+    }
+
     const sellingMode = dto.sellingMode ?? 'SELL';
     const categoryId = await this.resolveListingCategory(dto);
     const units =
       sellingMode === 'SELL' || sellingMode === 'GIVE_AWAY'
         ? Math.min(999, Math.max(1, dto.quantity ?? 1))
         : 1;
+
+    let pickupAddressId: string | undefined;
+    if (pickupDraft.length >= 8) {
+      const pickup = await this.addresses.savePickupForSeller(sellerId, {
+        line1: pickupDraft,
+        community: dto.community ?? '',
+        city: dto.city?.trim() || 'Lagos',
+        geoLat,
+        geoLng,
+      });
+      pickupAddressId = pickup.id;
+      geoLat = pickup.geoLat ?? geoLat;
+      geoLng = pickup.geoLng ?? geoLng;
+    }
 
     const listing = await this.prisma.listing.create({
       data: {
@@ -164,9 +333,11 @@ export class ListingsService {
         geoLat,
         geoLng,
         addressPrivate: dto.addressPrivate,
+        pickupAddressId,
         fulfilmentPickup: dto.fulfilmentPickup ?? false,
-        fulfilmentMeet: dto.fulfilmentMeet ?? false,
-        fulfilmentDelivery: dto.fulfilmentDelivery ?? true,
+        fulfilmentMeet: true,
+        fulfilmentDelivery: true,
+        fulfilmentPreference: dto.fulfilmentPreference ?? 'EITHER',
         vehicle: dto.vehicle ? (dto.vehicle as Prisma.InputJsonValue) : undefined,
         quantityTotal: units,
         quantityAvailable: units,
@@ -429,7 +600,12 @@ export class ListingsService {
       ...dto,
       rejectionReason: isOwner ? await this.ownerRejectionReason(id, listing.status) : null,
       ...(isOwner
-        ? { pickupAddress: listing.addressPrivate ?? null }
+        ? {
+            pickupAddress:
+              listing.pickupAddress?.line1?.trim() ||
+              listing.addressPrivate?.trim() ||
+              null,
+          }
         : {}),
     };
   }
@@ -483,9 +659,53 @@ export class ListingsService {
       }
     }
 
+    const pickupText =
+      dto.addressPrivate !== undefined
+        ? dto.addressPrivate.trim()
+        : listing.addressPrivate?.trim() ?? '';
+    if (
+      pickupText.length >= 8 &&
+      dto.geoLat === undefined &&
+      dto.geoLng === undefined
+    ) {
+      const fromStreet = await this.geocodeSellerPickup({
+        addressPrivate: pickupText,
+        community: communityNext || listing.community,
+        city: dto.city ?? listing.city,
+      });
+      if (fromStreet) {
+        geoLat = fromStreet.geoLat;
+        geoLng = fromStreet.geoLng;
+      }
+    }
+
+    let pickupAddressId: string | undefined;
+    if (
+      pickupText.length >= 8 &&
+      (dto.addressPrivate !== undefined ||
+        dto.community !== undefined ||
+        dto.city !== undefined ||
+        dto.geoLat !== undefined ||
+        dto.geoLng !== undefined ||
+        geoLat !== undefined ||
+        geoLng !== undefined)
+    ) {
+      const pickup = await this.addresses.savePickupForSeller(sellerId, {
+        line1: pickupText,
+        community: communityNext || listing.community,
+        city: dto.city ?? listing.city,
+        geoLat: geoLat ?? listing.geoLat,
+        geoLng: geoLng ?? listing.geoLng,
+      });
+      pickupAddressId = pickup.id;
+      if (pickup.geoLat != null) geoLat = pickup.geoLat;
+      if (pickup.geoLng != null) geoLng = pickup.geoLng;
+    }
+
     const updated = await this.prisma.listing.update({
       where: { id },
       data: {
+        ...(pickupAddressId ? { pickupAddressId } : {}),
         ...(dto.title !== undefined ? { title: dto.title } : {}),
         ...(dto.description !== undefined
           ? { description: dto.description }
@@ -547,10 +767,18 @@ export class ListingsService {
         ...(dto.fulfilmentPickup !== undefined
           ? { fulfilmentPickup: dto.fulfilmentPickup }
           : {}),
-        ...(dto.fulfilmentMeet !== undefined
+        ...(dto.fulfilmentPreference !== undefined
+          ? {
+              fulfilmentPreference: dto.fulfilmentPreference,
+              fulfilmentMeet: true,
+              fulfilmentDelivery: true,
+            }
+          : {}),
+        ...(dto.fulfilmentMeet !== undefined && dto.fulfilmentPreference === undefined
           ? { fulfilmentMeet: dto.fulfilmentMeet }
           : {}),
-        ...(dto.fulfilmentDelivery !== undefined
+        ...(dto.fulfilmentDelivery !== undefined &&
+        dto.fulfilmentPreference === undefined
           ? { fulfilmentDelivery: dto.fulfilmentDelivery }
           : {}),
         ...(dto.vehicle !== undefined
@@ -695,14 +923,36 @@ export class ListingsService {
       const pickup = listing.addressPrivate?.trim() ?? '';
       if (pickup.length < 8) {
         throw new BadRequestException(
-          'Add your pickup address (street and area) before publishing. Buyers never see it — we use it for delivery quotes.',
+          'Add a pickup address (street and area) before publishing.',
         );
       }
       if (listing.geoLat == null || listing.geoLng == null) {
+        const mapped = await this.geocodeSellerPickup({
+          addressPrivate: pickup,
+          community: listing.community,
+          city: listing.city,
+        });
+        if (mapped) {
+          await this.prisma.listing.update({
+            where: { id: listing.id },
+            data: { geoLat: mapped.geoLat, geoLng: mapped.geoLng },
+          });
+          listing.geoLat = mapped.geoLat;
+          listing.geoLng = mapped.geoLng;
+        }
+      }
+      if (listing.geoLat == null || listing.geoLng == null) {
         throw new BadRequestException(
-          'Select an area so we can estimate delivery from your pickup location.',
+          'We need a mappable pickup address. Check the street and area, then try again.',
         );
       }
+      await this.persistSellerPickup(sellerId, listing.id, {
+        addressPrivate: pickup,
+        community: listing.community,
+        city: listing.city,
+        geoLat: listing.geoLat,
+        geoLng: listing.geoLng,
+      });
     }
     if (
       listing.sellingMode !== 'GIVE_AWAY' &&
@@ -1064,18 +1314,14 @@ function reviewStateFor(
     return {
       state: 'approved',
       label: status === 'LIVE' ? 'Live' : status === 'SOLD' ? 'Sold' : 'Reserved',
-      note:
-        custom ??
-        (status === 'SOLD'
-          ? 'Every unit sold. Open it to see the product and buyer ratings.'
-          : null),
+      note: custom ?? null,
     };
   }
   if (status === 'EXPIRED') {
     return {
       state: 'closed',
       label: 'Closed',
-      note: 'The listing period ended before it sold out, so it left the marketplace.',
+      note: 'Listing period ended.',
     };
   }
   if (status === 'REMOVED') {

@@ -5,6 +5,8 @@ export type DeliveryQuoteInput = {
   toLng: number;
   /** Region city key — rates from RegionConfigService (default Lagos). */
   city?: string;
+  /** Listing category — bulky (furniture/appliance) uses van rates. */
+  categorySlug?: string | null;
 };
 
 export type DeliveryQuoteResult = {
@@ -56,7 +58,7 @@ export type DeliveryRateParams = {
   perKmKobo: number;
 };
 
-/** Lagos parcel: ₦1,500 base + ₦150/km (ceil), in kobo. */
+/** Lagos parcel: ₦1,500 base + ₦150/km (actual km), fee rounded to nearest ₦10. */
 export const DEFAULT_DELIVERY_RATES: DeliveryRateParams = {
   baseFeeKobo: 150_000,
   perKmKobo: 15_000,
@@ -71,18 +73,76 @@ export const BULKY_DELIVERY_RATES: DeliveryRateParams = {
   perKmKobo: 80_000,
 };
 
-export function isBulkyDeliveryCategory(slug?: string | null): boolean {
-  return /(furniture|appliance)/i.test(slug ?? '');
+function slugUnderRoot(slug: string, root: string): boolean {
+  return slug === root || slug.startsWith(`${root}--`);
+}
+
+export type OrsDirectionsProfile = 'driving-car' | 'cycling-electric';
+
+/** Bulky van routes vs e-bike parcel routes (OpenRouteService path profile). */
+export function orsDirectionsProfile(
+  categorySlug?: string | null,
+): OrsDirectionsProfile {
+  return isBulkyDeliveryCategory(categorySlug)
+    ? 'driving-car'
+    : 'cycling-electric';
 }
 
 /**
- * feeKobo = baseFeeKobo + perKmKobo * ceil(km)
+ * Van / two-person carry — explicit category roots only.
+ * Avoids treating every slug containing "appliance" as bulky (e.g. kitchen gadgets).
+ */
+export function isBulkyDeliveryCategory(slug?: string | null): boolean {
+  const s = (slug ?? '').trim().toLowerCase();
+  if (!s) return false;
+
+  const parcelRoots = [
+    'home-appliances--kitchen',
+    'collectibles',
+    'books',
+    'children-baby--toys',
+    'fashion',
+    'luxury',
+    'phones-tablets',
+    'computers',
+    'other',
+    'sports-fitness',
+    'tools-equipment',
+    'electronics--audio',
+    'electronics--cameras',
+    'electronics--gaming',
+    'electronics--computers',
+    'office-equipment--printers',
+    'office-equipment--supplies',
+  ];
+  if (parcelRoots.some((root) => slugUnderRoot(s, root))) return false;
+
+  const bulkyRoots = [
+    'home-furniture',
+    'home-appliances--laundry',
+    'home-appliances--cooling',
+    'garden--outdoor-furniture',
+    'office-equipment--office-furniture',
+    'children-baby--strollers',
+    'electronics--tvs',
+    'vehicles',
+  ];
+  return bulkyRoots.some((root) => slugUnderRoot(s, root));
+}
+
+/** Nearest ₦10 (1_000 kobo). */
+export function roundDeliveryFeeTo10Naira(kobo: number): number {
+  return Math.round(kobo / 1_000) * 1_000;
+}
+
+/**
+ * feeKobo = roundTo10Naira(baseFeeKobo + perKmKobo × km)
  */
 export function computeDeliveryFeeKobo(
   distanceKm: number,
   rates: DeliveryRateParams = DEFAULT_DELIVERY_RATES,
 ): number {
   const km = Math.max(0, distanceKm);
-  const ceilKm = Math.ceil(km);
-  return rates.baseFeeKobo + rates.perKmKobo * ceilKm;
+  const raw = rates.baseFeeKobo + rates.perKmKobo * km;
+  return roundDeliveryFeeTo10Naira(raw);
 }

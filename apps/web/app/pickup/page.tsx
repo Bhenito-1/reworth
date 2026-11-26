@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { BackLink } from "../../components/BackLink";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../lib/api";
@@ -107,12 +108,7 @@ export default function ManagedPickupPage() {
 
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-20 pt-6 sm:px-6">
         <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/account"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Account
-          </Link>
+          <BackLink href="/account" />
           <span className="text-xl font-semibold tracking-tight">ReWorth</span>
         </header>
 

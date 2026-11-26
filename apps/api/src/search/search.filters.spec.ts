@@ -67,8 +67,24 @@ describe('search filters', () => {
       listing: {
         findMany: jest.fn().mockImplementation(({ where }) => {
           let out = rows;
-          if (where.categoryId) {
+          const and = where.AND as
+            | Array<{ OR?: Array<Record<string, unknown>> }>
+            | undefined;
+          const categoryOr = and?.find((c) => c.OR)?.OR;
+          const parentCategoryId = categoryOr?.find(
+            (c) => c.categoryId != null,
+          )?.categoryId as string | undefined;
+          if (parentCategoryId) {
+            out = out.filter((r) => r.categoryId === parentCategoryId);
+          } else if (where.categoryId) {
             out = out.filter((r) => r.categoryId === where.categoryId);
+          }
+          if (where.subcategoryId) {
+            out = out.filter(
+              (r) =>
+                (r as { subcategoryId?: string }).subcategoryId ===
+                where.subcategoryId,
+            );
           }
           if (where.priceKobo?.lte != null) {
             out = out.filter((r) => r.priceKobo <= where.priceKobo.lte);
@@ -94,6 +110,33 @@ describe('search filters', () => {
     for (const item of result.items) {
       expect(item).not.toHaveProperty('addressPrivate');
     }
+  });
+
+  it('filters by communityMatch variants', async () => {
+    const rows = [
+      listing({ id: 'a', community: 'LEKKI_PH1' }),
+      listing({ id: 'b', community: 'VI' }),
+    ];
+    const prisma = {
+      listing: {
+        findMany: jest.fn().mockImplementation(({ where }) => {
+          const and = where.AND as Array<{
+            OR?: Array<{ community?: { equals: string } }>;
+          }>;
+          const communityOr = and?.find((c) => c.OR?.[0]?.community)?.OR;
+          const allowed = new Set(
+            communityOr?.map((c) => c.community?.equals).filter(Boolean),
+          );
+          const out = rows.filter((r) => allowed.has(r.community));
+          return Promise.resolve(out);
+        }),
+      },
+    };
+    const provider = new PostgresFullTextSearchProvider(prisma as never);
+    const result = await provider.search({
+      communityMatch: ['Lekki Ph1', 'LEKKI_PH1'],
+    });
+    expect(result.items.map((i) => i.id)).toEqual(['a']);
   });
 
   it('filters deliveryAvailable', async () => {

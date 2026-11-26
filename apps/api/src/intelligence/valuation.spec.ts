@@ -123,6 +123,6 @@ describe('Valuation v2', () => {
     });
 
     expect(result.basis).toBe('live_listings_fallback');
-    expect(result.confidenceLabel).toBe('Estimated from live listings');
+    expect(result.confidenceLabel).toBe('From live listings');
   });
 });

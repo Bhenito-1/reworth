@@ -17,3 +17,8 @@ export function newOrderReference(): string {
 export function newPaymentReference(): string {
   return `RW-PAY-${refSuffix()}`;
 }
+
+/** Public member id at signup — not government ID (NIN/BVN stay in verification flows). */
+export function newMemberReference(): string {
+  return `RW-MBR-${refSuffix()}`;
+}

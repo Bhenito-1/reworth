@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthModule } from '../auth/auth.module';
 import { CommunitiesModule } from '../communities/communities.module';
+import { RegionModule } from '../region/region.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { DiscoveryAnalyticsService } from '../discovery/discovery-analytics.service';
@@ -14,7 +15,7 @@ import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, AuthModule, CommunitiesModule],
+  imports: [ConfigModule, PrismaModule, AuthModule, CommunitiesModule, RegionModule],
   controllers: [SearchController],
   providers: [
     SearchService,

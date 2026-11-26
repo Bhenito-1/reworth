@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
@@ -55,12 +56,14 @@ export class MonetizationController {
   boost(
     @CurrentUser() user: AuthUser,
     @Body() dto: BoostPurchaseDto,
+    @Headers('origin') origin?: string,
   ) {
     return this.promotions.purchaseBoost(
       user.id,
       dto.listingId,
       dto.hours,
       dto.idempotencyKey,
+      origin,
     );
   }
 
@@ -75,11 +78,13 @@ export class MonetizationController {
   featured(
     @CurrentUser() user: AuthUser,
     @Body() dto: FeaturedPurchaseDto,
+    @Headers('origin') origin?: string,
   ) {
     return this.promotions.purchaseFeatured(
       user.id,
       dto.listingId,
       dto.idempotencyKey,
+      origin,
     );
   }
 
@@ -99,8 +104,9 @@ export class MonetizationController {
   upgradePlus(
     @CurrentUser() user: AuthUser,
     @Body() dto: SellerPlusUpgradeDto,
+    @Headers('origin') origin?: string,
   ) {
-    return this.subscriptions.upgradeToPlus(user.id, dto.idempotencyKey);
+    return this.subscriptions.upgradeToPlus(user.id, dto.idempotencyKey, origin);
   }
 
   @Post('me/seller-plan/cancel')

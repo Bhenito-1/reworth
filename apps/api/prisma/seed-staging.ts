@@ -128,6 +128,7 @@ const CATEGORIES: CategorySeed[] = [
     children: [
       { slug: 'mens', name: "Men's" },
       { slug: 'womens', name: "Women's" },
+      { slug: 'clothes', name: 'Clothes' },
       { slug: 'shoes', name: 'Shoes' },
     ],
   },

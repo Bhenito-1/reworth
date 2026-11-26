@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { BackLink } from "../../../components/BackLink";
 import { useRouter } from "next/navigation";
 import { formatNgn } from "@reworth/shared";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
@@ -177,18 +178,12 @@ export default function SellerAnalyticsPage() {
       <div className="relative z-10 mx-auto max-w-4xl px-4 pb-20 pt-6 sm:px-8">
         <header className="mb-8 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <Link
-              href="/sell"
-              className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-            >
-              ← Sell
-            </Link>
+            <BackLink href="/sell" />
             <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
               Seller analytics
             </h1>
             <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
               Your listings in {data?.city ?? "Lagos"} — views, offers, revenue.
-              Buyer identities are never shown.
             </p>
           </div>
           <Button

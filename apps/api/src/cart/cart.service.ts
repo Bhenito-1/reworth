@@ -8,8 +8,12 @@ import {
 import { FulfilmentMethod, ListingStatus } from '@prisma/client';
 import { computeProtectionFeeKobo } from '../orders/order-fees';
 import { OrdersService } from '../orders/orders.service';
-import { computeDeliveryFeeKobo } from '../providers/delivery.provider';
-import { haversineKm } from '../providers/search.provider';
+import { listingHasPickupGeo } from '../delivery/delivery-pricing';
+import {
+  DeliveryPricingService,
+  PICKUP_ADDRESS_QUOTE_SELECT,
+} from '../delivery/delivery-pricing.service';
+import { buyerCanCheckoutOnListing } from '../common/buyer-listing-checkout';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CartQuoteDto, CheckoutCartDto, UpsertCartItemDto } from './dto/cart.dto';
 
@@ -22,14 +26,22 @@ const cartListingSelect = {
   sellerId: true,
   geoLat: true,
   geoLng: true,
+  city: true,
+  pickupAddress: { select: PICKUP_ADDRESS_QUOTE_SELECT },
   quantityAvailable: true,
+  quantityReserved: true,
+  category: { select: { slug: true } },
   quantityTotal: true,
+  quantitySold: true,
   images: {
     orderBy: { sortOrder: 'asc' as const },
     take: 1,
     select: { id: true, variants: true },
   },
 } as const;
+
+const CART_ONE_ITEM_MESSAGE =
+  'Checkout or clear your cart before adding another item.';
 
 type CartRow = {
   id: string;
@@ -42,6 +54,8 @@ type CartRow = {
     sellerId: string;
     geoLat: number | null;
     geoLng: number | null;
+    city?: string | null;
+    category?: { slug: string } | null;
   };
 };
 
@@ -50,6 +64,7 @@ export class CartService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
+    private readonly deliveryPricing: DeliveryPricingService,
   ) {}
 
   async list(userId: string) {
@@ -58,7 +73,36 @@ export class CartService {
       include: { listing: { select: cartListingSelect } },
       orderBy: { updatedAt: 'desc' },
     });
-    return rows.map((row) => this.toDto(row));
+    const synced: typeof rows = [];
+    for (const row of rows) {
+      const ready = await this.cartLineCheckoutReady(userId, row.listing);
+      if (!ready) {
+        await this.prisma.cartItem.delete({ where: { id: row.id } });
+        continue;
+      }
+      const available = row.listing.quantityAvailable;
+      if (row.quantity > available) {
+        const updated = await this.prisma.cartItem.update({
+          where: { id: row.id },
+          data: { quantity: available },
+          include: { listing: { select: cartListingSelect } },
+        });
+        synced.push(updated);
+        continue;
+      }
+      synced.push(row);
+    }
+    if (synced.length > 1) {
+      synced.sort(
+        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+      );
+      const [keep, ...extra] = synced;
+      for (const row of extra) {
+        await this.prisma.cartItem.delete({ where: { id: row.id } });
+      }
+      return [await this.toDtoForUser(userId, keep)];
+    }
+    return Promise.all(synced.map((row) => this.toDtoForUser(userId, row)));
   }
 
   async upsert(userId: string, dto: UpsertCartItemDto) {
@@ -81,6 +125,13 @@ export class CartService {
       throw new ConflictException('This item is not available');
     }
 
+    const other = await this.prisma.cartItem.findFirst({
+      where: { userId, listingId: { not: listing.id } },
+    });
+    if (other) {
+      throw new ConflictException(CART_ONE_ITEM_MESSAGE);
+    }
+
     const quantity = Math.min(dto.quantity ?? 1, listing.quantityAvailable);
     const row = await this.prisma.cartItem.upsert({
       where: { userId_listingId: { userId, listingId: listing.id } },
@@ -88,7 +139,7 @@ export class CartService {
       update: { quantity },
       include: { listing: { select: cartListingSelect } },
     });
-    return this.toDto(row);
+    return await this.toDtoForUser(userId, row);
   }
 
   async updateQuantity(userId: string, listingId: string, quantity: number) {
@@ -106,7 +157,7 @@ export class CartService {
       data: { quantity: Math.min(capped, existing.listing.quantityAvailable) },
       include: { listing: { select: cartListingSelect } },
     });
-    return this.toDto(row);
+    return await this.toDtoForUser(userId, row);
   }
 
   async remove(userId: string, listingId: string) {
@@ -119,15 +170,18 @@ export class CartService {
   }
 
   async quote(userId: string, dto: CartQuoteDto) {
-    const rows = await this.loadCheckoutRows(userId, dto.listingIds);
-    const deliveryByListing = this.deliveryFeesByListing(rows, dto.toLat, dto.toLng);
-    return this.buildQuotePayload(rows, deliveryByListing, dto.toLat, dto.toLng);
+    const rows = await this.loadCheckoutRows(userId);
+    const drop = await this.resolveBuyerDropoff(userId, dto);
+    const deliveryLegs = await this.deliveryLegsByListing(
+      userId,
+      rows,
+      drop,
+      this.dropoffAddressFromDto(dto),
+    );
+    return this.buildQuotePayload(rows, deliveryLegs);
   }
 
-  /**
-   * Each cart line becomes its own order. Delivery is charged once per seller
-   * (pickup location → buyer address). Stock is reserved by order creation.
-   */
+  /** Places one order for the single cart line. Stock is reserved by order creation. */
   async checkout(userId: string, dto: CheckoutCartDto) {
     if (dto.fulfilmentMethod !== FulfilmentMethod.DELIVERY) {
       throw new BadRequestException('Cart checkout is delivery only');
@@ -140,76 +194,57 @@ export class CartService {
       throw new BadRequestException('Delivery address is required');
     }
 
-    const rows = await this.loadCheckoutRows(userId, dto.listingIds);
-    const deliveryByListing = this.deliveryFeesByListing(
+    const rows = await this.loadCheckoutRows(userId);
+    const drop = await this.resolveBuyerDropoff(userId, dto);
+    const deliveryLegs = await this.deliveryLegsByListing(
+      userId,
       rows,
-      dto.toLat,
-      dto.toLng,
+      drop,
+      this.dropoffAddressFromDto(dto),
+    );
+    const deliveryByListing = new Map(
+      [...deliveryLegs.entries()].map(([id, leg]) => [id, leg.deliveryFeeKobo]),
     );
 
+    const row = rows[0]!;
     const checkoutId = randomUUID();
-    const orders = [];
-    const placed: {
-      id: string;
-      sellerId: string;
-      quantity: number;
-      totalKobo: number;
-      title: string;
-    }[] = [];
-    let failed: { title: string; message: string } | null = null;
-    for (const row of rows) {
-      try {
-        const order = await this.orders.create(
-          userId,
-          {
-            listingId: row.listingId,
-            quantity: row.quantity,
-            buyNow: true,
-            fulfilmentMethod: FulfilmentMethod.DELIVERY,
-            toLat: dto.toLat,
-            toLng: dto.toLng,
-            deliveryAddress,
-            deliveryFeeKobo: deliveryByListing.get(row.listingId) ?? 0,
-          },
-          { skipEmail: true, checkoutId },
-        );
-        await this.prisma.cartItem.delete({ where: { id: row.id } });
-        orders.push(order);
-        placed.push({
-          id: order.id,
-          sellerId: order.sellerId,
-          quantity: order.quantity,
-          totalKobo: order.totalKobo,
-          title: row.listing.title,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Could not place order';
-        if (orders.length === 0) throw err;
-        failed = { title: row.listing.title || 'Item', message };
-        break;
-      }
-    }
+    const order = await this.orders.create(
+      userId,
+      {
+        listingId: row.listingId,
+        quantity: row.quantity,
+        buyNow: true,
+        fulfilmentMethod: FulfilmentMethod.DELIVERY,
+        toLat: drop.lat,
+        toLng: drop.lng,
+        deliveryAddress,
+        deliveryLine1: dto.deliveryLine1,
+        deliveryCommunity: dto.deliveryCommunity,
+        deliveryCity: dto.deliveryCity,
+        deliveryFeeKobo: deliveryByListing.get(row.listingId) ?? 0,
+      },
+      { skipEmail: true, checkoutId },
+    );
+    const placed = [
+      {
+        id: order.id,
+        sellerId: order.sellerId,
+        quantity: order.quantity,
+        amountKobo: order.amountKobo,
+        totalKobo: order.totalKobo,
+        title: row.listing.title,
+      },
+    ];
     await this.orders.emailOrdersPlaced(userId, placed);
-    if (failed) {
-      throw new ConflictException(
-        `${failed.title}: ${failed.message}. ${orders.length} other item(s) were ordered.`,
-      );
-    }
     return {
       checkoutId,
-      orders,
-      quote: this.buildQuotePayload(
-        rows,
-        deliveryByListing,
-        dto.toLat,
-        dto.toLng,
-      ),
+      orders: [order],
+      quote: this.buildQuotePayload(rows, deliveryLegs),
     };
   }
 
   private async loadCheckoutRows(
     userId: string,
-    listingIds?: string[],
   ): Promise<
     (CartRow & {
       createdAt: Date;
@@ -217,23 +252,22 @@ export class CartService {
     })[]
   > {
     const rows = await this.prisma.cartItem.findMany({
-      where: {
-        userId,
-        ...(listingIds?.length ? { listingId: { in: listingIds } } : {}),
-      },
+      where: { userId },
       include: { listing: { select: cartListingSelect } },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { updatedAt: 'desc' },
+      take: 1,
     });
     if (rows.length === 0) {
       throw new BadRequestException('Your cart is empty');
     }
     for (const row of rows) {
-      if (row.listing.status !== ListingStatus.LIVE) {
+      const ready = await this.cartLineCheckoutReady(userId, row.listing);
+      if (!ready) {
         throw new ConflictException(
           `"${row.listing.title || 'Item'}" is no longer available`,
         );
       }
-      if (row.listing.geoLat == null || row.listing.geoLng == null) {
+      if (!listingHasPickupGeo(row.listing)) {
         throw new BadRequestException(
           `"${row.listing.title || 'Item'}" cannot be delivered — seller pickup location is missing.`,
         );
@@ -242,34 +276,79 @@ export class CartService {
     return rows;
   }
 
-  /** First line per seller pays delivery; additional lines from same seller pay 0. */
-  private deliveryFeesByListing(
-    rows: CartRow[],
-    toLat: number,
-    toLng: number,
-  ): Map<string, number> {
-    const chargedSeller = new Set<string>();
-    const fees = new Map<string, number>();
-    for (const row of rows) {
-      const sellerId = row.listing.sellerId;
-      if (chargedSeller.has(sellerId)) {
-        fees.set(row.listingId, 0);
-        continue;
-      }
-      const fromLat = row.listing.geoLat ?? 6.5244;
-      const fromLng = row.listing.geoLng ?? 3.3792;
-      const distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
-      fees.set(row.listingId, computeDeliveryFeeKobo(distanceKm));
-      chargedSeller.add(sellerId);
+  private dropoffAddressFromDto(dto: {
+    deliveryLine1?: string;
+    deliveryCommunity?: string;
+    deliveryCity?: string;
+  }) {
+    const line1 = dto.deliveryLine1?.trim() ?? '';
+    const community = dto.deliveryCommunity?.trim() ?? '';
+    if (line1.length < 3 || community.length < 2) return null;
+    return {
+      line1,
+      community,
+      city: dto.deliveryCity?.trim() || 'Lagos',
+      country: 'NG',
+    };
+  }
+
+  private async resolveBuyerDropoff(
+    userId: string,
+    dto: {
+      toLat?: number;
+      toLng?: number;
+      deliveryLine1?: string;
+      deliveryCommunity?: string;
+      deliveryCity?: string;
+    },
+  ) {
+    if (dto.toLat == null || dto.toLng == null) {
+      throw new BadRequestException('Delivery destination is required');
     }
-    return fees;
+    const hint = { lat: dto.toLat, lng: dto.toLng };
+    const parts = this.dropoffAddressFromDto(dto);
+    if (parts) {
+      return this.deliveryPricing.resolveDropoffForUser(userId, parts, hint);
+    }
+    return hint;
+  }
+
+  private async deliveryLegsByListing(
+    buyerUserId: string,
+    rows: CartRow[],
+    dropoff: { lat: number; lng: number },
+    dropoffAddress?: {
+      line1: string;
+      community: string;
+      city: string;
+      country: string;
+    } | null,
+  ) {
+    const legs = new Map<
+      string,
+      { deliveryFeeKobo: number; distanceKm: number | null }
+    >();
+    const row = rows[0];
+    if (!row) return legs;
+    const priced = await this.deliveryPricing.quoteLegForListing(
+      row.listing,
+      dropoff,
+      dropoffAddress,
+      buyerUserId,
+    );
+    legs.set(row.listingId, {
+      deliveryFeeKobo: priced.deliveryFeeKobo,
+      distanceKm: priced.distanceKm,
+    });
+    return legs;
   }
 
   private buildQuotePayload(
     rows: CartRow[],
-    deliveryByListing: Map<string, number>,
-    toLat?: number,
-    toLng?: number,
+    deliveryLegs: Map<
+      string,
+      { deliveryFeeKobo: number; distanceKm: number | null }
+    >,
   ) {
     const sellerDelivery = new Map<
       string,
@@ -277,20 +356,15 @@ export class CartService {
     >();
     const lines = rows.map((row) => {
       const itemSubtotalKobo = row.listing.priceKobo * row.quantity;
-      const deliveryFeeKobo = deliveryByListing.get(row.listingId) ?? 0;
+      const legMeta = deliveryLegs.get(row.listingId);
+      const deliveryFeeKobo = legMeta?.deliveryFeeKobo ?? 0;
       const protectionFeeKobo = computeProtectionFeeKobo(itemSubtotalKobo);
       const lineTotalKobo =
         itemSubtotalKobo + protectionFeeKobo + deliveryFeeKobo;
       if (deliveryFeeKobo > 0 && !sellerDelivery.has(row.listing.sellerId)) {
-        let distanceKm: number | null = null;
-        if (toLat != null && toLng != null) {
-          const fromLat = row.listing.geoLat ?? 6.5244;
-          const fromLng = row.listing.geoLng ?? 3.3792;
-          distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
-        }
         sellerDelivery.set(row.listing.sellerId, {
           deliveryFeeKobo,
-          distanceKm,
+          distanceKm: legMeta?.distanceKm ?? null,
         });
       }
       return {
@@ -333,7 +407,52 @@ export class CartService {
     };
   }
 
-  private toDto(row: {
+  private async cartLineCheckoutReady(
+    userId: string,
+    listing: {
+      id: string;
+      status: ListingStatus;
+      quantityAvailable: number;
+      quantityReserved: number;
+      quantityTotal: number;
+      quantitySold: number;
+    },
+  ): Promise<boolean> {
+    if (listing.status === ListingStatus.LIVE) {
+      return listing.quantityAvailable >= 1;
+    }
+    if (listing.status === ListingStatus.RESERVED) {
+      const lane = await buyerCanCheckoutOnListing(
+        this.prisma,
+        listing,
+        userId,
+      );
+      if (!lane) return false;
+      if (listing.quantityAvailable >= 1) return true;
+      return (
+        listing.quantityAvailable < 1 && (listing.quantityReserved ?? 0) < 1
+      );
+    }
+    return false;
+  }
+
+  private async toDtoForUser(
+    userId: string,
+    row: Parameters<CartService['toDto']>[0],
+  ) {
+    const checkoutReady = await this.cartLineCheckoutReady(userId, {
+      id: row.listing.id,
+      status: row.listing.status,
+      quantityAvailable: row.listing.quantityAvailable,
+      quantityReserved: row.listing.quantityReserved ?? 0,
+      quantityTotal: row.listing.quantityTotal,
+      quantitySold: row.listing.quantitySold ?? 0,
+    });
+    return this.toDto(row, checkoutReady);
+  }
+
+  private toDto(
+    row: {
     id: string;
     quantity: number;
     createdAt: Date;
@@ -349,16 +468,20 @@ export class CartService {
       geoLng: number | null;
       quantityAvailable: number;
       quantityTotal: number;
+      quantityReserved?: number;
+      quantitySold?: number;
       images: { id: string; variants: unknown }[];
     };
-  }) {
+  },
+    checkoutReady: boolean,
+  ) {
     const available = row.listing.quantityAvailable;
     return {
       id: row.id,
       quantity: row.quantity,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
-      unavailable: row.listing.status !== 'LIVE' || available < 1,
+      unavailable: !checkoutReady,
       listing: {
         id: row.listing.id,
         title: row.listing.title,

@@ -110,7 +110,11 @@ export class SellerSubscriptionService
    * The pending checkout is kept as an IdempotencyRecord so the same
    * idempotency key returns the same checkout link.
    */
-  async upgradeToPlus(userId: string, idempotencyKey: string) {
+  async upgradeToPlus(
+    userId: string,
+    idempotencyKey: string,
+    requestOrigin?: string | null,
+  ) {
     const sub = await this.getOrCreate(userId);
     if (sub.status === 'ACTIVE' && sub.tier === 'PLUS') {
       throw new ConflictException('Already on Plus');
@@ -143,7 +147,7 @@ export class SellerSubscriptionService
       email,
       metadata: { kind: 'SELLER_PLUS', userId, idempotencyKey },
       idempotencyKey,
-      callbackUrl: payReturnUrl(this.psp.name),
+      callbackUrl: payReturnUrl(this.psp.name, requestOrigin),
     });
 
     const checkout: PlusCheckout = {

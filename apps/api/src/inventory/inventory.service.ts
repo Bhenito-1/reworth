@@ -24,6 +24,13 @@ export function tracksQuantity(listing: {
   return typeof listing.quantityTotal === 'number';
 }
 
+function expectedQuantityAvailable(listing: StockListing): number {
+  const total = listing.quantityTotal ?? 0;
+  const sold = listing.quantitySold ?? 0;
+  const reserved = listing.quantityReserved ?? 0;
+  return Math.max(0, total - sold - reserved);
+}
+
 @Injectable()
 export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
@@ -32,12 +39,29 @@ export class InventoryService {
    * Hold units for an unpaid order. Available drops immediately so nobody else
    * can buy the same units. Cart adds do not call this.
    */
+  /** Fix quantityAvailable when counts drift (e.g. after offer reserve without stock move). */
+  async reconcileQuantityAvailable(
+    tx: Prisma.TransactionClient,
+    listingId: string,
+  ): Promise<void> {
+    const listing = await tx.listing.findUnique({ where: { id: listingId } });
+    if (!listing || !tracksQuantity(listing)) return;
+    const expected = expectedQuantityAvailable(listing);
+    if (expected !== (listing.quantityAvailable ?? 0)) {
+      await tx.listing.update({
+        where: { id: listingId },
+        data: { quantityAvailable: expected },
+      });
+    }
+  }
+
   async reserveStock(
     tx: Prisma.TransactionClient,
     listingId: string,
     quantity: number,
     actorUserId?: string | null,
   ): Promise<void> {
+    await this.reconcileQuantityAvailable(tx, listingId);
     const listing = await tx.listing.findUnique({ where: { id: listingId } });
     if (!listing) throw new NotFoundException('Listing not found');
     if (!tracksQuantity(listing)) return;

@@ -226,9 +226,7 @@ export default function NotificationsPage() {
           </div>
         ) : (
           <ul className="mt-8 space-y-2">
-            {items.map((n) => {
-              const path = deepLinkToPath(n.deepLink);
-              return (
+            {items.map((n) => (
                 <li key={n.id}>
                   <button
                     type="button"
@@ -256,7 +254,6 @@ export default function NotificationsPage() {
                         <p className="mt-2 text-xs text-[var(--rw-ink-muted)]">
                           {categoryLabel(n.category)} ·{" "}
                           {new Date(n.createdAt).toLocaleString("en-NG")}
-                          {path ? ` · Open ${path}` : ""}
                         </p>
                       </div>
                       {!n.readAt ? (
@@ -268,8 +265,7 @@ export default function NotificationsPage() {
                     </div>
                   </button>
                 </li>
-              );
-            })}
+            ))}
           </ul>
         )}
       </PullToRefresh>

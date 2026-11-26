@@ -12,17 +12,19 @@ import {
 } from "@reworth/ui-web";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { ApiError, apiFetch } from "../../lib/api";
-import { getAccessToken } from "../../lib/auth";
+import { getAccessToken, getAccessTokenUserId } from "../../lib/auth";
 import {
   fulfilmentLabel,
   isCancelledOrder,
   isDeliveredOrder,
   listOrders,
+  orderDisplayTotalKobo,
   orderStatusLabel,
   sortMyOrders,
   type OrderDto,
 } from "../../lib/orders";
 import type { MeResponse } from "../../lib/types";
+import { subscribeChat } from "../../lib/chat-socket";
 
 type OrderListTab = "selling" | "buying" | "cancelled";
 
@@ -110,12 +112,17 @@ export default function OrdersListPage() {
     if (!soft) setLoading(true);
     setError(null);
     try {
-      const [me, list] = await Promise.all([
-        apiFetch<MeResponse>("/me", { token }),
+      const [meResult, list] = await Promise.all([
+        apiFetch<MeResponse>("/me", { token }).catch(() => null),
         listOrders(token),
       ]);
-      setMeId(me.id);
       setOrders(list);
+      const id = meResult?.id ?? getAccessTokenUserId();
+      if (!id) {
+        if (!soft) setError("Could not load your profile. Refresh or sign in again.");
+        return;
+      }
+      setMeId(id);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         router.replace("/");
@@ -129,6 +136,17 @@ export default function OrdersListPage() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) return;
+    const stop = subscribeChat(token, {
+      onOrder: () => {
+        void load({ soft: true });
+      },
+    });
+    return stop;
   }, [load]);
 
   function selectTab(next: OrderListTab) {
@@ -256,7 +274,9 @@ export default function OrdersListPage() {
                             </p>
                             <p className="mt-0.5 text-sm">
                               {o.quantity && o.quantity > 1 ? `${o.quantity} × ` : ""}
-                              {formatNgn({ amountKobo: o.totalKobo })}
+                              {formatNgn({
+                                amountKobo: orderDisplayTotalKobo(o, meId),
+                              })}
                             </p>
                             <p className="mt-0.5 text-sm text-[var(--rw-ink-muted)]">
                               {role} · {fulfilmentLabel(String(o.fulfilmentMethod))}

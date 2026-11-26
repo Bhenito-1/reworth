@@ -8,6 +8,7 @@ import {
   type SearchProvider,
   type SearchProviderResult,
 } from '../providers/search.provider';
+import { RegionConfigService } from '../region/region-config.service';
 import { NlSearchParser } from './nl-search.parser';
 import type { NlSearchDto, SearchQueryDto } from './dto/search.dto';
 
@@ -20,6 +21,7 @@ export class SearchService {
     private readonly prisma: PrismaService,
     private readonly analytics: DiscoveryAnalyticsService,
     private readonly visibility: CommunityVisibilityService,
+    private readonly regions: RegionConfigService,
   ) {}
 
   async search(
@@ -46,6 +48,7 @@ export class SearchService {
     });
 
     const filters = await this.resolveCategorySlugs(interpreted.filters);
+    this.enrichLocationFilters(filters);
     filters.viewerId = viewerId;
     filters.visibilityWhere = this.visibility.visibleListingWhere(
       viewerId,
@@ -83,16 +86,18 @@ export class SearchService {
     query: SearchQueryDto,
     viewerId?: string | null,
   ): SearchFilters {
-    return {
+    const city = query.city?.trim() || undefined;
+    const community = query.community?.trim() || undefined;
+    const filters: SearchFilters = {
       q: query.q,
       categoryId: query.categoryId,
       subcategoryId: query.subcategoryId,
       priceMinKobo: query.priceMinKobo,
       priceMaxKobo: query.priceMaxKobo,
       condition: query.condition,
-      community: query.community,
+      community,
       communityId: query.communityId,
-      city: query.city,
+      city,
       radiusKm: query.radiusKm,
       lat: query.lat,
       lng: query.lng,
@@ -107,6 +112,35 @@ export class SearchService {
         viewerId,
       ) as Record<string, unknown>,
     };
+    this.enrichLocationFilters(filters);
+    return filters;
+  }
+
+  private enrichLocationFilters(filters: SearchFilters): void {
+    if (filters.city) {
+      filters.city = this.regions.resolveSearchCity(filters.city);
+      filters.cityMatch = this.regions.citySearchVariants(filters.city);
+    }
+    if (filters.community) {
+      filters.communityMatch = this.regions.communitySearchVariants(
+        filters.city,
+        filters.community,
+      );
+    }
+    if (
+      filters.radiusKm != null &&
+      filters.community &&
+      (filters.lat == null || filters.lng == null)
+    ) {
+      const geo = this.regions.getCommunityGeo(
+        filters.city ?? 'Lagos',
+        filters.community,
+      );
+      if (geo) {
+        filters.lat = geo.geoLat;
+        filters.lng = geo.geoLng;
+      }
+    }
   }
 
   private async resolveCategorySlugs(

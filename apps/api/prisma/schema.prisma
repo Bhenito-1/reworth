@@ -134,6 +134,7 @@ enum MessageType {
   IMAGE
   LISTING_CARD
   OFFER_CARD
+  MEETUP_CARD
   SWAP_PROPOSAL_CARD
   GIVEAWAY_CLAIM
   SYSTEM
@@ -350,6 +351,13 @@ enum FulfilmentMethod {
   DELIVERY
 }
 
+/// Seller preference shown on the listing; buyers decide at checkout.
+enum FulfilmentPreference {
+  DELIVERY
+  MEET_POINT
+  EITHER
+}
+
 enum PaymentStatus {
   PENDING
   SUCCESS
@@ -398,6 +406,11 @@ enum DeliveryShipmentStatus {
   OUT_FOR_DELIVERY
   DELIVERED
   FAILED
+}
+
+enum AddressKind {
+  PICKUP
+  DELIVERY
 }
 
 enum NotificationChannel {
@@ -450,6 +463,8 @@ enum ReviewStatus {
 model User {
   /// Stable unique account id (UUID) — payer/payee on payments, buyer/seller on orders.
   id              String     @id @default(uuid()) @db.Uuid
+  /// Human-readable ReWorth member id (RW-MBR-*). Not NIN/BVN — identity stays in Verification.
+  memberReference String?    @unique
   phone           String?    @unique
   phoneVerifiedAt DateTime?
   email           String?    @unique
@@ -488,6 +503,8 @@ model User {
   messagesSent         Message[]            @relation("MessageSender")
   offersAsBuyer        Offer[]              @relation("OfferBuyer")
   offersAsSeller       Offer[]              @relation("OfferSeller")
+  meetupsAsBuyer       MeetupProposal[]     @relation("MeetupBuyer")
+  meetupsAsSeller      MeetupProposal[]     @relation("MeetupSeller")
   offerEvents          OfferEvent[]         @relation("OfferEventActor")
   orderIntentsAsBuyer  OrderIntent[]        @relation("OrderIntentBuyer")
   orderIntentsAsSeller OrderIntent[]        @relation("OrderIntentSeller")
@@ -611,23 +628,31 @@ model Profile {
 }
 
 model Address {
-  id        String  @id @default(uuid()) @db.Uuid
-  userId    String  @db.Uuid
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  kind      AddressKind @default(DELIVERY)
   label     String
   line1     String
   line2     String?
   city      String
   community String
-  country   String  @default("NG")
+  country   String      @default("NG")
   geoLat    Float?
   geoLng    Float?
-  isDefault Boolean @default(false)
+  /// Normalized street (no house number) for same-road geocode lookup.
+  streetKey String?
+  /// ors | street_cache | street_estimate | community
+  geocodeSource String?
+  isDefault Boolean     @default(false)
   /// Always treat as private PII — never expose in public APIs.
-  private   Boolean @default(true)
+  private   Boolean     @default(true)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pickupForListing Listing[] @relation("ListingPickupAddress")
 
   @@index([userId])
+  @@index([userId, kind])
+  @@index([city, community, streetKey])
   @@map("addresses")
 }
 
@@ -791,9 +816,12 @@ model Listing {
   geoLng             Float?
   /// Private meetup / pickup address — NEVER expose in public DTOs.
   addressPrivate     String?
-  fulfilmentPickup   Boolean       @default(true)
-  fulfilmentMeet     Boolean       @default(true)
-  fulfilmentDelivery Boolean       @default(false)
+  pickupAddressId    String?       @db.Uuid
+  pickupAddress      Address?      @relation("ListingPickupAddress", fields: [pickupAddressId], references: [id], onDelete: SetNull)
+  fulfilmentPickup     Boolean               @default(true)
+  fulfilmentMeet       Boolean               @default(true)
+  fulfilmentDelivery   Boolean               @default(true)
+  fulfilmentPreference FulfilmentPreference   @default(EITHER)
   aiUsed             Boolean       @default(false)
   aiEditedFields     String[]      @default([])
   expiresAt          DateTime?
@@ -832,6 +860,7 @@ model Listing {
   cartItems    CartItem[]
   conversations Conversation[]
   offers       Offer[]
+  meetupProposals MeetupProposal[]
   orderIntents OrderIntent[]
   orders       Order[]
   listingCards Message[]      @relation("MessageListingCard")
@@ -1146,6 +1175,7 @@ model Conversation {
   seller   User      @relation("ConversationSeller", fields: [sellerId], references: [id], onDelete: Cascade)
   messages Message[]
   offers   Offer[]
+  meetupProposals MeetupProposal[]
   mutes             UserMute[]
   reports           Report[]
   chatResponseSample ChatResponseSample?
@@ -1162,10 +1192,10 @@ model Message {
   conversationId String      @db.Uuid
   senderId       String      @db.Uuid
   type           MessageType
-  /// Scrubbed body — phone/email patterns redacted before persist.
   body           String?
   imageKey       String?
   offerId        String?     @db.Uuid
+  meetupProposalId String?   @db.Uuid
   listingCardId  String?     @db.Uuid
   /// Client-generated id for idempotent resync.
   clientMsgId    String?
@@ -1177,6 +1207,7 @@ model Message {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
   offer        Offer?       @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  meetupProposal MeetupProposal? @relation(fields: [meetupProposalId], references: [id], onDelete: SetNull)
   listingCard  Listing?     @relation("MessageListingCard", fields: [listingCardId], references: [id], onDelete: SetNull)
 
   @@unique([conversationId, clientMsgId])
@@ -1232,12 +1263,44 @@ model OfferEvent {
   @@map("offer_events")
 }
 
+model MeetupProposal {
+  id             String      @id @default(uuid()) @db.Uuid
+  listingId      String      @db.Uuid
+  conversationId String?     @db.Uuid
+  buyerId        String      @db.Uuid
+  sellerId       String      @db.Uuid
+  locationText   String
+  proposedDeliveryDate DateTime?
+  status         OfferStatus @default(PENDING)
+  parentId       String?     @db.Uuid
+  expiresAt      DateTime
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  listing      Listing       @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  buyer        User          @relation("MeetupBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller       User          @relation("MeetupSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  parent       MeetupProposal?  @relation("MeetupChain", fields: [parentId], references: [id], onDelete: SetNull)
+  counters     MeetupProposal[] @relation("MeetupChain")
+  messages     Message[]
+  orderIntents OrderIntent[]
+
+  @@index([listingId, status])
+  @@index([buyerId, listingId, status])
+  @@index([expiresAt])
+  @@map("meetup_proposals")
+}
+
 model OrderIntent {
   id            String            @id @default(uuid()) @db.Uuid
   listingId     String            @db.Uuid
   buyerId       String            @db.Uuid
   sellerId      String            @db.Uuid
   offerId       String?           @db.Uuid
+  meetupProposalId String?        @db.Uuid
+  fulfilmentMethod FulfilmentMethod?
+  meetupLocationText String?
   amountKobo    Int
   status        OrderIntentStatus @default(PENDING)
   reservedUntil DateTime
@@ -1248,6 +1311,7 @@ model OrderIntent {
   buyer   User    @relation("OrderIntentBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
   seller  User    @relation("OrderIntentSeller", fields: [sellerId], references: [id], onDelete: Cascade)
   offer   Offer?  @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  meetupProposal MeetupProposal? @relation(fields: [meetupProposalId], references: [id], onDelete: SetNull)
   order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@index([listingId, status])
@@ -1317,6 +1381,8 @@ model Order {
   orderIntent        OrderIntent?
   meetPointId        String?            @db.Uuid
   meetPoint          MeetPoint?         @relation(fields: [meetPointId], references: [id], onDelete: SetNull)
+  /// Agreed meetup place (free text from chat), when fulfilment is MEET_POINT.
+  meetupLocationText String?
   deliveryShipment   DeliveryShipment?
   addressDisclosure  AddressDisclosure?
   supportTickets     SupportTicket[]

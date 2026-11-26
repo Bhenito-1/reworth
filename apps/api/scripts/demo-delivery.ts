@@ -12,8 +12,7 @@ import { FulfilmentMethod, OrderStatus } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { DeliveryService } from '../src/delivery/delivery.service';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { computeDeliveryFeeKobo } from '../src/providers/delivery.provider';
-import { haversineKm } from '../src/providers/search.provider';
+import { quoteDeliveryLeg } from '../src/delivery/delivery-pricing';
 import { computeOrderTotalKobo, computeProtectionFeeKobo } from '../src/orders/order-fees';
 
 const DRIVER_STATUSES = [
@@ -105,13 +104,12 @@ async function createFundedDeliveryOrder(prisma: PrismaService) {
 
   const toLat = 6.43;
   const toLng = 3.43;
-  const distanceKm = haversineKm(
-    listing.geoLat!,
-    listing.geoLng!,
+  const { distanceKm, deliveryFeeKobo } = quoteDeliveryLeg({
+    fromLat: listing.geoLat!,
+    fromLng: listing.geoLng!,
     toLat,
     toLng,
-  );
-  const deliveryFeeKobo = computeDeliveryFeeKobo(distanceKm);
+  });
   const amountKobo = listing.priceKobo;
   const protectionFeeKobo = computeProtectionFeeKobo(amountKobo);
   const totalKobo = computeOrderTotalKobo({

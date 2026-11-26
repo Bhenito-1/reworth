@@ -12,6 +12,7 @@ import {
   Skeleton,
   Toast,
 } from "@reworth/ui-web";
+import { BackLink } from "../../../components/BackLink";
 import { ReviewForm } from "../../../components/trust/ReviewForm";
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
 import { DeliveryExceptionBanner } from "../../../components/DeliveryExceptionBanner";
@@ -40,6 +41,8 @@ import {
   disputeIdFromEvents,
   fulfilmentLabel,
   getOrder,
+  isSellerStandardSale,
+  orderDisplayTotalKobo,
   SWAP_FEE_KOBO,
   initiatePayment,
   isMockPsp,
@@ -67,6 +70,7 @@ import {
   type CreateReviewBody,
   type OrderReviewUiState,
 } from "../../../lib/trust";
+import { subscribeChat } from "../../../lib/chat-socket";
 
 function formatDeliveryDay(iso: string): string {
   const [year, month, day] = iso.slice(0, 10).split("-").map(Number);
@@ -203,6 +207,9 @@ export default function OrderDetailPage() {
         router.replace("/");
         return;
       }
+      if (quiet && err instanceof ApiError && err.status === 429) {
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Order not found");
       setOrder(null);
     } finally {
@@ -213,6 +220,17 @@ export default function OrderDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token || !orderId) return;
+    const stop = subscribeChat(token, {
+      onOrder: (update) => {
+        if (update.orderId === orderId) void load(true);
+      },
+    });
+    return stop;
+  }, [load, orderId]);
 
   useEffect(() => {
     if (!shipment) return;
@@ -481,6 +499,7 @@ export default function OrderDetailPage() {
 
   const isBuyer = meId === order.buyerId;
   const isSeller = meId === order.sellerId;
+  const sellerStandardSale = isSellerStandardSale(order, meId);
   const disputeId = disputeIdFromEvents(order.events);
   const swapOpen =
     Boolean(order.swap) &&
@@ -535,12 +554,7 @@ export default function OrderDetailPage() {
 
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-8">
         <header className="mb-6 flex items-center justify-between gap-4">
-          <Link
-            href={ordersHref}
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Orders
-          </Link>
+          <BackLink href={ordersHref} />
           <span className="text-xl font-semibold tracking-tight">ReWorth</span>
         </header>
 
@@ -583,9 +597,7 @@ export default function OrderDetailPage() {
             ) : null}
             <p className="mt-1 text-lg font-semibold">
               {formatNgn({
-                amountKobo: order.swap
-                  ? order.deliveryFeeKobo + SWAP_FEE_KOBO
-                  : order.totalKobo,
+                amountKobo: orderDisplayTotalKobo(order, meId),
               })}
             </p>
             <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
@@ -624,6 +636,22 @@ export default function OrderDetailPage() {
               </dd>
             </div>
           </dl>
+        ) : sellerStandardSale ? (
+          <dl className="mt-6 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-[var(--rw-ink-muted)]">Item</dt>
+              <dd className="font-medium">
+                {order.listingTitle?.trim() || "Listing"}
+                {order.quantity && order.quantity > 1 ? ` · ${order.quantity} units` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--rw-ink-muted)]">Sale total</dt>
+              <dd className="font-medium">
+                {formatNgn({ amountKobo: order.amountKobo })}
+              </dd>
+            </div>
+          </dl>
         ) : (
           <dl className="mt-6 grid gap-3 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-4 text-sm sm:grid-cols-2">
             <div>
@@ -652,23 +680,31 @@ export default function OrderDetailPage() {
             <dt className="text-[var(--rw-ink-muted)]">Order reference</dt>
             <dd className="font-mono text-sm font-semibold">{order.reference}</dd>
             <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
-              Give this reference to the courier when collecting your item.
+              {isSeller
+                ? "Give this reference to the courier when dispatching your item."
+                : "Give this reference to the courier when collecting your item."}
             </p>
           </div>
-          {order.paymentReference ? (
-            <div>
-              <dt className="text-[var(--rw-ink-muted)]">Payment reference</dt>
-              <dd className="font-mono text-xs font-medium">{order.paymentReference}</dd>
-            </div>
+          {isBuyer ? (
+            <>
+              {order.paymentReference ? (
+                <div>
+                  <dt className="text-[var(--rw-ink-muted)]">Payment reference</dt>
+                  <dd className="font-mono text-xs font-medium">
+                    {order.paymentReference}
+                  </dd>
+                </div>
+              ) : null}
+              <div>
+                <dt className="text-[var(--rw-ink-muted)]">Payment</dt>
+                <dd className="font-medium">{paymentStatusFromOrder(order)}</dd>
+              </div>
+              <div>
+                <dt className="text-[var(--rw-ink-muted)]">Refund</dt>
+                <dd className="font-medium">{refundStatusFromOrder(order)}</dd>
+              </div>
+            </>
           ) : null}
-          <div>
-            <dt className="text-[var(--rw-ink-muted)]">Payment</dt>
-            <dd className="font-medium">{paymentStatusFromOrder(order)}</dd>
-          </div>
-          <div>
-            <dt className="text-[var(--rw-ink-muted)]">Refund</dt>
-            <dd className="font-medium">{refundStatusFromOrder(order)}</dd>
-          </div>
           {sellerPayoutLabel(
             order.escrow?.payoutStatus,
             isSeller ? "seller" : "buyer",
@@ -750,18 +786,29 @@ export default function OrderDetailPage() {
         {order.confirmationStatus === "PENDING" && order.status === "CREATED" ? (
           <p className="mt-4 text-sm text-[var(--rw-ink-muted)]">
             {isBuyer
-              ? "Waiting for the seller to confirm this order. Your units are reserved. You can cancel before paying."
-              : "Confirm the delivery date so the buyer can pay. The units stay reserved until you confirm, reject, or they cancel."}
+              ? "Waiting for the seller to confirm. You can cancel before paying."
+              : "Confirm the delivery date so the buyer can pay."}
           </p>
         ) : null}
-        {order.deliveryDate ? (
+        {order.fulfilmentMethod === "MEET_POINT" ? (
+          <div className="mt-2 space-y-1 text-sm">
+            {order.meetupLocationText ? (
+              <p>
+                <span className="text-[var(--rw-ink-muted)]">Meetup · </span>
+                {order.meetupLocationText}
+              </p>
+            ) : null}
+            {order.deliveryDate ? (
+              <p>
+                <span className="text-[var(--rw-ink-muted)]">Meetup date · </span>
+                {formatDeliveryDay(order.deliveryDate)}
+              </p>
+            ) : null}
+          </div>
+        ) : order.deliveryDate ? (
           <p className="mt-2 text-sm">
             Delivery date{" "}
-            {new Date(order.deliveryDate).toLocaleDateString("en-NG", {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-            })}
+            {formatDeliveryDay(order.deliveryDate)}
             {order.sellerNote ? ` · ${order.sellerNote}` : ""}
           </p>
         ) : null}
@@ -1136,12 +1183,6 @@ export default function OrderDetailPage() {
               </Button>
             </div>
           </div>
-        ) : null}
-
-        {order.status === "COMPLETED" && isSeller ? (
-          <p className="mt-8 text-sm text-[var(--rw-ink-muted)]">
-            Buyers rate the purchase after this order. That rating shows on your listings. Sellers do not rate buyers.
-          </p>
         ) : null}
 
         {order.status === "COMPLETED" && isBuyer ? (

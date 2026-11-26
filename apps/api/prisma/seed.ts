@@ -55,12 +55,15 @@ type CategorySeed = {
 const CATEGORIES: CategorySeed[] = [
   {
     slug: 'home-furniture',
-    name: 'Home & Furniture',
+    name: 'Home & Living',
     children: [
       { slug: 'sofas', name: 'Sofas' },
       { slug: 'beds', name: 'Beds' },
       { slug: 'tables-desks', name: 'Tables & Desks' },
       { slug: 'storage', name: 'Storage' },
+      { slug: 'kitchen', name: 'Kitchen appliances' },
+      { slug: 'laundry', name: 'Laundry' },
+      { slug: 'cooling', name: 'Cooling' },
     ],
   },
   {
@@ -71,34 +74,13 @@ const CATEGORIES: CategorySeed[] = [
       { slug: 'audio', name: 'Audio' },
       { slug: 'cameras', name: 'Cameras' },
       { slug: 'gaming', name: 'Gaming' },
-    ],
-  },
-  {
-    slug: 'phones-tablets',
-    name: 'Phones & Tablets',
-    children: [
       { slug: 'smartphones', name: 'Smartphones' },
       { slug: 'tablets', name: 'Tablets' },
-      { slug: 'phone-accessories', name: 'Accessories' },
-    ],
-  },
-  {
-    slug: 'computers',
-    name: 'Computers',
-    children: [
+      { slug: 'phone-accessories', name: 'Phone accessories' },
       { slug: 'laptops', name: 'Laptops' },
       { slug: 'desktops', name: 'Desktops' },
       { slug: 'monitors', name: 'Monitors' },
       { slug: 'peripherals', name: 'Peripherals' },
-    ],
-  },
-  {
-    slug: 'home-appliances',
-    name: 'Home Appliances',
-    children: [
-      { slug: 'kitchen', name: 'Kitchen' },
-      { slug: 'laundry', name: 'Laundry' },
-      { slug: 'cooling', name: 'Cooling' },
     ],
   },
   {
@@ -116,6 +98,7 @@ const CATEGORIES: CategorySeed[] = [
     children: [
       { slug: 'mens', name: "Men's" },
       { slug: 'womens', name: "Women's" },
+      { slug: 'clothes', name: 'Clothes' },
       { slug: 'shoes', name: 'Shoes' },
     ],
   },
@@ -147,21 +130,15 @@ const CATEGORIES: CategorySeed[] = [
     ],
   },
   {
-    slug: 'office-equipment',
-    name: 'Office Equipment',
-    children: [
-      { slug: 'printers', name: 'Printers' },
-      { slug: 'office-furniture', name: 'Furniture' },
-      { slug: 'supplies', name: 'Supplies' },
-    ],
-  },
-  {
     slug: 'tools-equipment',
     name: 'Tools & Equipment',
     children: [
       { slug: 'power-tools', name: 'Power Tools' },
       { slug: 'hand-tools', name: 'Hand Tools' },
       { slug: 'generators', name: 'Generators' },
+      { slug: 'printers', name: 'Printers' },
+      { slug: 'office-furniture', name: 'Office furniture' },
+      { slug: 'supplies', name: 'Office supplies' },
     ],
   },
   {
@@ -952,7 +929,7 @@ async function seedDemoBuyerDropoff() {
   });
   if (!ayo) return;
   const existing = await prisma.address.findFirst({
-    where: { userId: ayo.id, isDefault: true },
+    where: { userId: ayo.id, kind: 'DELIVERY', isDefault: true },
   });
   if (existing?.line1) return;
   if (existing) {
@@ -971,7 +948,8 @@ async function seedDemoBuyerDropoff() {
   await prisma.address.create({
     data: {
       userId: ayo.id,
-      label: 'Home',
+      kind: 'DELIVERY',
+      label: 'delivery',
       line1: '14 Glover Road',
       community: 'Ikoyi',
       city: 'Lagos',

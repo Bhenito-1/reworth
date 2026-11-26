@@ -8,6 +8,7 @@ import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
 import { ApiError } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
+import { listingPdpHref } from "../../../lib/listings";
 import {
   followMovingSale,
   getMovingSale,
@@ -213,7 +214,10 @@ export default function MovingSalePage() {
                         ).catch(() => undefined);
                       }}
                     >
-                      <DiscoveryListingCard listing={item} />
+                      <DiscoveryListingCard
+                        listing={item}
+                        href={listingPdpHref(item.id, `/moving-sales/${id}`)}
+                      />
                     </li>
                   ))}
                 </ul>

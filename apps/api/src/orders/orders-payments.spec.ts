@@ -10,6 +10,7 @@ import {
   computeProtectionFeeKobo,
 } from './order-fees';
 import { OrderStateMachine } from './order-state.machine';
+import { mockAddressesService } from '../test/addresses.mock';
 import { OrdersService } from './orders.service';
 import { PaymentsService } from '../payments/payments.service';
 import { DisputesService } from '../disputes/disputes.service';
@@ -456,6 +457,7 @@ describe('escrow happy path + webhook replay', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const payments = new PaymentsService(
       prisma as never,
@@ -558,6 +560,7 @@ describe('escrow happy path + webhook replay', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const n = await orders.autoReleaseDue();
     expect(n).toBe(1);
@@ -1110,6 +1113,62 @@ describe('escrow happy path + webhook replay', () => {
     expect(state.payouts).toHaveLength(0);
   });
 
+
+  it('payment emails go to buyer and seller, even with the Email switch off', async () => {
+    await fundedRef(psp, 'ref-emails');
+    const state = {
+      order: baseOrder({ deliveryDate: new Date('2026-12-01T10:00:00Z') }),
+      payment: basePayment({ reference: 'ref-emails' }),
+      payouts: [] as unknown[],
+      idem: new Map<string, unknown>(),
+    };
+    const { payments } = makeServices(state);
+    (notifications.notify as jest.Mock).mockClear();
+
+    await payments.handleMockWebhook({ reference: 'ref-emails' });
+    expect(state.order.status).toBe('FUNDED');
+
+    const calls = (notifications.notify as jest.Mock).mock.calls.map(([a]) => a);
+    const receipt = calls.find((c) => String(c.title).startsWith('Receipt —'));
+    const sale = calls.find((c) => String(c.title).startsWith('New sale —'));
+    expect(receipt).toEqual(
+      expect.objectContaining({ userId: 'buyer-1', channels: ['EMAIL'], transactional: true }),
+    );
+    expect(sale).toEqual(
+      expect.objectContaining({ userId: 'seller-1', channels: ['EMAIL'], transactional: true }),
+    );
+    expect(sale.body).toContain('Mark handed over');
+    expect(sale.body).toContain('7 days after the buyer confirms');
+    // In-app notices no longer also send a duplicate email.
+    for (const c of calls.filter((x) => x.title === 'Payment received' || x.title === 'Payment confirmed')) {
+      expect(c.channels).toEqual(['IN_APP', 'PUSH']);
+    }
+  });
+
+  it('an email provider failure does not stop the order being funded', async () => {
+    await fundedRef(psp, 'ref-email-down');
+    const state = {
+      order: baseOrder(),
+      payment: basePayment({ reference: 'ref-email-down' }),
+      payouts: [] as unknown[],
+      idem: new Map<string, unknown>(),
+    };
+    const { payments } = makeServices(state);
+    const notify = notifications.notify as jest.Mock;
+    const original = notify.getMockImplementation();
+    notify.mockImplementation(async (input: { channels?: string[] }) => {
+      if (input.channels?.includes('EMAIL')) throw new Error('Resend 503');
+      return { created: [], skipped: [] };
+    });
+    try {
+      await payments.handleMockWebhook({ reference: 'ref-email-down' });
+    } finally {
+      notify.mockImplementation(original);
+    }
+    expect(state.order.status).toBe('FUNDED');
+    expect(state.payment.status).toBe('SUCCESS');
+  });
+
   describe('seller transfer bookkeeping (write-ahead payout)', () => {
     function receivedState(reference: string) {
       return {
@@ -1450,6 +1509,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
@@ -1533,6 +1593,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
@@ -1564,6 +1625,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );
@@ -1672,6 +1734,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     await orders.confirmReceipt('order-1', 'buyer-1');
     expect(order.status).toBe('RECEIVED');
@@ -1733,6 +1796,7 @@ describe('disputes', () => {
       config,
       notifications,
       psp,
+      mockAddressesService(),
     );
     const disputes = new DisputesService(prisma as never, orders, notifications, { log: jest.fn().mockResolvedValue(null) } as never, psp,
     );

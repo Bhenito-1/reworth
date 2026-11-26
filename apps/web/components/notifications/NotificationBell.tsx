@@ -2,13 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { getAccessToken } from "../../lib/auth";
 import { subscribeChat } from "../../lib/chat-socket";
 import { unreadNotificationCount } from "../../lib/notifications";
 
 export function useUnreadNotificationCount() {
-  const pathname = usePathname();
   const [count, setCount] = useState(0);
 
   useEffect(() => {
@@ -46,7 +44,7 @@ export function useUnreadNotificationCount() {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", load);
     };
-  }, [pathname]);
+  }, []);
 
   return count;
 }

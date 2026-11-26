@@ -25,6 +25,7 @@ export type ConversationListItem = {
   listingId: string;
   listingTitle: string;
   listingThumb: string | null;
+  listingNegotiable?: boolean;
   buyerId: string;
   sellerId: string;
   counterpart: { id: string; displayName: string };
@@ -60,6 +61,7 @@ export type ChatMessage = {
   body: string | null;
   imageKey: string | null;
   offerId: string | null;
+  meetupProposalId?: string | null;
   listingCardId: string | null;
   clientMsgId: string | null;
   deliveredAt: string | null;
@@ -380,6 +382,26 @@ export type OrderIntentPreview = {
   offerId: string | null;
   amountKobo: number;
   reservedUntil: string;
+  fulfilmentMethod?: "DELIVERY" | "MEET_POINT" | "PICKUP" | null;
+  meetupLocationText?: string | null;
+  meetupDeliveryDate?: string | null;
+};
+
+export type MeetupProposalDto = {
+  id: string;
+  listingId: string;
+  conversationId: string | null;
+  buyerId: string;
+  sellerId: string;
+  locationText: string;
+  proposedDeliveryDate: string | null;
+  status: OfferStatus | string;
+  parentId: string | null;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  proposedByUserId?: string | null;
+  orderIntentId?: string | null;
 };
 
 export function getOrderIntent(
@@ -426,6 +448,133 @@ export function parseOfferCheckout(
       listingId: raw.listingId,
       amountKobo: Math.floor(raw.amountKobo),
       buyerId: raw.buyerId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function createMeetupProposal(
+  token: string,
+  listingId: string,
+  body: {
+    locationText: string;
+    deliveryDate: string;
+    conversationId?: string;
+  },
+): Promise<MeetupProposalDto> {
+  return apiFetch<MeetupProposalDto>(`/listings/${listingId}/meetups`, {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export function listMeetups(
+  token: string,
+  listingId: string,
+): Promise<MeetupProposalDto[]> {
+  return apiFetch<MeetupProposalDto[]>(`/listings/${listingId}/meetups`, {
+    token,
+  });
+}
+
+export function acceptMeetup(
+  token: string,
+  meetupId: string,
+): Promise<{
+  meetup: MeetupProposalDto;
+  orderIntent: OrderIntentPreview;
+}> {
+  return apiFetch(`/meetups/${meetupId}/accept`, { method: "POST", token });
+}
+
+export function rejectMeetup(
+  token: string,
+  meetupId: string,
+): Promise<MeetupProposalDto> {
+  return apiFetch<MeetupProposalDto>(`/meetups/${meetupId}/reject`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function counterMeetup(
+  token: string,
+  meetupId: string,
+  body: { locationText: string; deliveryDate: string },
+): Promise<MeetupProposalDto> {
+  return apiFetch<MeetupProposalDto>(`/meetups/${meetupId}/counter`, {
+    method: "POST",
+    token,
+    body,
+  });
+}
+
+export function withdrawMeetup(
+  token: string,
+  meetupId: string,
+): Promise<MeetupProposalDto> {
+  return apiFetch<MeetupProposalDto>(`/meetups/${meetupId}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export type MeetupCheckoutPayload = {
+  v: 1;
+  kind: "MEETUP_CHECKOUT";
+  meetupProposalId: string;
+  orderIntentId: string;
+  listingId: string;
+  buyerId: string;
+  locationText: string;
+};
+
+export function parseMeetupCardBody(
+  body: string | null | undefined,
+): { meetupProposalId: string; locationText: string } | null {
+  if (!body?.trim().startsWith("{")) return null;
+  try {
+    const raw = JSON.parse(body) as {
+      meetupProposalId?: string;
+      locationText?: string;
+    };
+    if (typeof raw.meetupProposalId !== "string") return null;
+    return {
+      meetupProposalId: raw.meetupProposalId,
+      locationText:
+        typeof raw.locationText === "string" ? raw.locationText.trim() : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function parseMeetupCheckout(
+  body: string | null | undefined,
+): MeetupCheckoutPayload | null {
+  if (!body?.trim().startsWith("{")) return null;
+  try {
+    const raw = JSON.parse(body) as Partial<MeetupCheckoutPayload>;
+    if (raw?.kind !== "MEETUP_CHECKOUT" || raw.v !== 1) return null;
+    if (
+      typeof raw.meetupProposalId !== "string" ||
+      typeof raw.orderIntentId !== "string" ||
+      typeof raw.listingId !== "string" ||
+      typeof raw.buyerId !== "string" ||
+      typeof raw.locationText !== "string"
+    ) {
+      return null;
+    }
+    return {
+      v: 1,
+      kind: "MEETUP_CHECKOUT",
+      meetupProposalId: raw.meetupProposalId,
+      orderIntentId: raw.orderIntentId,
+      listingId: raw.listingId,
+      buyerId: raw.buyerId,
+      locationText: raw.locationText.trim(),
     };
   } catch {
     return null;

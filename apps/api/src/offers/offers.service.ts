@@ -137,6 +137,9 @@ export class OffersService {
     if (listing.status !== 'LIVE') {
       throw new ConflictException('Listing is not available for offers');
     }
+    if (!listing.negotiable) {
+      throw new ConflictException('This listing is not open to offers');
+    }
 
     const pending = await this.prisma.offer.findFirst({
       where: {
@@ -165,7 +168,6 @@ export class OffersService {
     const expiresAt = new Date(
       Date.now() + this.expiryHours() * 60 * 60 * 1000,
     );
-
     const offer = await this.prisma.offer.create({
       data: {
         listingId,
@@ -206,7 +208,7 @@ export class OffersService {
       await this.messages
         .postOfferCard({
           conversationId: conversation.id,
-          buyerId,
+          senderId: buyerId,
           offerId: linked.id,
           amountKobo: dto.amountKobo,
         })
@@ -306,6 +308,9 @@ export class OffersService {
   async getOrderIntent(intentId: string, userId: string) {
     const intent = await this.prisma.orderIntent.findUnique({
       where: { id: intentId },
+      include: {
+        meetupProposal: { select: { proposedDeliveryDate: true } },
+      },
     });
     if (!intent) throw new NotFoundException('Checkout session not found');
     if (intent.buyerId !== userId && intent.sellerId !== userId) {
@@ -323,6 +328,10 @@ export class OffersService {
       offerId: intent.offerId,
       amountKobo: intent.amountKobo,
       reservedUntil: intent.reservedUntil,
+      fulfilmentMethod: intent.fulfilmentMethod,
+      meetupLocationText: intent.meetupLocationText,
+      meetupDeliveryDate:
+        intent.meetupProposal?.proposedDeliveryDate ?? null,
     };
   }
 
@@ -530,7 +539,6 @@ export class OffersService {
     const expiresAt = new Date(
       Date.now() + this.expiryHours() * 60 * 60 * 1000,
     );
-
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.offer.update({
         where: { id: offerId },
@@ -569,6 +577,22 @@ export class OffersService {
     });
 
     const mapped = { ...toOfferDto(result), proposedByUserId: actorId };
+    if (result.conversationId) {
+      await this.messages
+        .postOfferCard({
+          conversationId: result.conversationId,
+          senderId: actorId,
+          offerId: result.id,
+          amountKobo: dto.amountKobo,
+          isCounter: true,
+        })
+        .catch((err: unknown) => {
+          this.logger.warn(
+            { offerId: result.id, conversationId: result.conversationId, err },
+            'postOfferCard failed after offer counter',
+          );
+        });
+    }
     this.gateway?.emitOfferUpdated(result.conversationId, mapped);
     return mapped;
   }

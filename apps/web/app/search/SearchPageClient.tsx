@@ -21,28 +21,29 @@ import {
 import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListingCard";
 import { ApiError, apiFetch } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
-import { addToCart } from "../../lib/cart";
-import {
-  cityDisplayName,
-  communitiesForCity,
-  normalizeCityKey,
-} from "../../lib/communities";
+import { addToCart, cartAddErrorMessage } from "../../lib/cart";
+import { areaChoices, FALLBACK_AREAS } from "../../lib/areas";
+import { cityDisplayName, normalizeCityKey } from "../../lib/communities";
 import {
   SORT_OPTIONS,
   buildSearchQueryString,
   compactFilters,
   createSavedSearch,
+  fetchCategories,
   favouriteListing,
   looksLikeNaturalLanguage,
   radiusOptionsForCity,
   searchFiltersFromParams,
+  searchHasCriteria,
   searchListings,
   searchNl,
   unfavouriteListing,
 } from "../../lib/discovery";
-import { listRegions, type RegionCity } from "../../lib/region";
-import { CONDITIONS, CONDITION_LABELS } from "../../lib/listings";
+import { getRegion, listRegions, type RegionCity } from "../../lib/region";
+import { CONDITIONS, CONDITION_LABELS, listingPdpHref } from "../../lib/listings";
+import type { AreaChoice } from "../../lib/areas";
 import type {
+  CategoryNode,
   MeResponse,
   PublicListing,
   RadiusKm,
@@ -50,13 +51,30 @@ import type {
   SearchResult,
 } from "../../lib/types";
 
+const filterControlClass =
+  "w-full min-h-11 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base sm:min-h-10 sm:py-2 sm:text-sm";
+
 function filtersToUrl(filters: SearchFilters, nl?: boolean): string {
   const compact = compactFilters(filters);
   const qs = buildSearchQueryString(compact);
-  if (!nl) return `/search${qs || ""}`;
+  const useNl = Boolean(filters.q?.trim() && nl);
+  if (!useNl) return `/search${qs || ""}`;
   const params = new URLSearchParams(qs.startsWith("?") ? qs.slice(1) : qs);
   params.set("nl", "1");
   return `/search?${params.toString()}`;
+}
+
+function filtersMatchUrl(
+  filters: SearchFilters,
+  params: URLSearchParams,
+  nl: boolean,
+): boolean {
+  const fromUrl = searchFiltersFromParams(params);
+  const urlNl = params.get("nl") === "1";
+  const a = buildSearchQueryString(compactFilters(filters));
+  const b = buildSearchQueryString(compactFilters(fromUrl));
+  const effectiveNl = Boolean(filters.q?.trim() && nl);
+  return a === b && effectiveNl === urlNl;
 }
 
 export default function SearchPageClient() {
@@ -70,7 +88,7 @@ export default function SearchPageClient() {
   const [useNl, setUseNl] = useState(() => searchParams.get("nl") === "1");
   const [chips, setChips] = useState<string[]>([]);
   const [result, setResult] = useState<SearchResult | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [favourites, setFavourites] = useState<Set<string>>(new Set());
@@ -82,19 +100,47 @@ export default function SearchPageClient() {
   const [priceError, setPriceError] = useState<string | null>(null);
   const [meId, setMeId] = useState<string | null>(null);
   const [cities, setCities] = useState<RegionCity[]>([]);
+  const [categories, setCategories] = useState<CategoryNode[]>([]);
+  const [communityAreas, setCommunityAreas] = useState<AreaChoice[]>([]);
 
   const cityLabel = useMemo(
     () => cityDisplayName(draft.city || "Lagos"),
     [draft.city],
   );
-  const communityOptions = useMemo(
-    () => communitiesForCity(draft.city || "lagos"),
-    [draft.city],
-  );
+  const cityKey = normalizeCityKey(draft.city || "lagos");
+
+  useEffect(() => {
+    let cancelled = false;
+  void getRegion(cityKey).then((region) => {
+      if (cancelled) return;
+      const source =
+        region?.areas?.length && region.areas.length > 0
+          ? region.areas
+          : (FALLBACK_AREAS[cityKey] ?? []);
+      setCommunityAreas(areaChoices(cityKey, source));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cityKey]);
   const radiusOptions = useMemo(
     () => radiusOptionsForCity(cityLabel),
     [cityLabel],
   );
+
+  const activeUrlFilters = useMemo(
+    () =>
+      searchFiltersFromParams(
+        new URLSearchParams(searchParams.toString()),
+      ),
+    [searchParams],
+  );
+  const showResults = searchHasCriteria(activeUrlFilters);
+
+  const exploreReturnPath = useMemo(() => {
+    const qs = searchParams.toString();
+    return qs ? `/search?${qs}` : "/search";
+  }, [searchParams]);
 
   useEffect(() => {
     const token = getAccessToken();
@@ -116,7 +162,16 @@ export default function SearchPageClient() {
     void listRegions()
       .then(setCities)
       .catch(() => undefined);
+    void fetchCategories()
+      .then(setCategories)
+      .catch(() => setCategories([]));
   }, []);
+
+  const selectedCategory = useMemo(
+    () => categories.find((c) => c.id === draft.categoryId) ?? null,
+    [categories, draft.categoryId],
+  );
+  const subcategoryOptions = selectedCategory?.children ?? [];
 
   const priceMinNaira =
     draft.priceMinKobo != null ? String(draft.priceMinKobo / 100) : "";
@@ -185,14 +240,28 @@ export default function SearchPageClient() {
     setDraft(filters);
     setQuery(filters.q ?? "");
     setUseNl(nlFlag);
+    if (!searchHasCriteria(filters)) {
+      setLoading(false);
+      setLoadingMore(false);
+      setError(null);
+      setChips([]);
+      setResult(null);
+      return;
+    }
     void runSearch(filters, {
       nl: nlFlag || looksLikeNaturalLanguage(filters.q ?? ""),
     });
   }, [searchParams, runSearch]);
 
+  function currentSearchFilters(): SearchFilters {
+    return { ...draft, q: query.trim() || undefined };
+  }
+
   function applyAndNavigate(next: SearchFilters, nl?: boolean) {
-    const compact = compactFilters({ ...next, q: query.trim() || undefined });
-    router.push(filtersToUrl(compact, nl ?? useNl));
+    const compact = compactFilters(next);
+    const q = next.q?.trim();
+    const useNlSearch = Boolean(q && (nl ?? useNl));
+    router.push(filtersToUrl(compact, useNlSearch));
   }
 
   function priceRangeInvalid(): boolean {
@@ -203,17 +272,20 @@ export default function SearchPageClient() {
     );
   }
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q) return;
+  function applyFiltersFromDraft() {
     if (priceRangeInvalid()) {
       setPriceError("Maximum must be higher than the minimum.");
       return;
     }
     setPriceError(null);
-    const nl = useNl || looksLikeNaturalLanguage(q);
-    applyAndNavigate({ ...draft, q: q || undefined }, nl);
+    const q = query.trim() || undefined;
+    const nl = Boolean(q && (useNl || looksLikeNaturalLanguage(q)));
+    applyAndNavigate({ ...draft, q }, nl);
+  }
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    applyFiltersFromDraft();
   }
 
   function updateDraft<K extends keyof SearchFilters>(
@@ -270,15 +342,12 @@ export default function SearchPageClient() {
       await addToCart(token, listing.id, 1);
       setToast({ message: "Added to cart", tone: "success" });
     } catch (err) {
-      setToast({
-        message: err instanceof ApiError ? err.message : "Could not add to cart",
-        tone: "error",
-      });
+      setToast({ message: cartAddErrorMessage(err), tone: "error" });
     }
   }
 
   async function saveCurrentSearch() {
-    if (!query.trim() || !result || result.items.length === 0) return;
+    if (!result || result.items.length === 0) return;
     const token = getAccessToken();
     if (!token) {
       setToast({ message: "Sign in to save searches", tone: "warn" });
@@ -288,8 +357,10 @@ export default function SearchPageClient() {
     const filters = compactFilters({ ...draft, q: query.trim() || undefined });
     const name =
       filters.q?.slice(0, 40) ||
-      filters.community ||
-      filters.condition ||
+      [filters.city, filters.community, filters.condition]
+        .filter(Boolean)
+        .join(" · ")
+        .slice(0, 40) ||
       "Saved search";
     setSavingSearch(true);
     try {
@@ -327,18 +398,18 @@ export default function SearchPageClient() {
   return (
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <header data-scroll-mask-bar className="sticky top-14 z-30 border-b border-[var(--rw-border)]/70 bg-[var(--rw-bg)] backdrop-blur-md lg:top-[var(--rw-nav-offset,0px)]">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-6xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
           <form
             onSubmit={onSubmit}
-            className="flex min-w-0 flex-1 items-center gap-2"
+            className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-nowrap"
             role="search"
           >
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search items"
+              placeholder="What do you need?"
               aria-label="Search"
-              className="min-w-0 flex-1 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-sm sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+              className="min-h-11 min-w-0 flex-1 basis-full rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-3 py-2 text-base sm:basis-0 sm:text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
             />
             <label className="hidden items-center gap-1 text-xs text-[var(--rw-ink-muted)] sm:flex">
               <input
@@ -353,18 +424,20 @@ export default function SearchPageClient() {
               type="submit"
               variant="primary"
               size="sm"
-              disabled={!query.trim()}
+              className="min-h-11 w-full sm:w-auto"
+              disabled={priceRangeInvalid()}
             >
-              Search items
+              <span className="sm:hidden">Search</span>
+              <span className="hidden sm:inline">Search items</span>
             </Button>
           </form>
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-6xl gap-8 px-4 py-6 sm:px-6 lg:grid-cols-[240px_1fr]">
+      <div className="mx-auto grid max-w-6xl gap-6 px-3 py-4 sm:gap-8 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,16.5rem)_1fr] xl:grid-cols-[minmax(0,15rem)_1fr]">
         <aside
           aria-label="Filters"
-          className="h-fit space-y-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/80 p-4"
+          className="h-fit space-y-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/80 p-4 sm:p-5 lg:sticky lg:top-[calc(3.5rem+var(--rw-nav-offset,0px))] lg:max-h-[calc(100dvh-4.5rem)] lg:overflow-y-auto"
         >
           <h2 className="text-sm font-semibold text-[var(--rw-ink-muted)]">
             Filters
@@ -380,10 +453,12 @@ export default function SearchPageClient() {
               onChange={(e) => {
                 const nextCity = normalizeCityKey(e.target.value);
                 const label = cityDisplayName(nextCity);
-                const allowed = communitiesForCity(nextCity);
+                const allowed = areaChoices(
+                  nextCity,
+                  FALLBACK_AREAS[nextCity] ?? [],
+                ).map((a) => a.value);
                 const community =
-                  draft.community &&
-                  (allowed as readonly string[]).includes(draft.community)
+                  draft.community && allowed.includes(draft.community)
                     ? draft.community
                     : undefined;
                 setDraft((d) => ({
@@ -392,7 +467,7 @@ export default function SearchPageClient() {
                   community,
                 }));
               }}
-              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-2 text-sm"
+              className={filterControlClass}
             >
               {(cities.length
                 ? cities
@@ -409,6 +484,55 @@ export default function SearchPageClient() {
           </div>
 
           <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium" htmlFor="f-category">
+              Category
+            </label>
+            <select
+              id="f-category"
+              value={draft.categoryId ?? ""}
+              onChange={(e) => {
+                const id = e.target.value || undefined;
+                setDraft((d) => ({
+                  ...d,
+                  categoryId: id,
+                  subcategoryId: undefined,
+                }));
+              }}
+              className={filterControlClass}
+            >
+              <option value="">Any</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {subcategoryOptions.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium" htmlFor="f-subcategory">
+                Subcategory
+              </label>
+              <select
+                id="f-subcategory"
+                value={draft.subcategoryId ?? ""}
+                onChange={(e) =>
+                  updateDraft("subcategoryId", e.target.value || undefined)
+                }
+                className={filterControlClass}
+              >
+                <option value="">All in category</option>
+                {subcategoryOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium" htmlFor="f-community">
               Community
             </label>
@@ -418,12 +542,12 @@ export default function SearchPageClient() {
               onChange={(e) =>
                 updateDraft("community", e.target.value || undefined)
               }
-              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-2 text-sm"
+              className={filterControlClass}
             >
               <option value="">Any</option>
-              {communityOptions.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+              {communityAreas.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
                 </option>
               ))}
             </select>
@@ -506,7 +630,7 @@ export default function SearchPageClient() {
               onChange={(e) =>
                 updateDraft("condition", e.target.value || undefined)
               }
-              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-2 text-sm"
+              className={filterControlClass}
             >
               <option value="">Any</option>
               {CONDITIONS.map((c) => (
@@ -560,7 +684,7 @@ export default function SearchPageClient() {
                   (e.target.value as SearchFilters["sort"]) || "newest",
                 )
               }
-              className="rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-2 py-2 text-sm"
+              className={filterControlClass}
             >
               {SORT_OPTIONS.map((s) => (
                 <option key={s.value} value={s.value}>
@@ -572,29 +696,22 @@ export default function SearchPageClient() {
 
           <Button
             variant="primary"
-            className="w-full"
-            disabled={!query.trim()}
-            onClick={() => {
-              if (priceRangeInvalid()) {
-                setPriceError("Maximum must be higher than the minimum.");
-                return;
-              }
-              setPriceError(null);
-              applyAndNavigate({
-                ...draft,
-                q: query.trim() || undefined,
-              });
-            }}
+            className="min-h-11 w-full"
+            disabled={priceRangeInvalid()}
+            onClick={applyFiltersFromDraft}
           >
             Apply filters
           </Button>
           <Button
             variant="secondary"
-            className="w-full"
+            className="min-h-11 w-full"
             disabled={
               savingSearch ||
-              !query.trim() ||
-              query.trim() !== (searchParams.get("q") ?? "").trim() ||
+              !filtersMatchUrl(
+                currentSearchFilters(),
+                new URLSearchParams(searchParams.toString()),
+                useNl,
+              ) ||
               !result ||
               result.items.length === 0
             }
@@ -625,12 +742,17 @@ export default function SearchPageClient() {
             </div>
           ) : null}
 
-          {loading ? (
-            <div className="flex flex-wrap gap-3">
+          {!showResults ? (
+            <EmptyState
+              title="Find what you need"
+              description="Search above, or set filters and tap Apply."
+            />
+          ) : loading ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton
                   key={i}
-                  className="h-[clamp(10rem,51vw,13rem)] w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 rounded-[var(--rw-radius-lg)] sm:h-52 sm:w-[10rem]"
+                  className="aspect-[3/4] w-full max-h-52 rounded-[var(--rw-radius-lg)]"
                   label="Loading result"
                 />
               ))}
@@ -669,13 +791,14 @@ export default function SearchPageClient() {
                 {result.total} result{result.total === 1 ? "" : "s"}
                 {result.tookMs != null ? ` · ${result.tookMs}ms` : ""}
               </p>
-              <ul className="flex flex-wrap gap-3">
+              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
                 {result.items.map((item) => {
                   const own = meId != null && item.seller.id === meId;
                   return (
-                    <li key={item.id} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
+                    <li key={item.id} className="min-w-0">
                       <DiscoveryListingCard
                         listing={item}
+                        href={listingPdpHref(item.id, exploreReturnPath)}
                         favourited={favourites.has(item.id)}
                         onToggleFavourite={
                           own ? undefined : (l) => void toggleFavourite(l)

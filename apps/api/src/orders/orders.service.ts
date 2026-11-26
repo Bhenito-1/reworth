@@ -30,22 +30,33 @@ import {
   type EscrowSnapshot,
   type OrderLifecycleStage,
 } from '@reworth/shared';
+import { AddressesService } from '../addresses/addresses.service';
 import { AdminAlertsService } from '../admin/admin-alerts.service';
 import { SUPPORT } from '../admin/admin-roles';
 import { DeliveryService } from '../delivery/delivery.service';
 import { ListingStateMachine } from '../listings/listing-state.machine';
+import {
+  assertBuyerCanMeetupOnListing,
+  buyerCheckoutUnitCap,
+} from '../common/buyer-listing-checkout';
+import { assertPlatformDeliveryCheckoutAllowed } from '../common/platform-delivery-guard';
 import { newOrderReference } from '../common/transaction-reference';
 import { NotificationCategory } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  BULKY_DELIVERY_RATES,
-  computeDeliveryFeeKobo,
   DELIVERY_PROVIDER,
-  isBulkyDeliveryCategory,
   type DeliveryProvider,
 } from '../providers/delivery.provider';
-import { haversineKm } from '../providers/search.provider';
+import {
+  defaultDropoffOffset,
+  pickupCoordsFromListing,
+  quoteDeliveryLeg,
+} from '../delivery/delivery-pricing';
+import {
+  DeliveryPricingService,
+  PICKUP_ADDRESS_QUOTE_SELECT,
+} from '../delivery/delivery-pricing.service';
 import { MockPsp } from '../providers/mock-psp';
 import {
   isPspRejection,
@@ -61,6 +72,7 @@ import { ReferralsService } from '../referrals/referrals.service';
 import { TrustScoreService } from '../reviews/trust-score.service';
 import { LuxuryAuthService } from '../verticals/luxury-auth.service';
 import { HomeCache } from '../home/home.cache';
+import { ChatGateway } from '../chat/chat.gateway';
 import { SwapProposalsService } from '../swap/swap-proposals.service';
 import { InventoryService } from '../inventory/inventory.service';
 import {
@@ -73,6 +85,7 @@ import {
   computeProtectionFeeKobo,
 } from './order-fees';
 import { OrderStateMachine } from './order-state.machine';
+import { orderNeedsSellerConfirmation } from './order-confirmation';
 
 export type AddressDisclosureDto = {
   id: string;
@@ -94,6 +107,7 @@ export type PlacedOrderMail = {
   id: string;
   sellerId: string;
   quantity: number;
+  amountKobo: number;
   totalKobo: number;
   title: string;
 };
@@ -133,9 +147,34 @@ function formatNaira(kobo: number): string {
   }).format(kobo / 100);
 }
 
-function orderMailLine(order: PlacedOrderMail): string {
+function orderMailLineForBuyer(order: PlacedOrderMail): string {
   const title = order.title.trim() || 'Item';
   return `${order.quantity} × ${title} — ${formatNaira(order.totalKobo)}`;
+}
+
+function orderMailLineForSeller(order: PlacedOrderMail): string {
+  const title = order.title.trim() || 'Item';
+  return `${order.quantity} × ${title} — ${formatNaira(order.amountKobo)}`;
+}
+
+/** Sellers on standard sales do not see buyer-paid delivery or protection fees. */
+function redactOrderFeesForViewer(
+  dto: OrderDto,
+  viewerId?: string,
+): OrderDto {
+  if (!viewerId || viewerId === dto.buyerId) return dto;
+  const isSwap = dto.transactionType === 'SWAP' || dto.swap != null;
+  if (viewerId === dto.sellerId && !isSwap) {
+    return {
+      ...dto,
+      deliveryFeeKobo: 0,
+      protectionFeeKobo: 0,
+      totalKobo: dto.amountKobo,
+      paymentReference: null,
+      paymentId: null,
+    };
+  }
+  return dto;
 }
 
 export type OrderDto = {
@@ -166,6 +205,7 @@ export type OrderDto = {
   rejectionReason: string | null;
   sellerNote: string | null;
   deliveryDate: Date | null;
+  meetupLocationText?: string | null;
   buyerProtection: boolean;
   coverageEndsAt: Date | null;
   autoReleaseAt: Date | null;
@@ -248,6 +288,7 @@ function toOrderDto(
     rejectionReason: o.rejectionReason ?? null,
     sellerNote: o.sellerNote ?? null,
     deliveryDate: o.deliveryDate ?? null,
+    meetupLocationText: o.meetupLocationText ?? null,
     buyerProtection: o.buyerProtection,
     coverageEndsAt: o.coverageEndsAt,
     autoReleaseAt: o.autoReleaseAt,
@@ -320,6 +361,7 @@ export class OrdersService {
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
     @Inject(PAYMENT_PROVIDER) private readonly psp: PaymentProvider,
+    private readonly addresses: AddressesService,
     @Optional()
     @Inject(DELIVERY_PROVIDER)
     private readonly deliveryProvider?: DeliveryProvider,
@@ -335,7 +377,27 @@ export class OrdersService {
     @Optional() private readonly alerts?: AdminAlertsService,
     @Optional() private readonly homeCache?: HomeCache,
     @Optional() private readonly swaps?: SwapProposalsService,
+    @Optional() private readonly deliveryPricing?: DeliveryPricingService,
+    @Optional() private readonly chatGateway?: ChatGateway,
   ) {}
+
+  private emitOrderUpdated(order: {
+    id: string;
+    buyerId: string;
+    sellerId: string;
+    status: string;
+    confirmationStatus: OrderConfirmationStatus;
+  }): void {
+    this.chatGateway?.emitToUsers(
+      [...new Set([order.buyerId, order.sellerId])],
+      'order.updated',
+      {
+        orderId: order.id,
+        status: order.status,
+        confirmationStatus: order.confirmationStatus,
+      },
+    );
+  }
 
   /** Home rails are cached. Drop that copy after stock changes so the next visit reads the database. */
   private async refreshHomeRails(): Promise<void> {
@@ -373,7 +435,12 @@ export class OrdersService {
   ): Promise<OrderDto> {
     const listing = await this.prisma.listing.findUnique({
       where: { id: dto.listingId },
-      include: { category: { select: { slug: true } } },
+      include: {
+        category: { select: { slug: true } },
+        pickupAddress: {
+          select: PICKUP_ADDRESS_QUOTE_SELECT,
+        },
+      },
     });
     if (!listing) throw new NotFoundException('Listing not found');
     if (listing.sellerId === buyerId) {
@@ -385,13 +452,26 @@ export class OrdersService {
       );
     }
 
+    const negotiatedEarly = Boolean(dto.offerId || dto.orderIntentId);
+    if (listing.status === 'RESERVED' && !negotiatedEarly) {
+      throw new ConflictException('Listing is reserved for another buyer');
+    }
+
     let amountKobo = listing.priceKobo;
     let offerId: string | undefined = dto.offerId;
     let orderIntentId: string | undefined = dto.orderIntentId;
+    let checkoutIntent: {
+      fulfilmentMethod: FulfilmentMethod | null;
+      meetupLocationText: string | null;
+      meetupDeliveryDate: Date | null;
+    } | null = null;
 
     if (dto.orderIntentId) {
       const intent = await this.prisma.orderIntent.findUnique({
         where: { id: dto.orderIntentId },
+        include: {
+          meetupProposal: { select: { proposedDeliveryDate: true } },
+        },
       });
       if (!intent) throw new NotFoundException('OrderIntent not found');
       if (intent.buyerId !== buyerId) {
@@ -405,6 +485,12 @@ export class OrdersService {
       }
       amountKobo = intent.amountKobo;
       offerId = intent.offerId ?? offerId;
+      checkoutIntent = {
+        fulfilmentMethod: intent.fulfilmentMethod,
+        meetupLocationText: intent.meetupLocationText,
+        meetupDeliveryDate:
+          intent.meetupProposal?.proposedDeliveryDate ?? null,
+      };
     } else if (dto.offerId) {
       const offer = await this.prisma.offer.findUnique({
         where: { id: dto.offerId },
@@ -427,6 +513,9 @@ export class OrdersService {
     }
 
     const negotiated = Boolean(dto.offerId || dto.orderIntentId);
+    if (listing.status === 'RESERVED' && negotiated) {
+      await assertBuyerCanMeetupOnListing(this.prisma, listing, buyerId);
+    }
     const quantity = Math.min(
       999,
       Math.max(1, dto.quantity ?? 1),
@@ -435,13 +524,19 @@ export class OrdersService {
     if (!negotiated && listing.sellingMode !== 'SELL') {
       throw new BadRequestException('This listing is not sold by the unit');
     }
-    if (
-      typeof listing.quantityAvailable === 'number' &&
-      listing.quantityAvailable < quantity
-    ) {
+    const { cap, openOrderId } = await buyerCheckoutUnitCap(
+      this.prisma,
+      listing,
+      buyerId,
+      { negotiated },
+    );
+    if (openOrderId) {
       throw new ConflictException(
-        `Only ${listing.quantityAvailable} unit(s) available`,
+        'You already have an unpaid order for this item. Open it from Orders to pay.',
       );
+    }
+    if (quantity > cap) {
+      throw new ConflictException(`Only ${cap} unit(s) available`);
     }
     amountKobo = unitPriceKobo * quantity;
 
@@ -451,24 +546,103 @@ export class OrdersService {
       this.feeCap(),
     );
 
-    // Every order ships with ReWorth delivery. Fee is from seller pickup (listing geo) to buyer.
-    const fromLat = listing.geoLat ?? 6.5244;
-    const fromLng = listing.geoLng ?? 3.3792;
-    const toLat = dto.toLat ?? fromLat + 0.02;
-    const toLng = dto.toLng ?? fromLng + 0.02;
-    const distanceKm = haversineKm(fromLat, fromLng, toLat, toLng);
-    const deliveryFeeKobo = computeDeliveryFeeKobo(
-      distanceKm,
-      isBulkyDeliveryCategory(listing.category?.slug)
-        ? BULKY_DELIVERY_RATES
-        : undefined,
-    );
+    const fulfilmentMethod =
+      dto.fulfilmentMethod ??
+      checkoutIntent?.fulfilmentMethod ??
+      FulfilmentMethod.DELIVERY;
+
+    assertPlatformDeliveryCheckoutAllowed(fulfilmentMethod);
+
+    let deliveryFeeKobo = 0;
+    let distanceKm: number | null = null;
+    let meetupLocationText: string | null = null;
+    let drop = { lat: 0, lng: 0 };
+
+    if (fulfilmentMethod === FulfilmentMethod.MEET_POINT) {
+      meetupLocationText =
+        dto.meetupLocationText?.trim() ??
+        checkoutIntent?.meetupLocationText?.trim() ??
+        null;
+      if (!meetupLocationText) {
+        throw new BadRequestException('Agreed meetup location is required');
+      }
+    } else if (fulfilmentMethod === FulfilmentMethod.DELIVERY) {
+      const { fromLat, fromLng } = pickupCoordsFromListing(listing);
+      const dropHint =
+        dto.toLat != null && dto.toLng != null
+          ? { lat: dto.toLat, lng: dto.toLng }
+          : null;
+      const dropoffAddress =
+        dto.deliveryLine1?.trim() && dto.deliveryCommunity?.trim()
+          ? {
+              line1: dto.deliveryLine1.trim(),
+              community: dto.deliveryCommunity.trim(),
+              city: dto.deliveryCity?.trim() || listing.city || 'Lagos',
+              country: 'NG',
+            }
+          : null;
+      drop =
+        dropHint ??
+        (() => {
+          const off = defaultDropoffOffset(fromLat, fromLng);
+          return { lat: off.toLat, lng: off.toLng };
+        })();
+      if (this.deliveryPricing && dropoffAddress) {
+        drop = await this.deliveryPricing.resolveDropoffForUser(
+          buyerId,
+          dropoffAddress,
+          dropHint,
+        );
+      }
+      const priced = this.deliveryPricing
+        ? await this.deliveryPricing.quoteLegForListing(
+            listing,
+            drop,
+            dropoffAddress,
+            buyerId,
+          )
+        : {
+            ...quoteDeliveryLeg({
+              fromLat,
+              fromLng,
+              toLat: drop.lat,
+              toLng: drop.lng,
+              city: listing.city,
+              categorySlug: listing.category?.slug,
+            }),
+            distanceSource: 'haversine' as const,
+          };
+      distanceKm = priced.distanceKm;
+      deliveryFeeKobo =
+        dto.deliveryFeeKobo !== undefined
+          ? dto.deliveryFeeKobo
+          : priced.deliveryFeeKobo;
+    } else {
+      throw new BadRequestException('Unsupported fulfilment method');
+    }
 
     const totalKobo = computeOrderTotalKobo({
       amountKobo,
       protectionFeeKobo,
       deliveryFeeKobo,
     });
+
+    const awaitingSeller = orderNeedsSellerConfirmation({
+      fulfilmentMethod,
+      negotiated,
+    });
+    const initialStatus: OrderStatus = awaitingSeller ? 'CREATED' : 'PAYMENT_PENDING';
+    const initialConfirmation: OrderConfirmationStatus = awaitingSeller
+      ? 'PENDING'
+      : 'CONFIRMED';
+
+    let deliveryDate: Date | null = null;
+    if (fulfilmentMethod === FulfilmentMethod.MEET_POINT) {
+      deliveryDate = checkoutIntent?.meetupDeliveryDate ?? null;
+      if (!deliveryDate) {
+        throw new BadRequestException('Agreed meetup date is missing');
+      }
+    }
 
     const order = await this.prisma.$transaction(async (tx) => {
       const created = await tx.order.create({
@@ -486,11 +660,12 @@ export class OrdersService {
           protectionFeeKobo,
           deliveryFeeKobo,
           totalKobo,
-          fulfilmentMethod: FulfilmentMethod.DELIVERY,
-          meetPointId: null,
-          status: 'PAYMENT_PENDING',
-          confirmationStatus: 'CONFIRMED',
-          deliveryDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          fulfilmentMethod,
+          meetPointId: dto.meetPointId ?? null,
+          meetupLocationText,
+          status: initialStatus,
+          confirmationStatus: initialConfirmation,
+          deliveryDate,
           buyerProtection: true,
         },
       });
@@ -510,8 +685,8 @@ export class OrdersService {
             shipmentId: shipment.id,
             status: 'QUOTED',
             payload: {
-              toLat: dto.toLat,
-              toLng: dto.toLng,
+              toLat: drop.lat,
+              toLng: drop.lng,
               feeKobo: deliveryFeeKobo,
               distanceKm,
             },
@@ -521,6 +696,22 @@ export class OrdersService {
 
       if (this.inventory) {
         await this.inventory.reserveStock(tx, listing.id, quantity, buyerId);
+      }
+
+      const cartItem = await tx.cartItem.findUnique({
+        where: {
+          userId_listingId: { userId: buyerId, listingId: dto.listingId },
+        },
+      });
+      if (cartItem) {
+        if (cartItem.quantity <= quantity) {
+          await tx.cartItem.delete({ where: { id: cartItem.id } });
+        } else {
+          await tx.cartItem.update({
+            where: { id: cartItem.id },
+            data: { quantity: cartItem.quantity - quantity },
+          });
+        }
       }
 
       await tx.orderEvent.create({
@@ -534,7 +725,8 @@ export class OrdersService {
             unitPriceKobo,
             protectionFeeKobo,
             totalKobo,
-            confirmationStatus: 'CONFIRMED',
+            confirmationStatus: initialConfirmation,
+            awaitingSellerConfirmation: awaitingSeller,
           },
         },
       });
@@ -550,12 +742,14 @@ export class OrdersService {
     });
 
     await this.refreshHomeRails();
-    this.notifications.log('order.awaiting_confirmation', {
-      orderId: order.id,
-      buyerId,
-      sellerId: listing.sellerId,
-      quantity,
-    });
+    if (awaitingSeller) {
+      this.notifications.log('order.awaiting_confirmation', {
+        orderId: order.id,
+        buyerId,
+        sellerId: listing.sellerId,
+        quantity,
+      });
+    }
 
     const title = listing.title?.trim() || 'your listing';
     const orderLink = `reworth://orders/${order.id}`;
@@ -564,7 +758,9 @@ export class OrdersService {
       userId: buyerId,
       category: NotificationCategory.ORDER_PLACED,
       title: 'Order placed',
-      body: `You ordered ${quantity} × ${title}. Pay to send it to a rider. Delivery is set for tomorrow.`,
+      body: awaitingSeller
+        ? `You ordered ${quantity} × ${title}. The seller will confirm before you can pay.`
+        : `You ordered ${quantity} × ${title}. Open the order to pay.`,
       deepLink: orderLink,
       channels,
       meta: { orderId: order.id, quantity, listingId: listing.id },
@@ -573,12 +769,30 @@ export class OrdersService {
       userId: listing.sellerId,
       category: NotificationCategory.ORDER_PLACED,
       title: 'New order',
-      body: `A buyer ordered ${quantity} × ${title}. They can pay now. Delivery is set for tomorrow, and the units stay reserved until they pay or cancel.`,
+      body: awaitingSeller
+        ? `A buyer ordered ${quantity} × ${title}. Confirm or reject the order.`
+        : `A buyer ordered ${quantity} × ${title}. Open the order.`,
       deepLink: orderLink,
       channels,
       meta: { orderId: order.id, quantity, listingId: listing.id },
     });
 
+    if (dto.fulfilmentMethod === FulfilmentMethod.DELIVERY) {
+      const loose = this.addresses.parseLooseDeliveryLine(
+        dto.deliveryAddress?.trim() ?? '',
+        dto.deliveryCity ?? listing.city ?? 'Lagos',
+      );
+      await this.addresses.saveDeliveryFromCheckout(buyerId, {
+        line1: dto.deliveryLine1?.trim() || loose.line1,
+        community:
+          dto.deliveryCommunity?.trim() || loose.community || listing.community,
+        city: dto.deliveryCity?.trim() || loose.city,
+        geoLat: drop.lat,
+        geoLng: drop.lng,
+      });
+    }
+
+    this.emitOrderUpdated(order);
     return toOrderDto(order);
   }
 
@@ -603,8 +817,8 @@ export class OrdersService {
         category: NotificationCategory.ORDER_PLACED,
         title: 'Orders placed',
         body: [
-          `You placed ${orders.length} orders. Pay each one to send it to a rider. Delivery is set for tomorrow.`,
-          ...orders.map(orderMailLine),
+          `You placed ${orders.length} orders. Each seller will confirm before you can pay.`,
+          ...orders.map(orderMailLineForBuyer),
           `Total ${formatNaira(total)}.`,
         ].join('\n\n'),
         deepLink: 'reworth://orders',
@@ -632,8 +846,8 @@ export class OrdersService {
           category: NotificationCategory.ORDER_PLACED,
           title: 'New orders',
           body: [
-            `A buyer placed ${sellerOrders.length} orders with you. They can pay now. Delivery is set for tomorrow, and the units stay reserved until they pay or cancel.`,
-            ...sellerOrders.map(orderMailLine),
+            `A buyer placed ${sellerOrders.length} orders with you. Confirm or reject each order.`,
+            ...sellerOrders.map(orderMailLineForSeller),
           ].join('\n\n'),
           deepLink: 'reworth://orders',
           channels: [NotificationChannel.EMAIL],
@@ -667,7 +881,7 @@ export class OrdersService {
         userId: buyerId,
         category: NotificationCategory.ORDER_PLACED,
         title: 'Order placed',
-        body: `You ordered ${order.quantity} × ${title}. Pay to send it to a rider. Delivery is set for tomorrow.`,
+        body: `You ordered ${order.quantity} × ${title}. The seller will confirm before you can pay.`,
         deepLink: orderLink,
         channels: [NotificationChannel.EMAIL],
         meta: { orderId: order.id, quantity: order.quantity },
@@ -684,7 +898,7 @@ export class OrdersService {
       userId: order.sellerId,
       category: NotificationCategory.ORDER_PLACED,
       title: 'New order',
-      body: `A buyer ordered ${order.quantity} × ${title}. They can pay now. Delivery is set for tomorrow, and the units stay reserved until they pay or cancel.`,
+      body: `A buyer ordered ${order.quantity} × ${title}. Confirm or reject the order.`,
       deepLink: `reworth://orders/${order.id}`,
       channels: [NotificationChannel.EMAIL],
       meta: { orderId: order.id, quantity: order.quantity },
@@ -1055,6 +1269,13 @@ export class OrdersService {
       meta: { orderId, deliveryDate: deliveryDate.toISOString() },
     });
 
+    this.emitOrderUpdated({
+      id: updated.id,
+      buyerId: updated.buyerId,
+      sellerId: updated.sellerId,
+      status: updated.status,
+      confirmationStatus: updated.confirmationStatus,
+    });
     return toOrderDto(updated);
   }
 
@@ -1122,6 +1343,13 @@ export class OrdersService {
       meta: { orderId, reason },
     });
 
+    this.emitOrderUpdated({
+      id: updated.id,
+      buyerId: updated.buyerId,
+      sellerId: updated.sellerId,
+      status: updated.status,
+      confirmationStatus: updated.confirmationStatus,
+    });
     return toOrderDto(updated);
   }
 
@@ -1236,9 +1464,19 @@ export class OrdersService {
       });
     }
 
-    this.notifications.log(expired ? 'order.payment_expired' : 'order.cancelled', {
-      orderId,
-      buyerId: order.buyerId,
+    this.notifications.log(
+      expired ? 'order.payment_expired' : 'order.cancelled',
+      {
+        orderId,
+        buyerId: order.buyerId,
+      },
+    );
+    this.emitOrderUpdated({
+      id: updated.id,
+      buyerId: updated.buyerId,
+      sellerId: updated.sellerId,
+      status: updated.status,
+      confirmationStatus: updated.confirmationStatus,
     });
     return toOrderDto(updated);
   }
@@ -1767,6 +2005,33 @@ export class OrdersService {
   }
 
   /**
+   * Payment receipt emails: always sent (transactional, even with the general
+   * Email switch off), never allowed to break the funding flow if the email
+   * provider fails.
+   */
+  private async sendPaymentEmail(input: {
+    userId: string;
+    category: string;
+    title: string;
+    body: string;
+    deepLink: string;
+    meta: Record<string, unknown>;
+  }): Promise<void> {
+    try {
+      await this.notifications.notify({
+        ...input,
+        channels: [NotificationChannel.EMAIL],
+        forceDelivery: true,
+        transactional: true,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Payment email to ${input.userId} failed (${String(input.meta.emailKind)}): ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
    * Before a buyer cancels, check every open checkout with the PSP.
    * A charge that already went through blocks the cancel: the webhook or the
    * buyer return funds the order. Open checkouts are marked FAILED; if the
@@ -1931,12 +2196,14 @@ export class OrdersService {
       paymentReference,
     });
 
+    // In-app / push only: the emails below carry the full details.
     await this.notifications.notify({
       userId: order.sellerId,
       category: NotificationCategory.PAYMENT_RECEIVED,
       title: 'Payment received',
       body: 'Buyer payment is in escrow for your listing.',
       deepLink: `reworth://orders/${orderId}`,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
       meta: { orderId, paymentReference },
     });
     await this.notifications.notify({
@@ -1945,6 +2212,7 @@ export class OrdersService {
       title: 'Payment confirmed',
       body: 'Your payment is secured in ReWorth escrow.',
       deepLink: `reworth://orders/${orderId}`,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
       meta: { orderId, paymentReference },
     });
 
@@ -1965,15 +2233,49 @@ export class OrdersService {
       '',
       `Payment reference: ${paymentReference}`,
     ];
-    await this.notifications.notify({
+    await this.sendPaymentEmail({
       userId: order.buyerId,
       category: NotificationCategory.PAYMENT_RECEIVED,
       title: `Receipt — ${order.reference}`,
       body: receiptLines.join('\n'),
       deepLink: `reworth://orders/${orderId}`,
-      channels: [NotificationChannel.EMAIL],
-      forceDelivery: true,
-      meta: { orderId, paymentReference, orderReference: order.reference },
+      meta: { orderId, paymentReference, orderReference: order.reference, emailKind: 'buyer_receipt' },
+    });
+
+    const payoutAccount = await this.prisma.sellerPayoutAccount.findUnique({
+      where: { userId: order.sellerId },
+      select: { verifiedAt: true },
+    });
+    const handOverBy = order.deliveryDate
+      ? order.deliveryDate.toLocaleDateString('en-NG', {
+          timeZone: 'Africa/Lagos',
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+        })
+      : null;
+    const saleLines = [
+      `The buyer has paid for ${qty} × ${title}. The money is held safely by ReWorth until the sale is complete.`,
+      '',
+      `Order reference: ${order.reference}`,
+      `Item price (your payout): ${formatNaira(order.amountKobo)}`,
+      '',
+      'What to do next:',
+      handOverBy
+        ? `1. Hand the item over by ${handOverBy}, then tap "Mark handed over" on the order.`
+        : '1. Hand the item over, then tap "Mark handed over" on the order.',
+      `2. Your payout is sent ${this.coverageDays()} days after the buyer confirms they received it, if they report no problem.`,
+      ...(payoutAccount?.verifiedAt
+        ? []
+        : ['', 'You have no bank account for payouts yet. Add one in the app so we can pay you.']),
+    ];
+    await this.sendPaymentEmail({
+      userId: order.sellerId,
+      category: NotificationCategory.PAYMENT_RECEIVED,
+      title: `New sale — ${order.reference}`,
+      body: saleLines.join('\n'),
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId, paymentReference, orderReference: order.reference, emailKind: 'seller_sale' },
     });
 
     if (updated.fulfilmentMethod === FulfilmentMethod.DELIVERY) {
@@ -1988,6 +2290,15 @@ export class OrdersService {
         ),
       );
     }
+
+    const fresh = await this.requireOrder(orderId);
+    this.emitOrderUpdated({
+      id: fresh.id,
+      buyerId: fresh.buyerId,
+      sellerId: fresh.sellerId,
+      status: fresh.status,
+      confirmationStatus: fresh.confirmationStatus,
+    });
 
     if (this.luxuryAuth) {
       const refreshed = await this.requireOrder(orderId);
@@ -3197,37 +3508,42 @@ export class OrdersService {
     if (!base.paymentId && linkedPayment?.id) {
       base.paymentId = linkedPayment.id;
     }
-    return {
-      ...base,
-      listingTitle: order.listing?.title?.trim() || null,
-      deliveryStatus,
-      lifecycle: buildOrderLifecycle({
-        status: order.status,
-        fulfilmentMethod: order.fulfilmentMethod,
+    return redactOrderFeesForViewer(
+      {
+        ...base,
+        listingTitle: order.listing?.title?.trim() || null,
         deliveryStatus,
-      }),
-      escrow: buildEscrowSnapshot({
-        orderStatus: order.status,
-        paymentStatus,
-        payoutStatus,
-      }),
-      swap: await this.swapPairForOrder(order, viewerId),
-      paymentDueAt:
-        order.status === 'PAYMENT_PENDING' && order.transactionType !== 'SWAP'
-          ? (await this.paymentDueAt(order)).toISOString()
-          : null,
-      refunds: (order.refunds ?? []).map((r) => ({
-        id: r.id,
-        amountKobo: r.amountKobo,
-        status: r.status,
-        reason: r.reason,
-        createdAt: r.createdAt,
-      })),
-      paidCancellable:
-        PAID_CANCELLABLE_STATUSES.has(order.status) &&
-        order.transactionType !== 'SWAP' &&
-        (!viewerId || viewerId === order.buyerId || viewerId === order.sellerId),
-    };
+        lifecycle: buildOrderLifecycle({
+          status: order.status,
+          fulfilmentMethod: order.fulfilmentMethod,
+          deliveryStatus,
+        }),
+        escrow: buildEscrowSnapshot({
+          orderStatus: order.status,
+          paymentStatus,
+          payoutStatus,
+        }),
+        swap: await this.swapPairForOrder(order, viewerId),
+        paymentDueAt:
+          order.status === 'PAYMENT_PENDING' && order.transactionType !== 'SWAP'
+            ? (await this.paymentDueAt(order)).toISOString()
+            : null,
+        refunds: (order.refunds ?? []).map((r) => ({
+          id: r.id,
+          amountKobo: r.amountKobo,
+          status: r.status,
+          reason: r.reason,
+          createdAt: r.createdAt,
+        })),
+        paidCancellable:
+          PAID_CANCELLABLE_STATUSES.has(order.status) &&
+          order.transactionType !== 'SWAP' &&
+          (!viewerId ||
+            viewerId === order.buyerId ||
+            viewerId === order.sellerId),
+      },
+      viewerId,
+    );
   }
 
   /** Both items on a swap order: what this payer sends and what they receive. */

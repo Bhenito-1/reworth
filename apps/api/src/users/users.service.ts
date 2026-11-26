@@ -3,9 +3,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { ADDRESS_KIND } from '../addresses/address-kind';
+import type { AddressKind } from '@prisma/client';
 import { ConsentChannel, Prisma } from '@prisma/client';
+import { newMemberReference } from '../common/transaction-reference';
+import { AddressesService } from '../addresses/addresses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import type { SaveDeliveryAddressDto } from './dto/delivery-address.dto';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
 import type { UpdateConsentsDto } from './dto/consents.dto';
 
@@ -24,7 +29,21 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly addresses: AddressesService,
   ) {}
+
+  async getDeliveryAddress(userId: string) {
+    const row = await this.addresses.getDefault(userId, ADDRESS_KIND.DELIVERY);
+    return { deliveryAddress: this.addresses.toDto(row) };
+  }
+
+  async saveDeliveryAddress(userId: string, dto: SaveDeliveryAddressDto) {
+    return this.addresses.saveDeliveryFromDto(userId, dto);
+  }
+
+  async listAddresses(userId: string, kind?: AddressKind) {
+    return this.addresses.listForUser(userId, kind);
+  }
 
   async getMe(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -38,6 +57,20 @@ export class UsersService {
       },
     });
     if (!user) throw new NotFoundException('User not found');
+
+    let deliveryRow = null;
+    let pickupRow = null;
+    try {
+      deliveryRow = await this.addresses.getDefault(userId, ADDRESS_KIND.DELIVERY);
+      pickupRow = await this.addresses.getDefault(userId, ADDRESS_KIND.PICKUP);
+    } catch {
+      // `addresses.kind` column missing until migration deploys — omit deliveryAddress.
+    }
+
+    const memberReference = await this.ensureMemberReference(
+      user.id,
+      user.memberReference,
+    );
 
     const profile = user.profile
       ? {
@@ -70,6 +103,7 @@ export class UsersService {
 
     return {
       id: user.id,
+      memberReference,
       phone: user.phone,
       email: user.email,
       status: user.status,
@@ -84,7 +118,30 @@ export class UsersService {
       identityVerifiedBadge: levels.L3_IDENTITY,
       roles: user.roles.map((r) => r.role),
       createdAt: user.createdAt,
+      deliveryAddress: this.addresses.toDto(deliveryRow),
+      pickupAddress: this.addresses.toDto(pickupRow),
     };
+  }
+
+  /** Assign RW-MBR-* for accounts created before memberReference existed. */
+  private async ensureMemberReference(
+    userId: string,
+    existing: string | null,
+  ): Promise<string> {
+    if (existing) return existing;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const memberReference = newMemberReference();
+      try {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { memberReference },
+        });
+        return memberReference;
+      } catch {
+        // Unique collision — retry.
+      }
+    }
+    return existing ?? userId;
   }
 
   async updateMe(userId: string, dto: UpdateProfileDto) {

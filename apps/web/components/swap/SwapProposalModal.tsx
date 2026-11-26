@@ -1,8 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Button, Input, Modal } from "@reworth/ui-web";
+import { filterListingPhotoFiles } from "../../lib/listing-photo-files";
 import { uploadListingPhoto } from "../../lib/listings";
+import { mapWithConcurrency } from "../../lib/prepare-listing-photo";
 import { createSwapProposal, startSwapOffer } from "../../lib/swap";
 import { ApiError } from "../../lib/api";
 
@@ -30,6 +32,7 @@ export function SwapProposalModal({
   targetListingId,
   onSubmitted,
 }: Props) {
+  const fileInputId = useId();
   const fileRef = useRef<HTMLInputElement>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [title, setTitle] = useState("");
@@ -41,9 +44,8 @@ export function SwapProposalModal({
   function addFiles(list: FileList | null) {
     if (!list) return;
     const next = [...photos];
-    for (const file of Array.from(list)) {
+    for (const file of filterListingPhotoFiles(list)) {
       if (next.length >= 6) break;
-      if (!file.type.startsWith("image/")) continue;
       next.push({
         id: `${file.name}-${file.size}-${next.length}`,
         file,
@@ -84,9 +86,9 @@ export function SwapProposalModal({
     setError(null);
     try {
       const offer = await startSwapOffer(token, targetListingId);
-      for (let i = 0; i < photos.length; i += 1) {
-        await uploadListingPhoto(token, offer.listingId, photos[i].file, i);
-      }
+      await mapWithConcurrency(photos, 3, (photo, i) =>
+        uploadListingPhoto(token, offer.listingId, photo.file, i),
+      );
       const proposal = await createSwapProposal(token, targetListingId, {
         offeredListingId: offer.listingId,
         title: offerTitle,
@@ -163,24 +165,25 @@ export function SwapProposalModal({
             </p>
           </>
         ) : null}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          multiple
-          className="sr-only"
-          onChange={(event) => {
-            addFiles(event.target.files);
-            event.target.value = "";
-          }}
-        />
-        <Button
-          variant="secondary"
-          onClick={() => fileRef.current?.click()}
-          disabled={photos.length >= 6}
+        <label
+          htmlFor={fileInputId}
+          className="relative inline-flex min-h-10 cursor-pointer items-center justify-center rounded-full border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 text-sm font-medium hover:border-[var(--rw-accent)] aria-disabled:pointer-events-none aria-disabled:opacity-50"
+          aria-disabled={photos.length >= 6}
         >
-          Add photos
-        </Button>
+          <input
+            ref={fileRef}
+            id={fileInputId}
+            type="file"
+            multiple
+            disabled={photos.length >= 6}
+            className="absolute inset-0 z-10 cursor-pointer opacity-0 disabled:pointer-events-none"
+            onChange={(event) => {
+              addFiles(event.target.files);
+              event.target.value = "";
+            }}
+          />
+          <span className="pointer-events-none">Add photos</span>
+        </label>
         {error ? (
           <p className="text-sm text-[var(--rw-error)]" role="alert">
             {error}

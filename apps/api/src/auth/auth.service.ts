@@ -40,6 +40,7 @@ import type {
   RequestPasswordResetDto,
   VerifyEmailOtpDto,
 } from './dto/auth.dto';
+import { newMemberReference } from '../common/transaction-reference';
 import { suspendedAccountMessage } from './suspended-account';
 
 type TokenPair = {
@@ -495,6 +496,7 @@ export class AuthService {
     if (!user) {
       user = await this.prisma.user.create({
         data: {
+          memberReference: newMemberReference(),
           email: mockEmail,
           emailVerifiedAt: new Date(),
           status: UserStatus.ACTIVE,
@@ -552,6 +554,7 @@ export class AuthService {
       input.passwordHash ?? (await hashPassword(input.password!));
     return this.prisma.user.create({
       data: {
+        memberReference: newMemberReference(),
         email,
         emailVerifiedAt: new Date(),
         passwordHash,

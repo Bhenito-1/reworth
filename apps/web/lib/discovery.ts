@@ -1,5 +1,6 @@
 import { formatNgn } from "@reworth/shared";
 import { apiFetch } from "./api";
+import { cityDisplayName } from "./communities";
 import type {
   CategoryNode,
   HomeResponse,
@@ -159,7 +160,10 @@ export function searchFiltersFromParams(
     priceMaxKobo: num("priceMaxKobo"),
     condition: params.get("condition") || undefined,
     community: params.get("community") || undefined,
-    city: params.get("city") || undefined,
+    city: (() => {
+      const c = params.get("city");
+      return c ? cityDisplayName(c) : undefined;
+    })(),
     radiusKm,
     lat: num("lat"),
     lng: num("lng"),
@@ -180,6 +184,7 @@ export function compactFilters(filters: SearchFilters): SearchFilters {
   if (filters.priceMaxKobo != null) out.priceMaxKobo = filters.priceMaxKobo;
   if (filters.condition) out.condition = filters.condition;
   if (filters.community) out.community = filters.community;
+  if (filters.city) out.city = filters.city;
   if (filters.radiusKm != null) out.radiusKm = filters.radiusKm;
   if (filters.lat != null) out.lat = filters.lat;
   if (filters.lng != null) out.lng = filters.lng;
@@ -187,6 +192,78 @@ export function compactFilters(filters: SearchFilters): SearchFilters {
   if (filters.deliveryAvailable) out.deliveryAvailable = true;
   if (filters.listedAfter) out.listedAfter = filters.listedAfter;
   if (filters.sort) out.sort = filters.sort;
+  return out;
+}
+
+/** True when URL/draft has a query or any filter — idle search page stays empty without this. */
+export function searchHasCriteria(filters: SearchFilters): boolean {
+  return Object.keys(compactFilters(filters)).length > 0;
+}
+
+export type FlatCategoryOption = {
+  id: string;
+  name: string;
+  slug: string;
+};
+
+/** Parents rolled into another for a shorter sell/search picker. */
+const CATEGORY_PARENT_MERGE: Record<string, string> = {
+  "phones-tablets": "electronics",
+  computers: "electronics",
+  "home-appliances": "home-furniture",
+  "office-equipment": "tools-equipment",
+};
+
+/** Quick-pick parents on the sell form (consolidated tree). */
+export const SELL_FEATURED_PARENT_SLUGS = [
+  "electronics",
+  "home-furniture",
+  "fashion",
+  "vehicles",
+  "children-baby",
+  "sports-fitness",
+  "other",
+] as const;
+
+export function consolidateCategoryTree(nodes: CategoryNode[]): CategoryNode[] {
+  const map = new Map(
+    nodes.map((n) => [
+      n.slug,
+      { ...n, children: [...(n.children ?? [])] },
+    ]),
+  );
+  for (const [fromSlug, toSlug] of Object.entries(CATEGORY_PARENT_MERGE)) {
+    const from = map.get(fromSlug);
+    const to = map.get(toSlug);
+    if (!from || !to) continue;
+    to.children.push(...from.children);
+    map.delete(fromSlug);
+  }
+  return [...map.values()].sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export function flattenCategoryOptions(
+  nodes: CategoryNode[],
+): FlatCategoryOption[] {
+  const out: FlatCategoryOption[] = [];
+  for (const parent of nodes) {
+    const children = parent.children ?? [];
+    if (children.length > 0) {
+      for (const child of children) {
+        out.push({
+          id: child.id,
+          name: `${parent.name} · ${child.name}`,
+          slug: child.slug,
+        });
+      }
+    } else {
+      out.push({
+        id: parent.id,
+        name: parent.name,
+        slug: parent.slug,
+      });
+    }
+  }
   return out;
 }
 

@@ -45,6 +45,7 @@ export type PublicListingDto = {
   title: string;
   description: string;
   category: { id: string; slug: string; name: string } | null;
+  subcategory: { id: string; slug: string; name: string } | null;
   brand: string | null;
   model: string | null;
   condition: string;
@@ -66,6 +67,7 @@ export type PublicListingDto = {
   fulfilmentPickup: boolean;
   fulfilmentMeet: boolean;
   fulfilmentDelivery: boolean;
+  fulfilmentPreference: string;
   buyerProtection: true;
   createdAt: Date;
   publishedAt: Date | null;
@@ -108,6 +110,7 @@ type ListingWithRelations = {
   fulfilmentPickup: boolean;
   fulfilmentMeet: boolean;
   fulfilmentDelivery: boolean;
+  fulfilmentPreference?: string | null;
   createdAt: Date;
   publishedAt: Date | null;
   vehicle: unknown;
@@ -118,6 +121,7 @@ type ListingWithRelations = {
   quantityTotal?: number;
   donateIfUnsoldDays?: number | null;
   category?: { id: string; slug: string; name: string } | null;
+  subcategory?: { id: string; slug: string; name: string } | null;
   estateCommunity?: {
     id: string;
     slug: string;
@@ -256,6 +260,13 @@ export function toPublicListing(
           name: listing.category.name,
         }
       : null,
+    subcategory: listing.subcategory
+      ? {
+          id: listing.subcategory.id,
+          slug: listing.subcategory.slug,
+          name: listing.subcategory.name,
+        }
+      : null,
     brand: listing.brand,
     model: listing.model,
     condition: listing.condition,
@@ -298,6 +309,7 @@ export function toPublicListing(
     fulfilmentPickup: listing.fulfilmentPickup,
     fulfilmentMeet: listing.fulfilmentMeet,
     fulfilmentDelivery: listing.fulfilmentDelivery,
+    fulfilmentPreference: listing.fulfilmentPreference ?? 'EITHER',
     buyerProtection: true,
     createdAt: listing.createdAt,
     publishedAt: listing.publishedAt,

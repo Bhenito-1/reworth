@@ -2,13 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import {
-  containsProhibitedChatContact,
-  formatNgn,
-  nairaToKobo,
-  PROHIBITED_CHAT_WARNING,
-} from "@reworth/shared";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { formatNgn, nairaToKobo } from "@reworth/shared";
 import {
   Button,
   EmptyState,
@@ -18,8 +13,16 @@ import {
   Toast,
 } from "@reworth/ui-web";
 import { OfferCard } from "../../../components/chat/OfferCard";
+import { MeetupCard } from "../../../components/chat/MeetupCard";
 import { MakeOfferModal } from "../../../components/chat/MakeOfferModal";
-import { OFFER_MULTI_UNIT_HINT } from "../../../lib/offer-copy";
+import { MakeMeetupModal } from "../../../components/chat/MakeMeetupModal";
+import { ListingActionButton } from "../../../components/listings/ListingActionButton";
+import {
+  proposalBodyClass,
+  proposalCardClass,
+  proposalLabelClass,
+} from "../../../components/chat/proposal-card";
+import { OFFER_MULTI_UNIT_HINT_BUYER } from "../../../lib/offer-copy";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 import {
@@ -37,6 +40,15 @@ import {
   muteConversation,
   parseMeetupPin,
   parseOfferCheckout,
+  parseMeetupCheckout,
+  parseMeetupCardBody,
+  listMeetups,
+  createMeetupProposal,
+  acceptMeetup,
+  rejectMeetup,
+  counterMeetup,
+  withdrawMeetup,
+  type MeetupProposalDto,
   postMessage,
   rejectOffer,
   reportUser,
@@ -113,10 +125,56 @@ function offerIdFromMessage(message: ChatMessage): string | null {
   }
 }
 
+function meetupIdFromMessage(
+  message: ChatMessage & { meetupProposalId?: string | null },
+): string | null {
+  if (message.meetupProposalId) return message.meetupProposalId;
+  if (message.type !== "MEETUP_CARD" || !message.body) return null;
+  try {
+    const parsed = JSON.parse(message.body) as { meetupProposalId?: string };
+    return typeof parsed.meetupProposalId === "string"
+      ? parsed.meetupProposalId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function dedupeOffers(rows: OfferDto[]): OfferDto[] {
   const map = new Map<string, OfferDto>();
   for (const row of rows) map.set(row.id, row);
   return [...map.values()];
+}
+
+function dedupeMeetups(rows: MeetupProposalDto[]): MeetupProposalDto[] {
+  const map = new Map<string, MeetupProposalDto>();
+  for (const row of rows) map.set(row.id, row);
+  return [...map.values()];
+}
+
+function checkoutHrefAfterMeetup(
+  checkoutReturn: string | null,
+  listingId: string,
+  orderIntentId: string,
+): string {
+  const raw = checkoutReturn?.trim();
+  if (raw?.startsWith("/checkout")) {
+    const base =
+      typeof window !== "undefined"
+        ? window.location.origin
+        : "http://localhost";
+    const url = new URL(raw, base);
+    if (url.pathname !== "/checkout") {
+      return `/checkout?listingId=${listingId}&orderIntentId=${orderIntentId}`;
+    }
+    url.searchParams.set("orderIntentId", orderIntentId);
+    const fromCart = url.searchParams.get("cart") === "1";
+    if (!fromCart && !url.searchParams.get("listingId")) {
+      url.searchParams.set("listingId", listingId);
+    }
+    return `${url.pathname}?${url.searchParams.toString()}`;
+  }
+  return `/checkout?listingId=${listingId}&orderIntentId=${orderIntentId}`;
 }
 
 export default function ChatThreadPage() {
@@ -128,6 +186,13 @@ export default function ChatThreadPage() {
   const [meta, setMeta] = useState<ConversationListItem | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [offers, setOffers] = useState<OfferDto[]>([]);
+  const [meetups, setMeetups] = useState<MeetupProposalDto[]>([]);
+  const [meetupOpen, setMeetupOpen] = useState(false);
+  const [meetupBusy, setMeetupBusy] = useState(false);
+  const [counterMeetupFor, setCounterMeetupFor] =
+    useState<MeetupProposalDto | null>(null);
+  const searchParams = useSearchParams();
+  const meetupDeepLinkOpened = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -176,6 +241,16 @@ export default function ChatThreadPage() {
               (o) =>
                 o.conversationId === conversationId ||
                 o.buyerId === found.buyerId,
+            ),
+          ),
+        );
+        const mus = await listMeetups(token, found.listingId);
+        setMeetups(
+          dedupeMeetups(
+            mus.filter(
+              (m) =>
+                m.conversationId === conversationId ||
+                m.buyerId === found.buyerId,
             ),
           ),
         );
@@ -330,6 +405,17 @@ export default function ChatThreadPage() {
           return dedupeOffers(next);
         });
       },
+      onMeetup: (meetup) => {
+        if (meetup.conversationId !== conversationId) return;
+        setMeetups((prev) => {
+          const index = prev.findIndex((item) => item.id === meetup.id);
+          const next =
+            index < 0
+              ? [...prev, meetup]
+              : prev.map((item, i) => (i === index ? meetup : item));
+          return dedupeMeetups(next);
+        });
+      },
     });
 
     const id = window.setInterval(() => {
@@ -395,18 +481,54 @@ export default function ChatThreadPage() {
     return map;
   }, [offers]);
 
+  const meetupsById = useMemo(() => {
+    const map = new Map<string, MeetupProposalDto>();
+    for (const m of meetups) map.set(m.id, m);
+    return map;
+  }, [meetups]);
+
   const isSeller =
     meId != null && meta != null && meId === meta.sellerId;
-  const showMakeOffer = Boolean(meta) && !meta?.blockedByMe && !isSeller;
+  const showMakeOffer =
+    Boolean(meta) &&
+    !meta?.blockedByMe &&
+    !isSeller &&
+    meta?.listingNegotiable !== false;
+
+  const clearMeetupQueryParam = useCallback(() => {
+    if (searchParams?.get("meetup") !== "1") return;
+    const q = new URLSearchParams(searchParams.toString());
+    q.delete("meetup");
+    const suffix = q.toString();
+    router.replace(
+      suffix ? `?${suffix}` : window.location.pathname,
+      { scroll: false },
+    );
+  }, [router, searchParams]);
+
+  const closeMeetupModal = useCallback(() => {
+    setMeetupOpen(false);
+    setCounterMeetupFor(null);
+    clearMeetupQueryParam();
+  }, [clearMeetupQueryParam]);
+
+  useEffect(() => {
+    if (meetupDeepLinkOpened.current) return;
+    if (
+      searchParams?.get("meetup") === "1" &&
+      meId &&
+      meta &&
+      meId === meta.buyerId
+    ) {
+      meetupDeepLinkOpened.current = true;
+      setMeetupOpen(true);
+    }
+  }, [searchParams, meId, meta]);
 
   async function sendText() {
     const token = getAccessToken();
     const text = draft.trim();
     if (!token || !conversationId || !text || !meId) return;
-    if (containsProhibitedChatContact(text)) {
-      setToast({ message: PROHIBITED_CHAT_WARNING, tone: "warn" });
-      return;
-    }
     setSending(true);
     const cid = clientMsgId();
     const optimistic: ChatMessage = {
@@ -483,7 +605,7 @@ export default function ChatThreadPage() {
       );
       setOfferOpen(false);
       setToast({
-        message: `Offer of ${amountLabel} sent for ${item}. ${OFFER_MULTI_UNIT_HINT}`,
+        message: `Offer of ${amountLabel} sent for ${item}. ${OFFER_MULTI_UNIT_HINT_BUYER}`,
         tone: "success",
       });
       await refresh();
@@ -861,6 +983,104 @@ export default function ChatThreadPage() {
     );
   }
 
+  async function submitMeetupProposal(
+    locationText: string,
+    deliveryDate: string,
+  ) {
+    const token = getAccessToken();
+    if (!token || !meta?.listingId || !conversationId) return;
+    closeMeetupModal();
+    setMeetupBusy(true);
+    try {
+      const created = await createMeetupProposal(token, meta.listingId, {
+        locationText,
+        deliveryDate,
+        conversationId,
+      });
+      setMeetups((prev) => dedupeMeetups([created, ...prev]));
+      await refresh();
+    } catch (err) {
+      setToast({
+        message:
+          err instanceof ApiError ? err.message : "Could not send meetup place",
+        tone: "error",
+      });
+    } finally {
+      setMeetupBusy(false);
+    }
+  }
+
+  async function runMeetupAction(
+    action: "accept" | "reject" | "withdraw",
+    meetup: MeetupProposalDto,
+  ) {
+    const token = getAccessToken();
+    if (!token) return;
+    setActionBusy(true);
+    try {
+      if (action === "accept") {
+        const res = await acceptMeetup(token, meetup.id);
+        setMeetups((prev) =>
+          prev.map((m) => (m.id === meetup.id ? res.meetup : m)),
+        );
+        if (meId === meetup.buyerId && res.orderIntent?.id) {
+          router.push(
+            checkoutHrefAfterMeetup(
+              searchParams?.get("checkoutReturn") ?? null,
+              meetup.listingId,
+              res.orderIntent.id,
+            ),
+          );
+          return;
+        }
+        setToast({ message: "Meetup place accepted", tone: "success" });
+      } else if (action === "reject") {
+        const updated = await rejectMeetup(token, meetup.id);
+        setMeetups((prev) =>
+          prev.map((m) => (m.id === meetup.id ? updated : m)),
+        );
+      } else {
+        const updated = await withdrawMeetup(token, meetup.id);
+        setMeetups((prev) =>
+          prev.map((m) => (m.id === meetup.id ? updated : m)),
+        );
+      }
+      await refresh();
+    } catch (err) {
+      setToast({
+        message: err instanceof ApiError ? err.message : "Action failed",
+        tone: "error",
+      });
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function renderMeetup(meetup: MeetupProposalDto) {
+    if (!meId) return null;
+    return (
+      <MeetupCard
+        meetup={meetup}
+        meId={meId}
+        busy={actionBusy}
+        onAccept={() => void runMeetupAction("accept", meetup)}
+        onReject={() => void runMeetupAction("reject", meetup)}
+        onWithdraw={() => void runMeetupAction("withdraw", meetup)}
+        onCounter={() => setCounterMeetupFor(meetup)}
+        onCheckout={() => {
+          if (!meetup.orderIntentId) return;
+          router.push(
+            checkoutHrefAfterMeetup(
+              searchParams?.get("checkoutReturn") ?? null,
+              meetup.listingId,
+              meetup.orderIntentId,
+            ),
+          );
+        }}
+      />
+    );
+  }
+
   function renderOffer(offer: OfferDto) {
     if (!meId) return null;
     return (
@@ -874,12 +1094,6 @@ export default function ChatThreadPage() {
         onCounter={() => {
           setCounterFor(offer);
           setCounterNaira(String(Math.round(offer.amountKobo / 100)));
-        }}
-        onCheckout={() => {
-          const q = new URLSearchParams({ listingId: offer.listingId });
-          if (offer.orderIntentId) q.set("orderIntentId", offer.orderIntentId);
-          else q.set("offerId", offer.id);
-          router.push(`/checkout?${q.toString()}`);
         }}
       />
     );
@@ -971,6 +1185,11 @@ export default function ChatThreadPage() {
                 linkedOfferId && offersById.get(linkedOfferId)
                   ? offersById.get(linkedOfferId)!
                   : null;
+              const linkedMeetupId = meetupIdFromMessage(m);
+              const linkedMeetup =
+                linkedMeetupId && meetupsById.get(linkedMeetupId)
+                  ? meetupsById.get(linkedMeetupId)!
+                  : null;
 
               return (
                 <li key={`thread-msg-${m.id}`} className="min-w-0 space-y-2">
@@ -986,6 +1205,23 @@ export default function ChatThreadPage() {
                   {m.type === "OFFER_CARD" && linkedOffer ? (
                     <div className={mine ? "flex min-w-0 justify-end" : "flex min-w-0 justify-start"}>
                       {renderOffer(linkedOffer)}
+                    </div>
+                  ) : m.type === "MEETUP_CARD" ? (
+                    <div className={mine ? "flex min-w-0 justify-end" : "flex min-w-0 justify-start"}>
+                      {linkedMeetup
+                        ? renderMeetup(linkedMeetup)
+                        : (() => {
+                            const stub = parseMeetupCardBody(m.body);
+                            if (!stub?.locationText) return null;
+                            return (
+                              <article className={proposalCardClass}>
+                                <p className={proposalLabelClass}>Meetup</p>
+                                <p className={proposalBodyClass}>
+                                  {stub.locationText}
+                                </p>
+                              </article>
+                            );
+                          })()}
                     </div>
                   ) : m.type === "SWAP_PROPOSAL_CARD" ? (
                     <div className={mine ? "flex min-w-0 justify-end" : "flex min-w-0 justify-start"}>
@@ -1021,6 +1257,36 @@ export default function ChatThreadPage() {
                           Offer accepted at{" "}
                           {formatNgn({ amountKobo: checkout.amountKobo })} —
                           waiting for buyer to pay
+                        </p>
+                      );
+                    })()
+                  ) : m.type === "SYSTEM" && parseMeetupCheckout(m.body) ? (
+                    (() => {
+                      const checkout = parseMeetupCheckout(m.body)!;
+                      const buyerView =
+                        meId != null && meId === checkout.buyerId;
+                      const href = `/checkout?listingId=${checkout.listingId}&orderIntentId=${checkout.orderIntentId}`;
+                      if (buyerView) {
+                        return (
+                          <Link
+                            href={href}
+                            className="mx-auto block max-w-[85%] rounded-[var(--rw-radius)] border border-[var(--rw-accent)] bg-[var(--rw-beige,#F2E7D5)] px-3.5 py-3 text-left no-underline"
+                          >
+                            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--rw-accent)]">
+                              Meetup agreed
+                            </p>
+                            <p className="mt-1 text-sm font-medium text-[var(--rw-ink)]">
+                              {checkout.locationText}
+                            </p>
+                            <p className="mt-1 text-xs text-[var(--rw-ink-muted)]">
+                              Continue to checkout
+                            </p>
+                          </Link>
+                        );
+                      }
+                      return (
+                        <p className="text-center text-xs text-[var(--rw-ink-muted)]">
+                          Meetup agreed — waiting for buyer to pay
                         </p>
                       );
                     })()
@@ -1102,7 +1368,7 @@ export default function ChatThreadPage() {
       ) : null}
 
       <div className="z-20 w-full min-w-0 shrink-0 border-t border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/95 backdrop-blur-md">
-        <div className="mx-auto flex w-full min-w-0 max-w-lg flex-col gap-2 px-4 py-3 sm:px-8">
+        <div className="mx-auto flex w-full min-w-0 max-w-lg flex-col gap-2 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-8">
           {meta?.blockedByMe ? (
             <Button
               variant="primary"
@@ -1113,7 +1379,7 @@ export default function ChatThreadPage() {
             </Button>
           ) : (
             <>
-          <div className="flex min-w-0 items-end gap-2">
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-end">
             <textarea
               ref={draftRef}
               rows={1}
@@ -1131,27 +1397,37 @@ export default function ChatThreadPage() {
               placeholder="Message…"
               aria-label="Message"
               maxLength={4000}
-              className="max-h-[7.25rem] min-h-[2.75rem] min-w-0 flex-1 resize-none overflow-y-hidden rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
+              className="max-h-[7.25rem] min-h-[2.75rem] w-full min-w-0 flex-1 resize-none overflow-y-hidden rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-2.5 text-base leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--rw-accent)]"
             />
-            <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Button
                 variant="primary"
                 size="sm"
-                className="shrink-0"
+                className="min-h-11 shrink-0 touch-manipulation sm:min-h-9"
                 disabled={sending || !draft.trim()}
                 onClick={() => void sendText()}
               >
                 Send
               </Button>
               {showMakeOffer ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="shrink-0 whitespace-nowrap"
-                  onClick={() => setOfferOpen(true)}
-                >
-                  Make offer
-                </Button>
+                <>
+                  <ListingActionButton
+                    type="button"
+                    variant="accent"
+                    className="!min-h-11 !px-3 !text-xs sm:!min-h-9 sm:!px-3.5"
+                    onClick={() => setOfferOpen(true)}
+                  >
+                    Make offer
+                  </ListingActionButton>
+                  <ListingActionButton
+                    type="button"
+                    variant="soft"
+                    className="!min-h-11 !px-3 !text-xs sm:!min-h-9 sm:!px-3.5"
+                    onClick={() => setMeetupOpen(true)}
+                  >
+                    Suggest meetup
+                  </ListingActionButton>
+                </>
               ) : null}
             </div>
           </div>
@@ -1165,6 +1441,51 @@ export default function ChatThreadPage() {
         onClose={() => setOfferOpen(false)}
         submitting={offerBusy}
         onSubmit={submitOffer}
+      />
+
+      <MakeMeetupModal
+        open={meetupOpen || Boolean(counterMeetupFor)}
+        onClose={closeMeetupModal}
+        submitting={meetupBusy}
+        title={counterMeetupFor ? "Suggest another place" : undefined}
+        onSubmit={(locationText, deliveryDate) => {
+          if (counterMeetupFor) {
+            void (async () => {
+              const token = getAccessToken();
+              if (!token) return;
+              const meetupId = counterMeetupFor.id;
+              closeMeetupModal();
+              setMeetupBusy(true);
+              try {
+                const child = await counterMeetup(token, meetupId, {
+                  locationText,
+                  deliveryDate,
+                });
+                setMeetups((prev) =>
+                  dedupeMeetups([
+                    child,
+                    ...prev.map((row) =>
+                      row.id === meetupId
+                        ? { ...row, status: "COUNTERED" }
+                        : row,
+                    ),
+                  ]),
+                );
+                await refresh();
+              } catch (err) {
+                setToast({
+                  message:
+                    err instanceof ApiError ? err.message : "Could not send",
+                  tone: "error",
+                });
+              } finally {
+                setMeetupBusy(false);
+              }
+            })();
+          } else {
+            void submitMeetupProposal(locationText, deliveryDate);
+          }
+        }}
       />
 
       <Modal

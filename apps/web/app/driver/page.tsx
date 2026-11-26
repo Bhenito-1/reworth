@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, apiFetch } from "../../lib/api";
-import { clearTokens, getAccessToken, getRefreshToken } from "../../lib/auth";
+import { getAccessToken, getRefreshToken, signOutAndGoLanding } from "../../lib/auth";
 import { shipmentStatusLabel } from "../../lib/delivery";
 import {
   acceptDriverRun,
@@ -81,14 +81,8 @@ function mapsHref(row: DriverAssignment): string | null {
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
-async function signOutRider() {
-  const refreshToken = getRefreshToken();
-  clearTokens();
-  void apiFetch("/auth/logout", {
-    method: "POST",
-    body: JSON.stringify({ refreshToken }),
-  }).catch(() => undefined);
-  window.location.replace("/");
+function signOutRider() {
+  signOutAndGoLanding({ refreshToken: getRefreshToken() });
 }
 
 export default function DriverRunsPage() {

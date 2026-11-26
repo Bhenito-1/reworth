@@ -17,20 +17,37 @@ import {
   PUSH_FREQUENCY_CAP_PER_HOUR,
 } from '../notifications/notification-categories';
 import { NotificationsService } from '../notifications/notifications.service';
+import { mockAddressesService } from '../test/addresses.mock';
+import { DeliveryPricingService } from './delivery-pricing.service';
 import { DeliveryService } from './delivery.service';
 
+function stubDeliveryServiceDeps(
+  prisma: unknown,
+  notifications: NotificationsService,
+  provider: MockDeliveryProvider,
+) {
+  return new DeliveryService(
+    prisma as never,
+    notifications,
+    provider,
+    {} as DeliveryPricingService,
+    mockAddressesService(),
+  );
+}
+
 describe('delivery quote math', () => {
-  it('feeKobo = 150000 + 15000 * ceil(km)', () => {
+  it('feeKobo = round10(base + perKm × km)', () => {
     expect(computeDeliveryFeeKobo(0)).toBe(150_000);
-    expect(computeDeliveryFeeKobo(0.1)).toBe(150_000 + 15_000);
-    expect(computeDeliveryFeeKobo(1)).toBe(150_000 + 15_000);
-    expect(computeDeliveryFeeKobo(1.01)).toBe(150_000 + 30_000);
-    expect(computeDeliveryFeeKobo(5)).toBe(150_000 + 75_000);
-    expect(isBulkyDeliveryCategory('home-furniture')).toBe(true);
+    expect(computeDeliveryFeeKobo(0.1)).toBe(152_000);
+    expect(computeDeliveryFeeKobo(1)).toBe(165_000);
+    expect(computeDeliveryFeeKobo(1.01)).toBe(165_000);
+    expect(computeDeliveryFeeKobo(5)).toBe(225_000);
+    expect(isBulkyDeliveryCategory('home-furniture--sofas')).toBe(true);
+    expect(isBulkyDeliveryCategory('home-appliances--cooling')).toBe(true);
+    expect(isBulkyDeliveryCategory('home-appliances--kitchen')).toBe(false);
+    expect(isBulkyDeliveryCategory('collectibles--art')).toBe(false);
     expect(isBulkyDeliveryCategory('phones-tablets')).toBe(false);
-    expect(computeDeliveryFeeKobo(3.1, BULKY_DELIVERY_RATES)).toBe(
-      1_200_000 + 80_000 * 4,
-    );
+    expect(computeDeliveryFeeKobo(3.1, BULKY_DELIVERY_RATES)).toBe(1_448_000);
   });
 
   it('MockDeliveryProvider quote uses haversine + formula', async () => {
@@ -66,7 +83,11 @@ describe('address disclose one-way', () => {
       sellerId: 'seller-1',
       buyerId: 'buyer-1',
       status: state.orderStatus ?? 'FUNDED',
-      listing: { addressPrivate: '12 Admiralty Way, Lekki' },
+      listing: {
+        sellerId: 'seller-1',
+        pickupAddressId: null,
+        addressPrivate: '12 Admiralty Way, Lekki',
+      },
       addressDisclosure: state.disclosure,
     };
     const prisma: any = {
@@ -93,7 +114,7 @@ describe('address disclose one-way', () => {
       log: jest.fn(),
     } as unknown as NotificationsService;
     const provider = new MockDeliveryProvider();
-    return new DeliveryService(prisma, notifications, provider);
+    return stubDeliveryServiceDeps(prisma, notifications, provider);
   }
 
   it('discloses once and rejects second call with 409', async () => {
@@ -576,7 +597,7 @@ describe('driver milestones', () => {
       notify: jest.fn(async () => ({ created: [], skipped: [] })),
     } as unknown as NotificationsService;
     const provider = new MockDeliveryProvider();
-    const svc = new DeliveryService(prisma, notifications, provider);
+    const svc = stubDeliveryServiceDeps(prisma, notifications, provider);
     return { svc, prisma, events, idem, notifications };
   }
 
