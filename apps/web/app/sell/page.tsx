@@ -131,6 +131,8 @@ export default function SellPage() {
   const resumeId = useSearchParams().get("listingId");
   const fileInputId = useId();
   const fileRef = useRef<HTMLInputElement>(null);
+  /** Set when starting a fresh list while the URL still has ?listingId=. */
+  const skipResumeHydrationRef = useRef(false);
 
   const [ready, setReady] = useState(false);
   const [hydratingDraft, setHydratingDraft] = useState(Boolean(resumeId));
@@ -297,7 +299,13 @@ export default function SellPage() {
   }, [step, savedPickup, pickupAddress, pickupMode, community, city]);
 
   useEffect(() => {
-    if (!ready || !resumeId) return;
+    if (!ready || !resumeId) {
+      skipResumeHydrationRef.current = false;
+      return;
+    }
+    if (skipResumeHydrationRef.current) return;
+    // Already working this draft in-session (e.g. photos just uploaded).
+    if (listingId === resumeId) return;
     let cancelled = false;
     setHydratingDraft(true);
     void (async () => {
@@ -340,7 +348,7 @@ export default function SellPage() {
     return () => {
       cancelled = true;
     };
-  }, [ready, resumeId]);
+  }, [ready, resumeId, listingId]);
 
   useEffect(() => {
     if (!city || cities.length === 0) return;
@@ -406,9 +414,10 @@ export default function SellPage() {
     });
     setListingId(created.id);
     setListing(created);
-    router.replace(`/sell?listingId=${created.id}`, { scroll: false });
+    // Do not update the URL here — that retriggers draft hydration and wipes
+    // in-memory photos while uploads are still running.
     return created.id;
-  }, [listingId, router, tokenOrThrow]);
+  }, [listingId, tokenOrThrow]);
 
   function syncFromListing(l: PublicListing) {
     setListing(l);
@@ -534,6 +543,8 @@ export default function SellPage() {
 
       setPhotos(nextPhotos);
       // Direct upload already attaches + processes images to READY.
+
+      router.replace(`/sell?listingId=${id}`, { scroll: false });
 
       setAssistLoading(true);
       setStep("draft");
@@ -877,12 +888,16 @@ export default function SellPage() {
                 {photos.map((p) => (
                   <div
                     key={p.id}
-                    className="group relative aspect-square overflow-hidden rounded-[var(--rw-radius)] bg-[var(--rw-bg-elevated)]"
+                    className={[
+                      "group relative aspect-square overflow-hidden rounded-[var(--rw-radius)] bg-[var(--rw-bg-elevated)]",
+                      busy ? "opacity-90" : "",
+                    ].join(" ")}
                   >
                     <button
                       type="button"
                       onClick={() => removePhoto(p.id)}
                       className="h-full w-full"
+                      disabled={busy}
                       aria-label="Remove this photo"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -898,7 +913,8 @@ export default function SellPage() {
                   <button
                     type="button"
                     onClick={() => fileRef.current?.click()}
-                    className="flex aspect-square flex-col items-center justify-center gap-1 rounded-[var(--rw-radius)] border border-dashed border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/70 text-sm font-medium text-[var(--rw-ink-muted)] transition hover:border-[var(--rw-accent)] hover:text-[var(--rw-accent)]"
+                    disabled={busy}
+                    className="flex aspect-square flex-col items-center justify-center gap-1 rounded-[var(--rw-radius)] border border-dashed border-[var(--rw-border)] bg-[var(--rw-bg-elevated)]/70 text-sm font-medium text-[var(--rw-ink-muted)] transition hover:border-[var(--rw-accent)] hover:text-[var(--rw-accent)] disabled:pointer-events-none disabled:opacity-50"
                     aria-label="Add photos"
                   >
                     <span className="text-2xl leading-none" aria-hidden>
@@ -919,7 +935,11 @@ export default function SellPage() {
                 onChange={onPickFiles}
               />
 
-              {photos.length === 0 ? (
+              {busy ? (
+                <p className="mt-4 text-sm font-medium text-[var(--rw-accent)]">
+                  Uploading your photos…
+                </p>
+              ) : photos.length === 0 ? (
                 <p className="mt-6 text-sm text-[var(--rw-ink-muted)]">
                   No photos yet — add at least two to continue.
                 </p>
@@ -1792,22 +1812,19 @@ export default function SellPage() {
                   size="lg"
                   className="w-full sm:w-auto"
                   onClick={() => {
-                    router.replace("/sell", { scroll: false });
+                    skipResumeHydrationRef.current = true;
                     setStep("photos");
                     setListingId(null);
                     setListing(null);
-                    void (async () => {
-                      setStep("photos");
-                      setListingId(null);
-                      setListing(null);
-                      setPublished(null);
-                      setPhotos([]);
-                      setTitle("");
-                      setDescription("");
-                      setError(null);
-                      setAppealOk(false);
-                      setAppealReason("");
-                      const pick = await refreshSavedPickup();
+                    setPublished(null);
+                    setPhotos([]);
+                    setTitle("");
+                    setDescription("");
+                    setError(null);
+                    setAppealOk(false);
+                    setAppealReason("");
+                    router.replace("/sell", { scroll: false });
+                    void refreshSavedPickup().then((pick) => {
                       if (hasSavedAddressLine(pick)) {
                         setPickupMode("saved");
                         setPickupAddress(pick!.line1);
@@ -1817,7 +1834,7 @@ export default function SellPage() {
                         setPickupMode("new");
                         setPickupAddress("");
                       }
-                    })();
+                    });
                   }}
                 >
                   List another
