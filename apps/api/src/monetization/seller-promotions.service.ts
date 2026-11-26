@@ -86,16 +86,18 @@ export class SellerPromotionsService implements OnModuleInit, OnModuleDestroy {
     listingId: string,
     hours: number,
     idempotencyKey: string,
+    requestOrigin?: string | null,
   ) {
-    return this.purchase('BOOST', sellerId, listingId, idempotencyKey, hours);
+    return this.purchase('BOOST', sellerId, listingId, idempotencyKey, hours, requestOrigin);
   }
 
   async purchaseFeatured(
     sellerId: string,
     listingId: string,
     idempotencyKey: string,
+    requestOrigin?: string | null,
   ) {
-    return this.purchase('FEATURED', sellerId, listingId, idempotencyKey);
+    return this.purchase('FEATURED', sellerId, listingId, idempotencyKey, undefined, requestOrigin);
   }
 
   /**
@@ -109,6 +111,7 @@ export class SellerPromotionsService implements OnModuleInit, OnModuleDestroy {
     listingId: string,
     idempotencyKey: string,
     boostHours?: number,
+    requestOrigin?: string | null,
   ) {
     const existing = await this.prisma.promotion.findUnique({
       where: { idempotencyKey },
@@ -154,7 +157,7 @@ export class SellerPromotionsService implements OnModuleInit, OnModuleDestroy {
       email,
       metadata: { kind, listingId, sellerId },
       idempotencyKey,
-      callbackUrl: payReturnUrl(this.psp.name),
+      callbackUrl: payReturnUrl(this.psp.name, requestOrigin),
     });
 
     // The window is stored now only to keep the duration. Activation moves it

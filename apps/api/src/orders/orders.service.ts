@@ -1984,6 +1984,33 @@ export class OrdersService {
   }
 
   /**
+   * Payment receipt emails: always sent (transactional, even with the general
+   * Email switch off), never allowed to break the funding flow if the email
+   * provider fails.
+   */
+  private async sendPaymentEmail(input: {
+    userId: string;
+    category: string;
+    title: string;
+    body: string;
+    deepLink: string;
+    meta: Record<string, unknown>;
+  }): Promise<void> {
+    try {
+      await this.notifications.notify({
+        ...input,
+        channels: [NotificationChannel.EMAIL],
+        forceDelivery: true,
+        transactional: true,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Payment email to ${input.userId} failed (${String(input.meta.emailKind)}): ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
    * Before a buyer cancels, check every open checkout with the PSP.
    * A charge that already went through blocks the cancel: the webhook or the
    * buyer return funds the order. Open checkouts are marked FAILED; if the
@@ -2148,12 +2175,14 @@ export class OrdersService {
       paymentReference,
     });
 
+    // In-app / push only: the emails below carry the full details.
     await this.notifications.notify({
       userId: order.sellerId,
       category: NotificationCategory.PAYMENT_RECEIVED,
       title: 'Payment received',
       body: 'Buyer payment is in escrow for your listing.',
       deepLink: `reworth://orders/${orderId}`,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
       meta: { orderId, paymentReference },
     });
     await this.notifications.notify({
@@ -2162,6 +2191,7 @@ export class OrdersService {
       title: 'Payment confirmed',
       body: 'Your payment is secured in ReWorth escrow.',
       deepLink: `reworth://orders/${orderId}`,
+      channels: [NotificationChannel.IN_APP, NotificationChannel.PUSH],
       meta: { orderId, paymentReference },
     });
 
@@ -2182,15 +2212,49 @@ export class OrdersService {
       '',
       `Payment reference: ${paymentReference}`,
     ];
-    await this.notifications.notify({
+    await this.sendPaymentEmail({
       userId: order.buyerId,
       category: NotificationCategory.PAYMENT_RECEIVED,
       title: `Receipt — ${order.reference}`,
       body: receiptLines.join('\n'),
       deepLink: `reworth://orders/${orderId}`,
-      channels: [NotificationChannel.EMAIL],
-      forceDelivery: true,
-      meta: { orderId, paymentReference, orderReference: order.reference },
+      meta: { orderId, paymentReference, orderReference: order.reference, emailKind: 'buyer_receipt' },
+    });
+
+    const payoutAccount = await this.prisma.sellerPayoutAccount.findUnique({
+      where: { userId: order.sellerId },
+      select: { verifiedAt: true },
+    });
+    const handOverBy = order.deliveryDate
+      ? order.deliveryDate.toLocaleDateString('en-NG', {
+          timeZone: 'Africa/Lagos',
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+        })
+      : null;
+    const saleLines = [
+      `The buyer has paid for ${qty} × ${title}. The money is held safely by ReWorth until the sale is complete.`,
+      '',
+      `Order reference: ${order.reference}`,
+      `Item price (your payout): ${formatNaira(order.amountKobo)}`,
+      '',
+      'What to do next:',
+      handOverBy
+        ? `1. Hand the item over by ${handOverBy}, then tap "Mark handed over" on the order.`
+        : '1. Hand the item over, then tap "Mark handed over" on the order.',
+      `2. Your payout is sent ${this.coverageDays()} days after the buyer confirms they received it, if they report no problem.`,
+      ...(payoutAccount?.verifiedAt
+        ? []
+        : ['', 'You have no bank account for payouts yet. Add one in the app so we can pay you.']),
+    ];
+    await this.sendPaymentEmail({
+      userId: order.sellerId,
+      category: NotificationCategory.PAYMENT_RECEIVED,
+      title: `New sale — ${order.reference}`,
+      body: saleLines.join('\n'),
+      deepLink: `reworth://orders/${orderId}`,
+      meta: { orderId, paymentReference, orderReference: order.reference, emailKind: 'seller_sale' },
     });
 
     if (updated.fulfilmentMethod === FulfilmentMethod.DELIVERY) {
