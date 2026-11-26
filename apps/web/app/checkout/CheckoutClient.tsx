@@ -445,9 +445,23 @@ export default function CheckoutPage() {
   const checkoutMeet =
     !isGift && (meetLocked || buyerFulfilment === "MEET_POINT");
   const showFulfilmentChoice = !isGift && !meetLocked;
+  const onReworthDelivery = useMemo(
+    () =>
+      !isGift &&
+      buyerFulfilment === "DELIVERY" &&
+      !meetLocked &&
+      !meetupCheckout,
+    [isGift, buyerFulfilment, meetLocked, meetupCheckout],
+  );
+
   const canPlaceOrder = useMemo(() => {
     if (isGift) return true;
     if (checkoutMeet && !meetLocked) return false;
+    // ReWorth delivery paused: keep the button visible; placeAndPay shows a toast.
+    if (onReworthDelivery && !PLATFORM_DELIVERY_CHECKOUT_ENABLED) {
+      if (cartMode) return cartReady.length > 0;
+      return Boolean(listing);
+    }
     if (cartMode && buyerFulfilment === "DELIVERY" && !meetLocked) {
       return (
         cartReady.length > 0 &&
@@ -461,12 +475,14 @@ export default function CheckoutPage() {
     isGift,
     checkoutMeet,
     meetLocked,
+    onReworthDelivery,
     cartMode,
     buyerFulfilment,
     cartReady.length,
     cartDeliveryAddress,
     cartQuote,
     cartQuoting,
+    listing,
   ]);
   const unitKobo = listing?.priceKobo ?? 0;
   const negotiatedUnit =
@@ -909,7 +925,10 @@ export default function CheckoutPage() {
         {!isGift ? (
           <CheckoutDeliveryStep
             buyerFulfilment={buyerFulfilment}
-            onFulfilmentChange={setBuyerFulfilment}
+            onFulfilmentChange={(value) => {
+              setBuyerFulfilment(value);
+              if (value === "DELIVERY") setMeetupCheckout(null);
+            }}
             showChoice={showFulfilmentChoice}
             showMeetupOption={showMeetupOption}
             meetLocked={meetLocked}
