@@ -2,7 +2,7 @@
 
 import { io, type Socket } from "socket.io-client";
 import { API_URL } from "./api";
-import type { ChatMessage, OfferDto } from "./chat";
+import type { ChatMessage, MeetupProposalDto, OfferDto } from "./chat";
 
 export type InboxUpdate = {
   conversationId: string;
@@ -17,13 +17,21 @@ export type ReadUpdate = {
   readAt: string;
 };
 
+export type OrderUpdate = {
+  orderId: string;
+  status: string;
+  confirmationStatus?: string;
+};
+
 type Handlers = {
   onConnect?: () => void;
   onDisconnect?: () => void;
   onMessage?: (message: ChatMessage) => void;
   onRead?: (update: ReadUpdate) => void;
   onOffer?: (offer: OfferDto) => void;
+  onMeetup?: (meetup: MeetupProposalDto) => void;
   onInbox?: (update: InboxUpdate) => void;
+  onOrder?: (update: OrderUpdate) => void;
 };
 
 let socket: Socket | null = null;
@@ -117,6 +125,12 @@ function ensure(token: string) {
   });
   next.on("inbox.updated", (update: InboxUpdate) => {
     for (const listener of listeners) listener.onInbox?.(update);
+  });
+  next.on("meetup.updated", (meetup: MeetupProposalDto) => {
+    for (const listener of listeners) listener.onMeetup?.(meetup);
+  });
+  next.on("order.updated", (update: OrderUpdate) => {
+    for (const listener of listeners) listener.onOrder?.(update);
   });
   next.io.on("reconnect_attempt", () => {
     next.auth = { token: socketToken ?? token };

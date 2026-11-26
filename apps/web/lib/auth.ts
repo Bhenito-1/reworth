@@ -37,6 +37,21 @@ export function getAccessToken(): string | null {
   return localStorage.getItem(ACCESS_KEY);
 }
 
+/** User id from JWT `sub` — works when `/me` is temporarily unavailable. */
+export function getAccessTokenUserId(): string | null {
+  const token = getAccessToken();
+  if (!token) return null;
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(json) as { sub?: string };
+    return typeof payload.sub === "string" ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getRefreshToken(): string | null {
   if (!canUseStorage()) return null;
   return localStorage.getItem(REFRESH_KEY);
@@ -188,11 +203,21 @@ async function anotherTabIsRefreshing(): Promise<boolean> {
 }
 
 /**
- * Guest-only routes: landing, login, and register/onboarding.
+ * Browse the catalogue without signing in (home, explore, listing PDP).
+ */
+export function isMarketplaceBrowsePath(pathname: string): boolean {
+  if (pathname === "/" || pathname === "") return true;
+  if (pathname === "/search" || pathname.startsWith("/search/")) return true;
+  if (pathname.startsWith("/listings/")) return true;
+  return false;
+}
+
+/**
+ * Guest-only routes: landing, login, register/onboarding, and public browse.
  * Everything else requires a session.
  */
 export function isPublicAuthPath(pathname: string): boolean {
-  if (pathname === "/" || pathname === "") return true;
+  if (isMarketplaceBrowsePath(pathname)) return true;
   if (pathname === "/login" || pathname.startsWith("/login/")) return true;
   if (pathname === "/forgot-password" || pathname.startsWith("/forgot-password/")) {
     return true;
@@ -208,9 +233,28 @@ export function isPublicAuthPath(pathname: string): boolean {
  * Clear session and hard-navigate to landing so guests always see
  * Login / Create account (logout, expired, or missing session).
  */
-export function forceLandingRedirect(): void {
+export function signOutAndGoLanding(opts?: { refreshToken?: string | null }): void {
+  const refreshToken = opts?.refreshToken ?? getRefreshToken();
   clearTokens();
-  if (!canUseStorage()) return;
-  if (window.location.pathname === "/") return;
-  window.location.replace("/");
+  if (typeof window !== "undefined") {
+    void fetch(`${API_URL}/auth/logout`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      keepalive: true,
+      body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+    }).catch(() => undefined);
+    const path = window.location.pathname;
+    if (path === "/" || path === "") {
+      window.location.reload();
+      return;
+    }
+    window.location.replace("/");
+  }
+}
+
+export function forceLandingRedirect(): void {
+  signOutAndGoLanding();
 }

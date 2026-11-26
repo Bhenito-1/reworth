@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { BackLink } from "../../../components/BackLink";
 import { useParams, useRouter } from "next/navigation";
 import {
   Button,
@@ -162,12 +163,7 @@ export default function DisputeDetailPage() {
     <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-20 pt-6 sm:px-8">
         <header className="mb-6 flex items-center justify-between gap-4">
-          <Link
-            href={`/orders/${dispute.orderId}`}
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Order
-          </Link>
+          <BackLink href={`/orders/${dispute.orderId}`} />
           <span className="text-xl font-semibold tracking-tight">ReWorth</span>
         </header>
 

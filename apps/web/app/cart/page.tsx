@@ -13,7 +13,7 @@ import {
   updateCartQuantity,
   type CartItem,
 } from "../../lib/cart";
-import { listingImageUrl } from "../../lib/listings";
+import { listingImageUrl, listingPdpHref } from "../../lib/listings";
 import type { PublicListing } from "../../lib/types";
 
 export default function CartPage() {
@@ -69,14 +69,6 @@ export default function CartPage() {
     }
   }
 
-  function checkoutHref(item: CartItem): string {
-    const q = new URLSearchParams({
-      listingId: item.listing.id,
-      qty: String(item.quantity),
-    });
-    return `/checkout?${q.toString()}`;
-  }
-
   const ready = (items ?? []).filter((item) => !item.unavailable);
   const totalKobo = ready.reduce(
     (sum, item) => sum + item.listing.priceKobo * item.quantity,
@@ -95,11 +87,6 @@ export default function CartPage() {
             Search
           </Link>
         </div>
-        <p className="mb-6 text-sm text-[var(--rw-ink-muted)]">
-          Saving an item here does not place an order or hold the units. Checkout
-          reserves the units and takes you straight to payment.
-        </p>
-
         {items === null && !error ? (
           <div className="space-y-3">
             <Skeleton className="h-24 w-full" />
@@ -138,14 +125,15 @@ export default function CartPage() {
                   ) : null}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <Link href={`/listings/${item.listing.id}`} className="font-semibold hover:underline">
+                  <Link
+                    href={listingPdpHref(item.listing.id, "/cart")}
+                    className="font-semibold hover:underline"
+                  >
                     {item.listing.title || "Untitled"}
                   </Link>
                   <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
                     {formatNgn({ amountKobo: item.listing.priceKobo })} per unit
-                    {item.unavailable
-                      ? " · Unavailable"
-                      : ` · ${item.listing.quantityAvailable} available`}
+                    {item.unavailable ? " · Unavailable" : null}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
@@ -157,7 +145,12 @@ export default function CartPage() {
                     >
                       −
                     </button>
-                    <span className="min-w-6 text-center text-sm font-medium">{item.quantity}</span>
+                    <span
+                      className="min-w-6 text-center text-sm font-medium"
+                      aria-label={`${item.quantity} in cart`}
+                    >
+                      {item.quantity}
+                    </span>
                     <button
                       type="button"
                       className="h-8 w-8 rounded-full border border-[var(--rw-border)]"
@@ -178,15 +171,7 @@ export default function CartPage() {
                     >
                       Remove
                     </button>
-                    {!item.unavailable ? (
-                      <Link
-                        href={checkoutHref(item)}
-                        className="ml-auto text-sm font-semibold text-[var(--rw-accent)] hover:underline"
-                      >
-                        Checkout
-                      </Link>
-                    ) : null}
-                    <p className="w-full text-sm font-semibold sm:ml-auto sm:w-auto">
+                    <p className="ml-auto text-sm font-semibold">
                       {formatNgn({ amountKobo: item.listing.priceKobo * item.quantity })}
                     </p>
                   </div>
@@ -202,15 +187,9 @@ export default function CartPage() {
               {ready.length} item{ready.length === 1 ? "" : "s"} ·{" "}
               {formatNgn({ amountKobo: totalKobo })} before fees
             </p>
-            {ready.length === 1 ? (
-              <Link href={checkoutHref(ready[0]!)}>
-                <Button variant="primary">Proceed to checkout</Button>
-              </Link>
-            ) : (
-              <Link href="/checkout/cart">
-                <Button variant="primary">Proceed to checkout</Button>
-              </Link>
-            )}
+            <Link href="/checkout?cart=1">
+              <Button variant="primary">Proceed to checkout</Button>
+            </Link>
           </div>
         ) : null}
       </div>

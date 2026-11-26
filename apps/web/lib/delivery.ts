@@ -205,10 +205,6 @@ export function formatDeliveryEta(
   return deliveryWindowHint();
 }
 
-export function privacyBeforePayCopy(): string {
-  return "Exact address stays private until payment.";
-}
-
 /** Corridor pins for D3 map — community-level only, never exact home. */
 export function buildDeliveryCorridor(input: {
   listingLat?: number | null;

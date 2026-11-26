@@ -12,7 +12,11 @@ export type PayoutAccountView = {
   verifiedAt: string;
 };
 
-export type VerifyPayoutResult = { ok: true; account: PayoutAccountView };
+export type VerifyPayoutResult = {
+  ok: true;
+  account: PayoutAccountView;
+  warning?: string;
+};
 
 export const FALLBACK_BANKS: PayoutBank[] = [
   { code: "058", name: "GTBank" },

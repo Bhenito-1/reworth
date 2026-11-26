@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { BackLink } from "../../../components/BackLink";
 import { useParams, useRouter } from "next/navigation";
 import { koboToNaira, nairaToKobo } from "@reworth/shared";
 import { Button, Input, Skeleton } from "@reworth/ui-web";
@@ -9,6 +10,7 @@ import { ApiError } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 import {
   getListing,
+  listingCategoryLabel,
   patchListing,
   publishListing,
   sentenceCaseLabel,
@@ -58,6 +60,7 @@ export default function FixListingPage() {
   }, [load]);
 
   const rejected = listing?.status === "REJECTED";
+  const categoryLabel = listing ? listingCategoryLabel(listing) : null;
   const reason =
     listing?.rejectionReason ||
     listing?.moderationReasons?.filter(Boolean).join(" ") ||
@@ -111,12 +114,7 @@ export default function FixListingPage() {
 
   return (
     <main className="mx-auto min-h-[100dvh] max-w-2xl bg-[var(--rw-bg)] px-4 py-8 text-[var(--rw-ink)] sm:px-8">
-      <Link
-        href="/selling"
-        className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-      >
-        ← Your listings
-      </Link>
+      <BackLink href="/selling" />
       {loading ? (
         <div className="mt-8 space-y-3">
           <Skeleton className="h-8 w-2/3" />
@@ -131,6 +129,11 @@ export default function FixListingPage() {
           <h1 className="text-3xl font-semibold tracking-tight">
             {rejected ? "Fix this listing" : listing.title}
           </h1>
+          {categoryLabel ? (
+            <p className="text-sm text-[var(--rw-ink-muted)]">
+              Category: {categoryLabel}
+            </p>
+          ) : null}
           {rejected ? (
             <div className="rounded-[var(--rw-radius-lg)] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
               <p className="font-semibold">Why it was rejected</p>

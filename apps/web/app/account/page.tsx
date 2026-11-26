@@ -6,10 +6,10 @@ import { useRouter } from "next/navigation";
 import { Button, EmptyState, Input, Skeleton } from "@reworth/ui-web";
 import { apiFetch, ApiError } from "../../lib/api";
 import {
-  clearTokens,
   forceLandingRedirect,
   getAccessToken,
   getRefreshToken,
+  signOutAndGoLanding,
 } from "../../lib/auth";
 import { areaChoices, FALLBACK_AREAS, type AreaChoice } from "../../lib/areas";
 import { brandPublic } from "../../lib/brand";
@@ -20,6 +20,7 @@ import {
   type PayoutAccountView,
 } from "../../lib/payout";
 import { getRegion, listRegions, type RegionCity } from "../../lib/region";
+import { saveMyDeliveryAddress } from "../../lib/delivery-address";
 import type { DeviceRow, MeResponse } from "../../lib/types";
 
 const ACCOUNT_LINKS: {
@@ -97,6 +98,12 @@ export default function AccountPage() {
   const [nin, setNin] = useState("");
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [deliveryLine1, setDeliveryLine1] = useState("");
+  const [deliveryArea, setDeliveryArea] = useState("");
+  const [deliveryCity, setDeliveryCity] = useState("Lagos");
+  const [deliverySaveOk, setDeliverySaveOk] = useState(false);
+  const [deliverySaveError, setDeliverySaveError] = useState<string | null>(null);
+  const [deliverySaving, setDeliverySaving] = useState(false);
 
   const load = useCallback(async () => {
     const token = getAccessToken();
@@ -114,6 +121,12 @@ export default function AccountPage() {
         getPayoutSetup(token).catch(() => ({ account: null })),
       ]);
       setMe(profile);
+      const d = profile.deliveryAddress;
+      if (d) {
+        setDeliveryLine1(d.line1);
+        setDeliveryArea(d.community);
+        setDeliveryCity(d.city);
+      }
       setPayout(payoutSetup.account);
       setDisplayName(profile.profile?.displayName ?? "");
       const pref = profile.profile?.preferredCommunity?.trim() ?? "";
@@ -215,6 +228,34 @@ export default function AccountPage() {
     }
   }
 
+  async function onSaveDelivery(e: FormEvent) {
+    e.preventDefault();
+    setDeliverySaveError(null);
+    setDeliverySaveOk(false);
+    const token = getAccessToken();
+    if (!token) return;
+  if (!deliveryLine1.trim() || !deliveryArea.trim()) {
+      setDeliverySaveError("Street and area are required");
+      return;
+    }
+    setDeliverySaving(true);
+    try {
+      const saved = await saveMyDeliveryAddress(token, {
+        line1: deliveryLine1.trim(),
+        city: deliveryCity.trim() || "Lagos",
+        community: deliveryArea.trim(),
+      });
+      setMe((m) => (m ? { ...m, deliveryAddress: saved } : m));
+      setDeliverySaveOk(true);
+    } catch (err) {
+      setDeliverySaveError(
+        err instanceof ApiError ? err.message : "Could not save address",
+      );
+    } finally {
+      setDeliverySaving(false);
+    }
+  }
+
   async function onSave(e: FormEvent) {
     e.preventDefault();
     setSaveError(null);
@@ -252,17 +293,9 @@ export default function AccountPage() {
     }
   }
 
-  async function signOut() {
+  function signOut() {
     setBusyAction("logout");
-    const refreshToken = getRefreshToken();
-    const leaving = window.location.pathname !== "/";
-    clearTokens();
-    void apiFetch("/auth/logout", {
-      method: "POST",
-      keepalive: true,
-      body: refreshToken ? { refreshToken } : {},
-    }).catch(() => undefined);
-    if (leaving) window.location.replace("/");
+    signOutAndGoLanding({ refreshToken: getRefreshToken() });
   }
 
   async function requestDelete() {
@@ -392,6 +425,51 @@ export default function AccountPage() {
                 </Link>
               ))}
             </nav>
+
+            <section aria-labelledby="delivery-heading">
+              <h2
+                id="delivery-heading"
+                className="mb-4 text-lg font-semibold tracking-tight"
+              >
+                Delivery address
+              </h2>
+              <form
+                onSubmit={onSaveDelivery}
+                className="flex flex-col gap-4 rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] p-6"
+              >
+                <Input
+                  label="Street / building"
+                  value={deliveryLine1}
+                  onChange={(e) => setDeliveryLine1(e.target.value)}
+                  disabled={deliverySaving}
+                  required
+                />
+                <Input
+                  label="Area"
+                  value={deliveryArea}
+                  onChange={(e) => setDeliveryArea(e.target.value)}
+                  disabled={deliverySaving}
+                  required
+                />
+                <Input
+                  label="City"
+                  value={deliveryCity}
+                  onChange={(e) => setDeliveryCity(e.target.value)}
+                  disabled={deliverySaving}
+                />
+                {deliverySaveOk ? (
+                  <p className="text-sm text-[var(--rw-success)]">Address saved.</p>
+                ) : null}
+                {deliverySaveError ? (
+                  <p className="text-sm text-[var(--rw-error)]" role="alert">
+                    {deliverySaveError}
+                  </p>
+                ) : null}
+                <Button type="submit" variant="primary" disabled={deliverySaving}>
+                  {deliverySaving ? "Saving…" : "Save delivery address"}
+                </Button>
+              </form>
+            </section>
 
             <section aria-labelledby="profile-heading">
               <h2

@@ -7,6 +7,9 @@ export type AreaChoice = {
 
 /** Stored community strings already used by Lagos search and listings. */
 const LAGOS_STORED: Record<string, AreaChoice> = {
+  BARIGA: { value: "Bariga", label: "Bariga" },
+  YABA: { value: "Yaba", label: "Yaba" },
+  SURULERE: { value: "Surulere", label: "Surulere" },
   LEKKI_PH1: { value: "Lekki Ph1", label: "Lekki Ph1" },
   IKOYI: { value: "Ikoyi", label: "Ikoyi" },
   VI: { value: "VI", label: "VI" },
@@ -21,6 +24,9 @@ export const FALLBACK_STATES = [{ key: "lagos", displayName: "Lagos" }] as const
 
 export const FALLBACK_AREAS: Record<string, { key: string; label: string }[]> = {
   lagos: [
+    { key: "BARIGA", label: "Bariga" },
+    { key: "YABA", label: "Yaba" },
+    { key: "SURULERE", label: "Surulere" },
     { key: "LEKKI_PH1", label: "Lekki Phase 1" },
     { key: "IKOYI", label: "Ikoyi" },
     { key: "VI", label: "Victoria Island" },

@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Input, Skeleton, Toast } from "@reworth/ui-web";
+import { BackLink } from "../../components/BackLink";
 import { ApiError } from "../../lib/api";
 import { sentenceCaseLabel } from "../../lib/listings";
 import { getAccessToken } from "../../lib/auth";
@@ -118,12 +119,7 @@ export default function PartnerConsolePage() {
     <main className="relative min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-20 pt-6 sm:px-8">
         <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/account"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Account
-          </Link>
+          <BackLink href="/account" />
           <span className="text-xl font-semibold tracking-tight">ReWorth</span>
         </header>
 
@@ -143,10 +139,9 @@ export default function PartnerConsolePage() {
             Session note
           </h2>
           <p className="mt-2 text-[var(--rw-ink-muted)]">
-            Prefer your ReWorth JWT (CommunityManager). Machine integrations use
-            header <code className="text-xs">x-reworth-partner-key</code>. Keys
-            pasted here stay in sessionStorage only — never localStorage — and
-            clear when the tab closes.
+            ReWorth JWT for managers, or{" "}
+            <code className="text-xs">x-reworth-partner-key</code> for API
+            access.
           </p>
           <form
             onSubmit={onSaveKey}

@@ -67,15 +67,9 @@ export function DeliveryTrackingPanel({
 
       {corridor.distanceKm != null ? (
         <p className="mt-3 text-xs text-[var(--rw-ink-muted)]">
-          About {corridor.distanceKm.toFixed(1)} km corridor · exact homes stay
-          private (PRD §20). Live rider GPS comes later.
+          About {corridor.distanceKm.toFixed(1)} km
         </p>
-      ) : (
-        <p className="mt-3 text-xs text-[var(--rw-ink-muted)]">
-          Exact homes stay private. Live rider GPS comes later — status updates
-          stay on your order timeline.
-        </p>
-      )}
+      ) : null}
 
       <div className="mt-4 rounded-[var(--rw-radius)] border border-[var(--rw-border)] bg-[var(--rw-bg)] px-3 py-3">
         <p className="text-sm font-semibold text-[var(--rw-ink)]">

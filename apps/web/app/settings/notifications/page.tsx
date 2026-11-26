@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Modal, Skeleton, Toast } from "@reworth/ui-web";
+import { BackLink } from "../../../components/BackLink";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 import {
@@ -220,12 +221,6 @@ export default function NotificationSettingsPage() {
     setPushPrimeOpen(true);
   }
 
-  const criticalNote = useMemo(
-    () =>
-      "Payment, delivery, and dispute alerts stay on for in-app so you never miss escrow or fulfilment updates.",
-    [],
-  );
-
   async function toggle(
     category: string,
     channel: NotificationChannel,
@@ -308,19 +303,13 @@ export default function NotificationSettingsPage() {
 
       <div className="relative z-10 mx-auto max-w-2xl px-4 pb-24 pt-6 sm:px-8">
         <header className="mb-6 flex items-center justify-between gap-4">
-          <Link
-            href="/notifications"
-            className="text-sm font-medium text-[var(--rw-ink-muted)] underline-offset-2 hover:underline"
-          >
-            ← Notifications
-          </Link>
+          <BackLink href="/notifications" />
           <span className="text-xl font-semibold tracking-tight">ReWorth</span>
         </header>
 
         <h1 className="text-2xl font-semibold tracking-tight">
           Notification preferences
         </h1>
-        <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">{criticalNote}</p>
 
         {loading ? (
           <div className="mt-8 space-y-3">

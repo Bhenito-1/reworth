@@ -9,6 +9,7 @@ import { PullToRefresh } from "../../components/PullToRefresh";
 import { apiFetch, ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
 import { removeListing } from "../../lib/inventory";
+import { listingPdpHref } from "../../lib/listings";
 
 type MineItem = {
   id: string;
@@ -78,17 +79,6 @@ function groupOf(item: MineItem): Exclude<ListingFilter, "all"> | "draft" {
   return "closed";
 }
 
-function removalMessage(item: MineItem): string {
-  const title = item.title || "this listing";
-  if (item.status === "DRAFT") {
-    return `Delete the draft “${title}”? This cannot be undone.`;
-  }
-  if (item.hasAcceptedOrder) {
-    return `Remove “${title}” from the marketplace? An order for this listing is already accepted. You still have to fulfil that order. If you do not, your account can be sanctioned. The remaining units will leave the marketplace and this listing will be marked Removed.`;
-  }
-  return `Remove “${title}” from the marketplace? The remaining units will leave the marketplace and this listing will be marked Removed.`;
-}
-
 export default function SellingPage() {
   const router = useRouter();
   const [items, setItems] = useState<MineItem[]>([]);
@@ -128,8 +118,6 @@ export default function SellingPage() {
       router.replace("/");
       return;
     }
-    const confirmed = window.confirm(removalMessage(item));
-    if (!confirmed) return;
     setRemovingId(item.id);
     setError(null);
     try {
@@ -230,7 +218,10 @@ export default function SellingPage() {
                   key={item.id}
                   className="rounded-[var(--rw-radius-lg)] border border-[var(--rw-border)] bg-[var(--rw-bg-elevated)] px-4 py-4"
                 >
-                  <Link href={`/listings/${item.id}`} className="block">
+                  <Link
+                    href={listingPdpHref(item.id, "/selling")}
+                    className="block"
+                  >
                     <div className="flex min-w-0 items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="break-words font-semibold">{item.title || "Untitled listing"}</p>
@@ -244,11 +235,6 @@ export default function SellingPage() {
                         {item.reviewLabel}
                       </span>
                     </div>
-                    {item.reviewNote ? (
-                      <p className="mt-2 text-sm text-[var(--rw-ink-muted)]">
-                        {item.reviewNote}
-                      </p>
-                    ) : null}
                   </Link>
                   {group === "rejected" ? (
                     <Link
@@ -259,20 +245,27 @@ export default function SellingPage() {
                     </Link>
                   ) : null}
                   {item.status === "DRAFT" || item.canRemove ? (
-                    <button
-                      type="button"
-                      className="mt-3 block text-sm font-medium text-[var(--rw-error)] hover:underline disabled:opacity-50"
-                      disabled={removingId === item.id}
-                      onClick={() => void onRemove(item)}
-                    >
-                      {removingId === item.id
-                        ? item.status === "DRAFT"
-                          ? "Deleting…"
-                          : "Removing…"
-                        : item.status === "DRAFT"
-                          ? "Delete draft"
-                          : "Remove from marketplace"}
-                    </button>
+                    <div className="mt-3">
+                      {item.status !== "DRAFT" && item.hasAcceptedOrder ? (
+                        <p className="mb-1 text-xs text-[var(--rw-ink-muted)]">
+                          An accepted order must still be fulfilled after removal.
+                        </p>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="block text-sm font-medium text-[var(--rw-error)] hover:underline disabled:opacity-50"
+                        disabled={removingId === item.id}
+                        onClick={() => void onRemove(item)}
+                      >
+                        {removingId === item.id
+                          ? item.status === "DRAFT"
+                            ? "Deleting…"
+                            : "Removing…"
+                          : item.status === "DRAFT"
+                            ? "Delete draft"
+                            : "Remove from marketplace"}
+                      </button>
+                    </div>
                   ) : null}
                 </li>
               );

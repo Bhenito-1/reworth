@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { DiscoveryListingCard } from "../../components/discovery/DiscoveryListingCard";
+import { listingPdpHref } from "../../lib/listings";
 import { ApiError } from "../../lib/api";
 import { getAccessToken } from "../../lib/auth";
-import { addToCart } from "../../lib/cart";
+import { addToCart, cartAddErrorMessage } from "../../lib/cart";
 import {
   getMeFavourites,
   savedListingCanCart,
@@ -77,10 +78,7 @@ export default function WishlistPage() {
       await addToCart(token, listing.id);
       setToast({ message: "Added to cart", tone: "success" });
     } catch (err) {
-      setToast({
-        message: err instanceof ApiError ? err.message : "Could not add to cart",
-        tone: "error",
-      });
+      setToast({ message: cartAddErrorMessage(err), tone: "error" });
     }
   }
 
@@ -139,6 +137,7 @@ export default function WishlistPage() {
                 <li key={row.favouriteId} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
                   <DiscoveryListingCard
                     listing={row.listing}
+                    href={listingPdpHref(row.listing.id, "/wishlist")}
                     favourited
                     note={savedListingNote(row.listing)}
                     onToggleFavourite={(listing) => void remove(listing)}

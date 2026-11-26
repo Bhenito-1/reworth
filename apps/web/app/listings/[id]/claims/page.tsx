@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { BackLink } from "../../../../components/BackLink";
 import { useParams } from "next/navigation";
 import { EmptyState, Skeleton } from "@reworth/ui-web";
 import { getAccessToken } from "../../../../lib/auth";
@@ -41,9 +42,7 @@ export default function GiveawayClaimsPage() {
 
   return (
     <main className="mx-auto min-h-[100dvh] max-w-lg px-4 py-8">
-      <Link href={id ? `/listings/${id}` : "/"} className="text-sm text-[var(--rw-ink-muted)]">
-        ← Back to listing
-      </Link>
+      <BackLink href={id ? `/listings/${id}` : "/"} />
       <h1 className="mt-4 text-2xl font-semibold tracking-tight">Give-away claims</h1>
       <p className="mt-1 text-sm text-[var(--rw-ink-muted)]">
         The first verified buyer to pay the delivery fee gets one unit. A

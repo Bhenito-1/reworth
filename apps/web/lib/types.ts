@@ -18,6 +18,18 @@ export type MeProfile = {
   quietHoursEnd?: number | null;
 };
 
+export type MeDeliveryAddress = {
+  id: string;
+  line1: string;
+  line2: string | null;
+  city: string;
+  community: string;
+  country: string;
+  geoLat: number | null;
+  geoLng: number | null;
+  hasGeo: boolean;
+};
+
 export type MeResponse = {
   id: string;
   memberReference?: string | null;
@@ -32,6 +44,8 @@ export type MeResponse = {
   roles: string[];
   isDeliveryDriver?: boolean;
   createdAt: string;
+  deliveryAddress?: MeDeliveryAddress | null;
+  pickupAddress?: MeDeliveryAddress | null;
 };
 
 export type DeviceRow = {
@@ -111,6 +125,7 @@ export type PublicListing = {
   title: string;
   description: string;
   category: { id: string; slug: string; name: string } | null;
+  subcategory?: { id: string; slug: string; name: string } | null;
   brand: string | null;
   model: string | null;
   condition: string;
@@ -138,6 +153,7 @@ export type PublicListing = {
   fulfilmentPickup: boolean;
   fulfilmentMeet: boolean;
   fulfilmentDelivery: boolean;
+  fulfilmentPreference?: "DELIVERY" | "MEET_POINT" | "EITHER" | null;
   buyerProtection: true;
   createdAt: string;
   publishedAt: string | null;
@@ -296,6 +312,7 @@ export type CreateListingBody = {
   fulfilmentPickup?: boolean;
   fulfilmentMeet?: boolean;
   fulfilmentDelivery?: boolean;
+  fulfilmentPreference?: "DELIVERY" | "MEET_POINT" | "EITHER";
   /** Phase 2.4 — vehicle attributes (VIN stripped server-side on public DTO). */
   vehicle?: Record<string, unknown> | null;
   /** Phase 2.4 — luxury authentication gate. */

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../lib/api";
-import { clearTokens, getRefreshToken } from "../lib/auth";
+import { getRefreshToken, signOutAndGoLanding } from "../lib/auth";
 import {
   NotificationBell,
   useUnreadNotificationCount,
@@ -384,17 +384,9 @@ export function AppNav() {
     };
   }, [pathname]);
 
-  async function logout() {
-    const refreshToken = getRefreshToken();
-    const leaving = window.location.pathname !== "/";
+  function logout() {
     setOpen(false);
-    clearTokens();
-    void apiFetch("/auth/logout", {
-      method: "POST",
-      keepalive: true,
-      body: refreshToken ? { refreshToken } : {},
-    }).catch(() => undefined);
-    if (leaving) window.location.replace("/");
+    signOutAndGoLanding({ refreshToken: getRefreshToken() });
   }
 
   const panel = (opts?: { onClose?: () => void; onNavigate?: () => void }) => (

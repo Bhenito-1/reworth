@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
+import { BackLink } from "../../../components/BackLink";
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
 import { ApiError } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
@@ -15,7 +16,7 @@ import {
   requestJoinCommunity,
   type EstateCommunityDetail,
 } from "../../../lib/estate-communities";
-import { sentenceCaseLabel } from "../../../lib/listings";
+import { listingPdpHref, sentenceCaseLabel } from "../../../lib/listings";
 import type { PublicListing } from "../../../lib/types";
 
 export default function CommunityDetailPage() {
@@ -134,12 +135,7 @@ export default function CommunityDetailPage() {
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/communities"
-            className="text-sm font-medium text-[var(--rw-accent)]"
-          >
-            ← Communities
-          </Link>
+          <BackLink href="/communities" />
         </header>
 
         {loading ? (
@@ -269,7 +265,10 @@ export default function CommunityDetailPage() {
                 <ul className="mt-4 flex flex-wrap gap-3">
                   {listings.map((item) => (
                     <li key={item.id} className="w-[38vw] min-w-[7.5rem] max-w-[10rem] shrink-0 sm:w-[10rem]">
-                      <DiscoveryListingCard listing={item} />
+                      <DiscoveryListingCard
+                        listing={item}
+                        href={listingPdpHref(item.id, `/communities/${slug}`)}
+                      />
                     </li>
                   ))}
                 </ul>

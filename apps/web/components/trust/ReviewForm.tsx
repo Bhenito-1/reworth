@@ -102,9 +102,6 @@ export function ReviewForm({ submitting, onSubmit }: Props) {
       <h2 id="leave-review" className="text-lg font-semibold">
         Leave a review
       </h2>
-      <p className="text-sm text-[var(--rw-ink-muted)]">
-        Rate the purchase. Only buyers can rate, and it shows on this seller&apos;s listings.
-      </p>
 
       <StarPicker
         id="overall-stars"

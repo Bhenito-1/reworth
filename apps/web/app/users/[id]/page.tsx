@@ -9,6 +9,7 @@ import {
   Skeleton,
   Toast,
 } from "@reworth/ui-web";
+import { BackButton, BackLink } from "../../../components/BackLink";
 import { DiscoveryListingCard } from "../../../components/discovery/DiscoveryListingCard";
 import { ApiError, apiFetch } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
@@ -201,20 +202,9 @@ export default function PublicProfilePage() {
               />
             </Link>
             {backHref ? (
-              <Link
-                href={backHref}
-                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-              >
-                ← Back
-              </Link>
+              <BackLink href={backHref} />
             ) : (
-              <button
-                type="button"
-                onClick={() => router.back()}
-                className="text-sm font-medium text-[var(--rw-accent)] underline-offset-2 hover:underline"
-              >
-                ← Back
-              </button>
+              <BackButton onClick={() => router.back()} />
             )}
           </div>
         </header>

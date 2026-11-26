@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { BackLink } from "../../../components/BackLink";
 import { useRouter } from "next/navigation";
 import { Button, EmptyState, Skeleton, Toast } from "@reworth/ui-web";
 import { ApiError } from "../../../lib/api";
@@ -65,12 +66,7 @@ export default function MyCommunitiesPage() {
     <main className="min-h-[100dvh] bg-[var(--rw-bg)] text-[var(--rw-ink)]">
       <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
         <header className="mb-8 flex items-center justify-between gap-4">
-          <Link
-            href="/account"
-            className="text-sm font-medium text-[var(--rw-accent)]"
-          >
-            ← Account
-          </Link>
+          <BackLink href="/account" />
           <Link
             href="/communities"
             className="text-sm font-medium text-[var(--rw-ink-muted)]"
